@@ -1,0 +1,404 @@
+[
+  {
+    "id": "eval_biz_001",
+    "domain": "Procurement & Invoicing",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Customer received an invoice from Vendor for cloud hosting services and seeks to verify the standard payment deadline and whether good-faith dispute notice is required before the due date.",
+    "gold_sections": [
+      "Section 4.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "pay all undisputed invoice amounts within thirty (30) days",
+      "disputes any invoiced charges in good faith"
+    ]
+  },
+  {
+    "id": "eval_biz_002",
+    "domain": "Procurement & Invoicing",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Customer has an overdue invoice 20 days past the Net 30 payment window. Vendor is threatening to charge late interest and suspend cloud services.",
+    "gold_sections": [
+      "Section 4.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "late interest at the rate of one and one-half percent (1.5%) per month",
+      "suspend cloud service access upon ten (10) business days"
+    ]
+  },
+  {
+    "id": "eval_biz_003",
+    "domain": "Risk & Indemnification",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Vendor caused a database corruption incident resulting in $2M of customer revenue loss. Customer is assessing the standard aggregate liability cap under the MSA.",
+    "gold_sections": [
+      "Section 10.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "total fees paid or payable by Customer in the twelve (12) month period",
+      "neither party be liable for any lost profits"
+    ]
+  },
+  {
+    "id": "eval_biz_004",
+    "domain": "Risk & Indemnification",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Vendor's lead engineer committed intentional fraud and willfully wiped data backups. Vendor claims its liability is capped at the 12-month fees under Section 10.1.",
+    "gold_sections": [
+      "Section 10.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "NOT apply to: (a) a party's breach of its confidentiality",
+      "gross negligence, willful misconduct, or intentional fraud"
+    ]
+  },
+  {
+    "id": "eval_biz_005",
+    "domain": "Risk & Indemnification",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "A third-party software company filed a patent infringement lawsuit against Customer alleging that Customer's authorized use of Vendor's Cloud Services infringes US patents.",
+    "gold_sections": [
+      "Section 11.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "defend, indemnify, and hold harmless Customer",
+      "infringes or misappropriates any valid United States patent"
+    ]
+  },
+  {
+    "id": "eval_biz_006",
+    "domain": "Service Levels & Operations",
+    "agreement_type": "Service Level Agreement",
+    "fact_pattern": "Customer is conducting vendor operational due diligence to confirm the warranted Monthly Uptime Percentage commitment for the core production platform.",
+    "gold_sections": [
+      "Exhibit B (SLA) Section 2.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "achieve a Monthly Uptime Percentage of at least 99.9%",
+      "external health probes recording HTTP 200"
+    ]
+  },
+  {
+    "id": "eval_biz_007",
+    "domain": "Service Levels & Operations",
+    "agreement_type": "Service Level Agreement",
+    "fact_pattern": "Vendor conducted maintenance on Sunday at 02:00 UTC with 72 hours prior notice. Customer demands service credits for the 2 hours of platform downtime.",
+    "gold_sections": [
+      "Exhibit B (SLA) Section 2.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "exclude downtime resulting from: (a) scheduled maintenance",
+      "weekly maintenance window (Sundays 01:00-05:00 UTC)"
+    ]
+  },
+  {
+    "id": "eval_biz_008",
+    "domain": "Service Levels & Operations",
+    "agreement_type": "Service Level Agreement",
+    "fact_pattern": "Vendor experienced an unscheduled outage resulting in 97.5% monthly availability. Customer is requesting the specific service credit percentage permitted under the SLA.",
+    "gold_sections": [
+      "Exhibit B (SLA) Section 2.3"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "sole and exclusive remedy shall be receipt of service credits",
+      "95.0% to 98.99%: 25% credit"
+    ]
+  },
+  {
+    "id": "eval_biz_009",
+    "domain": "Security & Data Privacy",
+    "agreement_type": "Data Protection Addendum",
+    "fact_pattern": "Customer's security team requires proof of Vendor's annual independent information security audit report and certification standard.",
+    "gold_sections": [
+      "Exhibit C (DPA) Section 3.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "AICPA SOC 2 Type II",
+      "annual SOC 2 Type II independent auditor's report"
+    ]
+  },
+  {
+    "id": "eval_biz_010",
+    "domain": "Security & Data Privacy",
+    "agreement_type": "Data Protection Addendum",
+    "fact_pattern": "Vendor discovered an unauthorized intrusion where customer personal data was acquired by an attacker. Customer needs to know the mandatory notification deadline.",
+    "gold_sections": [
+      "Exhibit C (DPA) Section 3.4"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "Security Incident",
+      "within twenty-four (24) hours of becoming aware"
+    ]
+  },
+  {
+    "id": "eval_biz_011",
+    "domain": "Real Estate & Leasing",
+    "agreement_type": "Commercial Lease",
+    "fact_pattern": "Corporate tenant is reviewing its office lease to verify what building expenses are included in Triple Net (NNN) Common Area Maintenance charges and what is excluded.",
+    "gold_sections": [
+      "Lease \u00a7 5.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "Pro Rata Share (14.2%) of the Building's annual Operating Expenses",
+      "Operating Expenses exclude capital expenditures"
+    ]
+  },
+  {
+    "id": "eval_biz_012",
+    "domain": "Real Estate & Leasing",
+    "agreement_type": "Commercial Lease",
+    "fact_pattern": "Tenant received Landlord's annual year-end CAM reconciliation statement showing an unexpected $45,000 increase and wants to audit Landlord's books and records.",
+    "gold_sections": [
+      "Lease \u00a7 5.4"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "Within ninety (90) days following receipt",
+      "overcharge exceeding five percent (5%), Landlord shall reimburse"
+    ]
+  },
+  {
+    "id": "eval_biz_013",
+    "domain": "Procurement & Invoicing",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Vendor claims Customer has a 90-day grace period with zero late interest based on an old contract document from 2021.",
+    "gold_sections": [
+      "Section 4.1",
+      "Section 4.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "Net 30",
+      "late interest at the rate of one and one-half percent (1.5%)"
+    ]
+  },
+  {
+    "id": "eval_biz_014",
+    "domain": "Risk & Indemnification",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Customer wants to ensure that its confidentiality obligations under the MSA are not subject to the 12-month limitation of liability cap.",
+    "gold_sections": [
+      "Section 10.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "NOT apply to: (a) a party's breach of its confidentiality",
+      "under Section 8"
+    ]
+  },
+  {
+    "id": "eval_biz_015",
+    "domain": "Service Levels & Operations",
+    "agreement_type": "Service Level Agreement",
+    "fact_pattern": "Customer had total platform unavailability of 93.8% during a catastrophic power failure at Vendor data center. What is the maximum service credit available?",
+    "gold_sections": [
+      "Exhibit B (SLA) Section 2.3"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "less than 95.0%: 50% credit",
+      "submitted within thirty (30) days"
+    ]
+  },
+  {
+    "id": "eval_biz_016",
+    "domain": "Procurement & Invoicing",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "What method of payment is required for invoice remittances under the standard corporate Master Services Agreement?",
+    "gold_sections": [
+      "Section 4.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "automated clearing house (ACH) or wire transfer",
+      "U.S. Dollars"
+    ]
+  },
+  {
+    "id": "eval_biz_017",
+    "domain": "Risk & Indemnification",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Under what condition does Vendor indemnify Customer for IP infringement according to Section 11.1?",
+    "gold_sections": [
+      "Section 11.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "prompt written notice, sole control of defense and settlement",
+      "reasonable cooperation"
+    ]
+  },
+  {
+    "id": "eval_biz_018",
+    "domain": "Security & Data Privacy",
+    "agreement_type": "Data Protection Addendum",
+    "fact_pattern": "How often is the independent auditor report required to be renewed under the Data Protection Addendum?",
+    "gold_sections": [
+      "Exhibit C (DPA) Section 3.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "annual SOC 2 Type II",
+      "independent auditor's report"
+    ]
+  },
+  {
+    "id": "eval_biz_019",
+    "domain": "Real Estate & Leasing",
+    "agreement_type": "Commercial Lease",
+    "fact_pattern": "Does the tenant lease agreement permit landlord to include mortgage interest and depreciation in CAM Operating Expenses?",
+    "gold_sections": [
+      "Lease \u00a7 5.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "exclude capital expenditures, mortgage interest, depreciation",
+      "leasing commissions"
+    ]
+  },
+  {
+    "id": "eval_biz_020",
+    "domain": "Risk & Indemnification",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "Does the limitation of liability clause waive claims for consequential damages between Acme Corp and CloudScale AI?",
+    "gold_sections": [
+      "Section 10.1"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "In no event shall either party be liable for any lost profits",
+      "consequential damages"
+    ]
+  },
+  {
+    "id": "eval_biz_021",
+    "domain": "Service Levels & Operations",
+    "agreement_type": "Service Level Agreement",
+    "fact_pattern": "When is the standard weekly scheduled maintenance window permitted to be conducted under the CloudScale SLA?",
+    "gold_sections": [
+      "Exhibit B (SLA) Section 2.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "standard weekly maintenance window (Sundays 01:00-05:00 UTC)",
+      "forty-eight (48) hours advance written notice"
+    ]
+  },
+  {
+    "id": "eval_biz_022",
+    "domain": "Procurement & Invoicing",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "How many business days notice must Vendor give Customer before suspending services for unpaid undisputed charges?",
+    "gold_sections": [
+      "Section 4.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "ten (10) business days prior written notice",
+      "delinquent amounts remain unpaid"
+    ]
+  },
+  {
+    "id": "eval_biz_023",
+    "domain": "Security & Data Privacy",
+    "agreement_type": "Data Protection Addendum",
+    "fact_pattern": "What communication channels must Vendor use to notify Customer of a confirmed Security Incident?",
+    "gold_sections": [
+      "Exhibit C (DPA) Section 3.4"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "email and telephone",
+      "twenty-four (24) hours"
+    ]
+  },
+  {
+    "id": "eval_biz_024",
+    "domain": "Real Estate & Leasing",
+    "agreement_type": "Commercial Lease",
+    "fact_pattern": "How much advance notice must Tenant provide to Landlord before conducting an audit of Common Area Maintenance records?",
+    "gold_sections": [
+      "Lease \u00a7 5.4"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "ten (10) business days prior written notice",
+      "examine and audit Landlord's books and records"
+    ]
+  },
+  {
+    "id": "eval_biz_025",
+    "domain": "Procurement & Invoicing",
+    "agreement_type": "Master Services Agreement",
+    "fact_pattern": "An outdated internal memo suggests payment is governed by 90 days with no interest under an old 2021 agreement. Confirm controlling terms.",
+    "gold_sections": [
+      "Section 4.1",
+      "Section 4.2"
+    ],
+    "forbidden_distractors": [
+      "Section 2021-MSA-4.1"
+    ],
+    "expected_claims": [
+      "Net 30",
+      "1.5% per month"
+    ]
+  }
+]

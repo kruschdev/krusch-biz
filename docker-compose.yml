@@ -1,0 +1,98 @@
+services:
+  db:
+    image: pgvector/pgvector:16
+    container_name: kruschbiz-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kruschbiz_db}
+      POSTGRES_USER: ${POSTGRES_USER:-kruschbiz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD must be defined in your .env file}
+    ports:
+      - "${DATABASE_BIND_IP:-127.0.0.1}:${DATABASE_PORT:-5436}:5432"
+    volumes:
+      - kruschbiz_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kruschbiz} -d ${POSTGRES_DB:-kruschbiz_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: kruschbiz-backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-kruschbiz}:${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD must be defined in your .env file}@db:5432/${POSTGRES_DB:-kruschbiz_db}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_EMBED_HOST=${OLLAMA_EMBED_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:14b}
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-bge-large}
+      - API_KEY=${API_KEY:-}
+      - KRUSCH_NEXUS_PATH=${KRUSCH_NEXUS_PATH:-/nexus/src}
+    ports:
+      - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8086}:8000"
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ${KRUSCH_NEXUS_DIR:-../krusch-nexus}:/nexus:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: kruschbiz-frontend
+    restart: unless-stopped
+    environment:
+      - BACKEND_URL=${BACKEND_URL:-http://backend:8000}
+      - API_KEY=${API_KEY:-}
+    ports:
+      - "${FRONTEND_BIND_IP:-127.0.0.1}:${FRONTEND_PORT:-8506}:8501"
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      - backend
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: kruschbiz-worker
+    restart: unless-stopped
+    command: ["python", "-m", "src.backend.worker"]
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-kruschbiz}:${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD must be defined in your .env file}@db:5432/${POSTGRES_DB:-kruschbiz_db}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_EMBED_HOST=${OLLAMA_EMBED_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-bge-large}
+      - KRUSCH_NEXUS_PATH=${KRUSCH_NEXUS_PATH:-/nexus/src}
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ${KRUSCH_NEXUS_DIR:-../krusch-nexus}:/nexus:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: kruschbiz-ollama
+    restart: unless-stopped
+    profiles:
+      - with-ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - kruschbiz_ollama_data:/root/.ollama
+
+volumes:
+  kruschbiz_db_data:
+  kruschbiz_ollama_data:
