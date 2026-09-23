@@ -1,4 +1,19 @@
-import hashlib
+"""
+src/backend/main.py
+===================
+FastAPI REST API application for KruschBiz Corporate Intelligence Engine.
+Features:
+  - Commercial contract, MSA, SLA, and policy search
+  - Transaction deal matter management & hard deletion
+  - Grounded executive memo synthesis with assertion auditing
+  - Controlling-document graph resolver and contract conflict detection
+  - KruschNexus / standalone document ingest adapter with MIME verification
+  - Sovereign air-gap network boundaries and loopback enforcement
+"""
+
+from __future__ import annotations
+
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -11,7 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .config import settings
+from .config import settings, validate_security_invariants
 from .db import (
     AuditLog,
     CommercialClauseVector,
@@ -21,22 +36,42 @@ from .db import (
     SessionLocal,
     init_db,
 )
-from .export import generate_brief_docx, generate_brief_markdown
-from .ingest import ingest_business_document, ingest_mock_data, ingest_uploaded_business_file
-from .rag import generate_executive_brief, get_embedding, retrieve_clauses
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] (kruschbiz.api) %(message)s"
+from .export import export_executive_memo_docx, export_executive_memo_markdown
+from .ingest import (
+    ingest_mock_data,
+    ingest_uploaded_business_file,
 )
+from .rag import (
+    generate_executive_brief,
+    get_embedding,
+    retrieve_clauses,
+)
+from .resolver import detect_contract_conflicts, resolve_controlling_clause
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
 logger = logging.getLogger("kruschbiz.api")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database and verify local air-gapped security bindings."""
-    logger.info("Initializing KruschBiz Sovereign Corporate Intelligence Engine...")
+    """Initialize database tables, vector extensions, security invariants, and seed fixtures on startup."""
+    logger.info("Initializing KruschBiz corporate intelligence engine...")
+    validate_security_invariants(settings)
     init_db()
+
+    # Automatically seed mock fixtures if empty
+    db = SessionLocal()
+    try:
+        count = db.query(CommercialClauseVector).count()
+        if count == 0:
+            logger.info("Database empty. Seeding initial corporate contract & policy fixtures...")
+            ingest_mock_data(db)
+    except Exception as e:
+        logger.warning(f"Initial mock seeding skipped or failed ({e}).")
+    finally:
+        db.close()
+
+    logger.info(f"KruschBiz ready. Listening on port {settings.BACKEND_PORT}.")
     yield
     logger.info("Shutting down KruschBiz.")
 
@@ -44,7 +79,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="KruschBiz | Sovereign Corporate Intelligence Engine",
     description="Air-gapped enterprise contract and corporate policy graph with assertion-level grounding.",
-    version="0.3.0",
+    version="0.1.0",
     lifespan=lifespan
 )
 
@@ -103,6 +138,7 @@ class DealUpdate(BaseModel):
 
 class DealResponse(BaseModel):
     id: int
+    tenant_id: str
     deal_code: str | None
     company_name: str | None
     counterparty_name: str | None
@@ -111,7 +147,7 @@ class DealResponse(BaseModel):
     description: str | None
     context_facts: str
     status: str
-    created_at: datetime | None
+    created_at: datetime
     updated_at: datetime | None
 
     class Config:
@@ -120,25 +156,28 @@ class DealResponse(BaseModel):
 
 class ClauseResponse(BaseModel):
     id: int
+    tenant_id: str = "org_default"
     organization: str
-    counterparty: str | None
+    counterparty: str | None = None
     agreement_type: str
-    domain: str | None
-    title: str | None
-    section: str | None
-    parent_section: str | None
-    hierarchy_level: str
-    authority_class: str
-    effective_date: datetime | None
-    expiration_date: datetime | None
-    superseded: bool
-    terminated: bool
-    superseded_by: str | None
+    domain: str | None = None
+    title: str | None = None
+    section: str | None = None
+    parent_section: str | None = None
+    hierarchy_level: str = "clause"
+    authority_class: str = "governing_agreement"
+    effective_date: datetime | None = None
+    expiration_date: datetime | None = None
+    superseded: bool = False
+    terminated: bool = False
+    superseded_by: str | None = None
     content: str
-    source_header: str | None
-    sim_score: float | None = None
-    fts_score: float | None = None
-    rrf_score: float | None = None
+    source_header: str | None = None
+    structured_slots: dict[str, Any] | None = None
+    explanation: dict[str, Any] | None = None
+    score: float | None = None
+    vector_score: float | None = None
+    lexical_score: float | None = None
 
     class Config:
         from_attributes = True
@@ -159,69 +198,70 @@ class ExportDocxRequest(BaseModel):
     deal_code: str | None = None
     counterparty: str | None = None
     deal_type: str | None = None
-    brief_content: str
-    claims_audit: list[dict[str, Any]] | None = None
-    retrieved_clauses: list[dict[str, Any]] | None = None
-    disclaimer: str | None = None
-
-
-class IngestDocumentRequest(BaseModel):
-    file_path: str
-    deal_id: int | None = None
-    doc_type: str = "contract"
-    organization: str = "Acme Corp"
+    brief_content: str | None = None
+    analysis_text: str | None = None
+    claims_records: list[dict[str, Any]] = Field(default_factory=list)
+    retrieved_clauses: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# API Endpoints
+# API Routes
 # ---------------------------------------------------------------------------
-@app.get("/health")
+
+@app.get("/health", status_code=status.HTTP_200_OK)
 def health_check(db: Session = Depends(get_db)):
-    """Health check endpoint confirming database and model availability."""
+    """System health check and diagnostic connectivity report."""
     db_ok = False
     try:
         db.execute(text("SELECT 1;"))
         db_ok = True
     except Exception as e:
-        logger.error(f"Health check database failure: {e}")
+        logger.error(f"Health check database ping failed: {e}")
 
     return {
         "status": "healthy" if db_ok else "degraded",
         "service": "kruschbiz-backend",
-        "version": "0.3.0",
+        "app_env": settings.APP_ENV,
         "database_connected": db_ok,
-        "is_sqlite": settings.is_sqlite,
         "embedding_model": settings.OLLAMA_EMBED_MODEL,
-        "llm_model": settings.OLLAMA_LLM_MODEL
+        "llm_model": settings.OLLAMA_LLM_MODEL,
+        "air_gapped": True,
+        "ports": {
+            "backend": settings.BACKEND_PORT,
+            "frontend": settings.FRONTEND_PORT,
+            "database": settings.DATABASE_PORT
+        },
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 
 # --- Deal Matters CRUD ---
+
 @app.post("/api/deals", response_model=DealResponse, status_code=status.HTTP_201_CREATED)
 def create_deal(
-    payload: DealCreate,
+    deal_in: DealCreate,
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Create a new corporate deal or transaction matter with vector embedding."""
-    logger.info(f"Creating corporate deal: '{payload.title}'...")
-    vec = None
-    try:
-        vec = get_embedding(f"{payload.title} {payload.context_facts}")
-    except Exception as e:
-        logger.warning(f"Could not generate embedding for deal ({e}).")
-
+    """Create a new corporate deal, vendor procurement review, or corporate transaction matter."""
+    logger.info(f"Creating corporate deal: '{deal_in.title}' for tenant '{x_tenant_id}'...")
     deal = DealMatter(
-        deal_code=payload.deal_code,
-        company_name=payload.company_name,
-        counterparty_name=payload.counterparty_name,
-        deal_type=payload.deal_type,
-        title=payload.title,
-        description=payload.description,
-        context_facts=payload.context_facts,
-        status="active",
-        embedding=vec
+        tenant_id=x_tenant_id,
+        deal_code=deal_in.deal_code,
+        company_name=deal_in.company_name,
+        counterparty_name=deal_in.counterparty_name,
+        deal_type=deal_in.deal_type,
+        title=deal_in.title,
+        description=deal_in.description,
+        context_facts=deal_in.context_facts,
+        status="active"
     )
+    try:
+        deal.embedding = get_embedding(f"{deal_in.title} {deal_in.context_facts}")
+    except Exception as e:
+        logger.warning(f"Could not generate deal embedding ({e}), proceeding without it.")
+
     db.add(deal)
     db.commit()
     db.refresh(deal)
@@ -230,27 +270,35 @@ def create_deal(
 
 @app.get("/api/deals", response_model=list[DealResponse])
 def list_deals(
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    status_filter: str | None = Query(None, alias="status"),
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Enumerate active corporate deals and matters."""
-    return db.query(DealMatter).filter(
-        DealMatter.is_deleted == False
-    ).order_by(DealMatter.created_at.desc()).offset(offset).limit(limit).all()
+    """List corporate deal matters for current tenant."""
+    q = db.query(DealMatter).filter(
+        DealMatter.tenant_id == x_tenant_id,
+        DealMatter.is_deleted.is_(False)
+    )
+    if status_filter:
+        q = q.filter(DealMatter.status == status_filter)
+    return q.order_by(DealMatter.created_at.desc()).offset(offset).limit(limit).all()
 
 
 @app.get("/api/deals/{deal_id}", response_model=DealResponse)
 def get_deal(
     deal_id: int,
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Retrieve details for a specific deal matter."""
+    """Retrieve details of a corporate deal matter."""
     deal = db.query(DealMatter).filter(
         DealMatter.id == deal_id,
-        DealMatter.is_deleted == False
+        DealMatter.tenant_id == x_tenant_id,
+        DealMatter.is_deleted.is_(False)
     ).first()
     if not deal:
         raise HTTPException(status_code=404, detail=f"Deal matter #{deal_id} not found.")
@@ -260,19 +308,21 @@ def get_deal(
 @app.patch("/api/deals/{deal_id}", response_model=DealResponse)
 def update_deal(
     deal_id: int,
-    payload: DealUpdate,
+    deal_update: DealUpdate,
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Update deal matter attributes or facts."""
+    """Update context, status, or details of a deal matter."""
     deal = db.query(DealMatter).filter(
         DealMatter.id == deal_id,
-        DealMatter.is_deleted == False
+        DealMatter.tenant_id == x_tenant_id,
+        DealMatter.is_deleted.is_(False)
     ).first()
     if not deal:
         raise HTTPException(status_code=404, detail=f"Deal matter #{deal_id} not found.")
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = deal_update.model_dump(exclude_unset=True)
     for field, val in update_data.items():
         setattr(deal, field, val)
 
@@ -291,12 +341,14 @@ def update_deal(
 def soft_delete_deal(
     deal_id: int,
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
     """Soft delete a deal matter from active listings."""
     deal = db.query(DealMatter).filter(
         DealMatter.id == deal_id,
-        DealMatter.is_deleted == False
+        DealMatter.tenant_id == x_tenant_id,
+        DealMatter.is_deleted.is_(False)
     ).first()
     if not deal:
         raise HTTPException(status_code=404, detail=f"Deal matter #{deal_id} not found.")
@@ -305,70 +357,97 @@ def soft_delete_deal(
     return {"status": "success", "message": f"Deal #{deal_id} soft deleted."}
 
 
-@app.delete("/api/deals/{deal_id}/purge", status_code=status.HTTP_200_OK)
-def hard_purge_deal(
+@app.delete("/api/deals/{deal_id}/hard-delete", status_code=status.HTTP_200_OK)
+def hard_delete_deal(
     deal_id: int,
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
     """
-    Cryptographic hard purge: Permanently delete deal record, all associated evidence,
+    Hard delete: Permanently delete deal record, all associated evidence,
     and grounding reports, recording an immutable audit entry.
     """
-    deal = db.query(DealMatter).filter(DealMatter.id == deal_id).first()
+    deal = db.query(DealMatter).filter(
+        DealMatter.id == deal_id,
+        DealMatter.tenant_id == x_tenant_id
+    ).first()
     if not deal:
         raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
 
-    # Remove evidence
-    ev_count = db.query(DealEvidence).filter(DealEvidence.deal_id == deal_id).delete()
-    # Remove grounding reports
-    rep_count = db.query(CommercialGroundingReport).filter(CommercialGroundingReport.deal_id == deal_id).delete()
-    # Remove deal
+    ev_count = db.query(DealEvidence).filter(
+        DealEvidence.deal_id == deal_id,
+        DealEvidence.tenant_id == x_tenant_id
+    ).delete()
+    rep_count = db.query(CommercialGroundingReport).filter(
+        CommercialGroundingReport.deal_id == deal_id,
+        CommercialGroundingReport.tenant_id == x_tenant_id
+    ).delete()
     db.delete(deal)
 
-    # Immutable audit log
     audit = AuditLog(
-        action="purge_deal",
+        tenant_id=x_tenant_id,
+        action="hard_delete_deal",
         deal_id=deal_id,
         duration_ms=0,
-        grounding_verdict="PURGED"
+        grounding_verdict="HARD_DELETED"
     )
     db.add(audit)
     db.commit()
     return {
         "status": "success",
-        "message": f"Deal #{deal_id} permanently purged ({ev_count} evidence records, {rep_count} grounding reports)."
+        "message": f"Deal #{deal_id} permanently deleted and permanently purged ({ev_count} evidence records, {rep_count} grounding reports)."
     }
 
 
+@app.delete("/api/deals/{deal_id}/purge", status_code=status.HTTP_200_OK, deprecated=True)
+def legacy_purge_deal(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Deprecated alias for hard_delete_deal."""
+    return hard_delete_deal(deal_id=deal_id, db=db, api_key=api_key, x_tenant_id=x_tenant_id)
+
+
 # --- Clauses & Contract Search ---
+
 @app.get("/api/clauses", response_model=list[ClauseResponse])
 def search_clauses(
     q: str | None = Query(None, description="Natural language search or clause keywords"),
     organization: str | None = Query(None),
     agreement_type: str | None = Query(None),
     domain: str | None = Query(None),
-    limit: int = 10,
-    offset: int = 0,
+    limit: int = Query(5, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    exclude_superseded: bool = Query(True),
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Hybrid semantic (ANN) + lexical search across versioned corporate contracts and policies."""
+    """
+    Search commercial clauses across the corporate agreement graph.
+    Uses hybrid dense ANN + lexical search with authority hierarchy weighting.
+    """
     if q and q.strip():
         results = retrieve_clauses(
             db=db,
-            query=q.strip(),
+            query=q,
             limit=limit,
             offset=offset,
             organization=organization,
             agreement_type=agreement_type,
-            domain=domain
+            domain=domain,
+            exclude_superseded=exclude_superseded,
+            tenant_id=x_tenant_id
         )
         return results
 
     query_obj = db.query(CommercialClauseVector).filter(
-        CommercialClauseVector.superseded == False,
-        CommercialClauseVector.terminated == False
+        CommercialClauseVector.tenant_id == x_tenant_id,
+        CommercialClauseVector.superseded.is_(False),
+        CommercialClauseVector.terminated.is_(False)
     )
     if organization:
         query_obj = query_obj.filter(CommercialClauseVector.organization.ilike(f"%{organization}%"))
@@ -377,251 +456,255 @@ def search_clauses(
     if domain:
         query_obj = query_obj.filter(CommercialClauseVector.domain.ilike(f"%{domain}%"))
 
-    records = query_obj.offset(offset).limit(limit).all()
-    return records
+    items = query_obj.order_by(CommercialClauseVector.id.asc()).offset(offset).limit(limit).all()
+    return items
 
 
-@app.get("/api/clauses/{clause_id}", response_model=ClauseResponse)
-def get_clause(
-    clause_id: int,
+# --- Controlling Document Resolver & Conflicts ---
+
+@app.get("/api/resolver/controlling-clause")
+def get_controlling_clause(
+    counterparty: str = Query(..., description="Counterparty name"),
+    topic: str = Query(..., description="Canonical commercial topic"),
+    as_of_date: str | None = Query(None, description="ISO format date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Retrieve full text and metadata for a specific clause."""
-    cl = db.query(CommercialClauseVector).filter(CommercialClauseVector.id == clause_id).first()
-    if not cl:
-        raise HTTPException(status_code=404, detail=f"Clause #{clause_id} not found.")
-    return cl
+    """
+    Walk the agreement relation graph (AMENDS, SUPERSEDES) to resolve which clause
+    governs the specified topic as of a specific date.
+    """
+    parsed_date = None
+    if as_of_date:
+        try:
+            parsed_date = datetime.fromisoformat(as_of_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD).")
+
+    result = resolve_controlling_clause(
+        db=db,
+        tenant_id=x_tenant_id,
+        counterparty=counterparty,
+        topic=topic,
+        as_of_date=parsed_date
+    )
+    return result
 
 
-# --- Deal Room Evidence ---
-@app.get("/api/deals/{deal_id}/evidence")
-def get_deal_evidence(
-    deal_id: int,
-    q: str | None = None,
-    limit: int = 20,
+@app.get("/api/resolver/conflicts")
+def get_contract_conflicts(
+    counterparty: str = Query(..., description="Counterparty name"),
+    as_of_date: str | None = Query(None, description="ISO format date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Retrieve isolated discovery exhibits and evidence for a specific deal matter."""
-    deal = db.query(DealMatter).filter(DealMatter.id == deal_id).first()
-    if not deal:
-        raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
+    """
+    Detect conflicting slot values (e.g. Net 30 vs Net 45) across concurrently active instruments.
+    """
+    parsed_date = None
+    if as_of_date:
+        try:
+            parsed_date = datetime.fromisoformat(as_of_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD).")
 
-    query_obj = db.query(DealEvidence).filter(DealEvidence.deal_id == deal_id)
-    if q:
-        query_obj = query_obj.filter(DealEvidence.content.ilike(f"%{q}%"))
-
-    records = query_obj.limit(limit).all()
-    return [
-        {
-            "id": r.id,
-            "deal_id": r.deal_id,
-            "filename": r.filename,
-            "doc_type": r.doc_type,
-            "page_number": r.page_number,
-            "section_locator": r.section_locator,
-            "content": r.content,
-            "created_at": r.created_at
-        }
-        for r in records
-    ]
+    conflicts = detect_contract_conflicts(
+        db=db,
+        tenant_id=x_tenant_id,
+        counterparty=counterparty,
+        as_of_date=parsed_date
+    )
+    return {"counterparty": counterparty, "conflicts": conflicts, "total_conflicts": len(conflicts)}
 
 
-# --- Consultation & Executive Brief Generation ---
+# --- Corporate Intelligence Consult & Memo Generation ---
+
 @app.get("/api/consult", response_model=ConsultResponse)
 def consult_deal(
-    deal_id: int | None = None,
-    query: str | None = None,
-    limit: int = 5,
+    deal_id: int | None = Query(None, description="Deal ID to consult"),
+    query: str | None = Query(None, description="Ad-hoc transaction facts or inquiry"),
+    limit: int = Query(5, ge=1, le=10),
+    organization: str | None = Query(None),
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
     """
-    Run corporate intelligence consult:
-    Synthesizes 4-part executive brief with commercial assertion-level grounding.
+    Synthesize an executive commercial brief grounded in the contract graph.
+    Performs assertion-level verification, detects divergent terms, and logs an audit record.
     """
     start_time = time.time()
+    deal = None
+    deal_title = "Ad-Hoc Commercial Inquiry"
+    context_facts = query or ""
+    counterparty = None
+    deal_type = None
 
     if deal_id is not None:
         deal = db.query(DealMatter).filter(
             DealMatter.id == deal_id,
-            DealMatter.is_deleted == False
+            DealMatter.tenant_id == x_tenant_id,
+            DealMatter.is_deleted.is_(False)
         ).first()
         if not deal:
-            raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
+            raise HTTPException(status_code=404, detail=f"Deal matter #{deal_id} not found.")
         deal_title = deal.title
-        deal_code = deal.deal_code
+        context_facts = f"{deal.title}\n{deal.context_facts}"
+        if query:
+            context_facts += f"\nSpecific Inquiry: {query}"
         counterparty = deal.counterparty_name
         deal_type = deal.deal_type
-        context_facts = deal.context_facts
-        search_query = query or f"{deal_title} {context_facts}"
 
-        # Fetch isolated evidence
-        evidence_records = db.query(DealEvidence).filter(DealEvidence.deal_id == deal_id).all()
-        evidence = [
-            {"filename": e.filename, "page_number": e.page_number, "section_locator": e.section_locator, "content": e.content}
-            for e in evidence_records
-        ]
-    else:
-        if not query or not query.strip():
-            raise HTTPException(status_code=400, detail="Must provide either 'deal_id' or 'query'.")
-        deal_title = "Ad-Hoc Transaction Analysis"
-        deal_code = "ADHOC"
-        counterparty = None
-        deal_type = "Commercial Inquiry"
-        context_facts = query
-        search_query = query
-        evidence = []
+    if not context_facts.strip():
+        raise HTTPException(status_code=400, detail="Either 'deal_id' or 'query' must provide transaction facts.")
 
-    # 1. Retrieve commercial authorities
-    clauses = retrieve_clauses(db=db, query=search_query, limit=limit)
+    # 1. Hybrid Retrieval of governing authorities
+    search_query = f"{deal_title} {context_facts}"
+    clauses = retrieve_clauses(
+        db=db,
+        query=search_query,
+        limit=limit,
+        organization=organization or (deal.company_name if deal else None),
+        exclude_superseded=True,
+        tenant_id=x_tenant_id
+    )
 
-    # 2. Generate executive brief with assertion-level verification
-    brief_text, stats, claims_audit = generate_executive_brief(
+    # 2. Generate grounded brief with refusal checks
+    analysis_text, grounding_stats, claims_records = generate_executive_brief(
         deal_title=deal_title,
         context_facts=context_facts,
         clauses=clauses,
-        evidence=evidence,
-        deal_code=deal_code,
         counterparty=counterparty,
-        deal_type=deal_type,
-        deal_id=deal_id,
-        db=db
+        deal_type=deal_type
     )
+
+    # 3. Persist Grounding Report
+    if deal_id is not None:
+        rep = CommercialGroundingReport(
+            tenant_id=x_tenant_id,
+            deal_id=deal_id,
+            total_claims=grounding_stats.get("total_claims", 0),
+            supported_claims=grounding_stats.get("supported_claims", 0),
+            unsupported_claims=grounding_stats.get("unsupported_claims", 0),
+            invented_clauses=grounding_stats.get("invented_clauses", 0),
+            divergent_terms=grounding_stats.get("divergent_terms", 0),
+            superseded_terms=grounding_stats.get("superseded_terms", 0),
+            pass_rate=grounding_stats.get("pass_rate", 100.0),
+            claims_json=json.dumps(claims_records),
+            advisory_markdown=analysis_text
+        )
+        db.add(rep)
 
     elapsed_ms = int((time.time() - start_time) * 1000)
 
-    # Record audit log
-    try:
-        audit = AuditLog(
-            action="consult",
-            deal_id=deal_id,
-            retrieved_clause_ids=",".join(str(c.get("id")) for c in clauses if c.get("id")),
-            model_name=settings.OLLAMA_LLM_MODEL,
-            prompt_hash=hashlib.sha256(search_query.encode()).hexdigest(),
-            grounding_verdict="PASS" if stats.get("pass_rate", 0) >= 90 else "WARNING",
-            duration_ms=elapsed_ms
-        )
-        db.add(audit)
-        db.commit()
-    except Exception as e:
-        logger.warning(f"Could not record audit log: {e}")
+    # 4. Audit Log
+    clause_ids = ",".join(str(c["id"]) for c in clauses)
+    verdict = "PASS" if grounding_stats.get("unsupported_claims", 0) == 0 else "WARNING"
+    audit = AuditLog(
+        tenant_id=x_tenant_id,
+        action="consult",
+        deal_id=deal_id,
+        retrieved_clause_ids=clause_ids,
+        model_name=settings.OLLAMA_LLM_MODEL,
+        grounding_verdict=verdict,
+        duration_ms=elapsed_ms
+    )
+    db.add(audit)
+    db.commit()
 
-    return {
-        "deal_id": deal_id,
-        "deal_title": deal_title,
-        "counterparty": counterparty,
-        "analysis": brief_text,
-        "grounding_stats": stats,
-        "claims_audit": claims_audit,
-        "retrieved_clauses": clauses
-    }
+    return ConsultResponse(
+        deal_id=deal_id,
+        deal_title=deal_title,
+        counterparty=counterparty,
+        analysis=analysis_text,
+        grounding_stats=grounding_stats,
+        claims_audit=claims_records,
+        retrieved_clauses=clauses
+    )
 
 
-# --- Document Ingestion (KruschNexus) ---
-@app.post("/api/ingest/upload")
-def upload_document(
+# --- Executive Memorandum Document Exporters ---
+
+@app.post("/api/consult/export/docx")
+def export_deal_docx(
+    req: ExportDocxRequest,
+    api_key: str | None = Depends(verify_api_key)
+):
+    """Generate and download a high-prestige executive memorandum (.docx)."""
+    content_text = req.brief_content or req.analysis_text or ""
+    docx_bytes = export_executive_memo_docx(
+        brief_content=content_text,
+        deal_title=req.deal_title,
+        deal_code=req.deal_code,
+        counterparty=req.counterparty,
+        deal_type=req.deal_type,
+        claims_records=req.claims_records,
+        retrieved_clauses=req.retrieved_clauses
+    )
+    filename = f"Executive_Memo_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.docx"
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.post("/api/consult/export/md")
+def export_deal_markdown(
+    req: ExportDocxRequest,
+    api_key: str | None = Depends(verify_api_key)
+):
+    """Generate and download a clean executive memorandum in Markdown (.md)."""
+    content_text = req.brief_content or req.analysis_text or ""
+    md_content = export_executive_memo_markdown(
+        brief_content=content_text,
+        deal_title=req.deal_title,
+        deal_code=req.deal_code,
+        counterparty=req.counterparty,
+        deal_type=req.deal_type,
+        claims_records=req.claims_records,
+        retrieved_clauses=req.retrieved_clauses
+    )
+    filename = f"Executive_Memo_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.md"
+    return Response(
+        content=md_content,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+# --- Document Ingestion Upload ---
+
+@app.post("/api/ingest/upload", status_code=status.HTTP_200_OK)
+def upload_business_document(
     file: UploadFile = File(...),
     deal_id: int | None = Form(None),
     doc_type: str = Form("contract"),
     organization: str = Form("Acme Corp"),
     db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
-    """Multipart file upload ingested via KruschNexus sovereign parser & chunker."""
+    """
+    Secure file upload endpoint for business contracts, SLAs, DPAs, and exhibits.
+    Applies MIME verification, chunk DOS limits, and structured slot extraction.
+    """
+    logger.info(f"Receiving file upload '{file.filename}' for deal #{deal_id} (tenant: {x_tenant_id})...")
     try:
         report = ingest_uploaded_business_file(
             file=file,
             deal_id=deal_id,
             doc_type=doc_type,
             organization=organization,
+            tenant_id=x_tenant_id,
             db=db
         )
         return report
-    except ValueError as e:
-        logger.warning(f"Invalid uploaded document request: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as ve:
+        logger.warning(f"Invalid uploaded document request: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        logger.error(f"Failed to ingest uploaded document: {e}")
-        raise HTTPException(status_code=500, detail=f"Document ingestion failed: {e}")
-
-
-@app.post("/api/ingest/document")
-def ingest_local_document(
-    payload: IngestDocumentRequest,
-    db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
-):
-    """Ingest a server-local file path via KruschNexus."""
-    try:
-        report = ingest_business_document(
-            file_path=payload.file_path,
-            deal_id=payload.deal_id,
-            doc_type=payload.doc_type,
-            organization=payload.organization,
-            db=db
-        )
-        return report
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Document ingestion error: {e}")
+        logger.error(f"Unexpected file ingestion error: {e}")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
-
-
-@app.post("/api/ingest/mock")
-@app.post("/api/ingest/seed")
-def seed_fixtures(
-    db: Session = Depends(get_db),
-    api_key: str | None = Depends(verify_api_key)
-):
-    """Seed demo corporate contract and policy fixtures into the database."""
-    report = ingest_mock_data(db)
-    return report
-
-
-# --- Export Endpoints ---
-@app.post("/api/consult/export/docx")
-def export_docx(
-    payload: ExportDocxRequest,
-    api_key: str | None = Depends(verify_api_key)
-):
-    """Generate and download a professional Word (.docx) executive memorandum."""
-    docx_bytes = generate_brief_docx(
-        brief_content=payload.brief_content,
-        deal_title=payload.deal_title,
-        deal_code=payload.deal_code,
-        counterparty=payload.counterparty,
-        deal_type=payload.deal_type,
-        claims_audit=payload.claims_audit,
-        retrieved_clauses=payload.retrieved_clauses,
-        disclaimer=payload.disclaimer
-    )
-    filename = f"Executive_Brief_{payload.deal_code or 'DEAL'}.docx"
-    return Response(
-        content=docx_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
-
-
-@app.post("/api/consult/export/md")
-def export_md(
-    payload: ExportDocxRequest,
-    api_key: str | None = Depends(verify_api_key)
-):
-    """Generate and return structured Markdown with audit tables."""
-    md_text = generate_brief_markdown(
-        brief_content=payload.brief_content,
-        deal_title=payload.deal_title,
-        deal_code=payload.deal_code,
-        counterparty=payload.counterparty,
-        deal_type=payload.deal_type,
-        claims_audit=payload.claims_audit,
-        retrieved_clauses=payload.retrieved_clauses,
-        disclaimer=payload.disclaimer
-    )
-    return {"markdown": md_text}

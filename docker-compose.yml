@@ -29,14 +29,14 @@ services:
       - OLLAMA_EMBED_HOST=${OLLAMA_EMBED_HOST:-http://host.docker.internal:11434}
       - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:14b}
       - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-bge-large}
+      - APP_ENV=${APP_ENV:-development}
       - API_KEY=${API_KEY:-}
-      - KRUSCH_NEXUS_PATH=${KRUSCH_NEXUS_PATH:-/nexus/src}
+      - ALLOW_LAN=1
     ports:
       - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8086}:8000"
     volumes:
       - ./src:/app/src
       - ./data:/app/data
-      - ${KRUSCH_NEXUS_DIR:-../krusch-nexus}:/nexus:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -71,11 +71,11 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OLLAMA_EMBED_HOST=${OLLAMA_EMBED_HOST:-http://host.docker.internal:11434}
       - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-bge-large}
-      - KRUSCH_NEXUS_PATH=${KRUSCH_NEXUS_PATH:-/nexus/src}
+      - APP_ENV=${APP_ENV:-development}
+      - ALLOW_LAN=1
     volumes:
       - ./src:/app/src
       - ./data:/app/data
-      - ${KRUSCH_NEXUS_DIR:-../krusch-nexus}:/nexus:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

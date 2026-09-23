@@ -200,6 +200,56 @@ TOOLS_CATALOG = [
             },
             "required": ["file_path"]
         }
+    },
+    {
+        "name": "resolve_controlling_clause",
+        "description": "Traverse the commercial agreement relation graph (AMENDS, SUPERSEDES) to resolve which clause governs a topic as of a specific date.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "counterparty": {
+                    "type": "string",
+                    "description": "Counterparty or vendor name (e.g. 'CloudScale AI')"
+                },
+                "topic": {
+                    "type": "string",
+                    "description": "Canonical commercial topic (e.g. 'PAYMENT_TERMS', 'LIMITATION_OF_LIABILITY', 'SLA_PERFORMANCE')"
+                },
+                "as_of_date": {
+                    "type": "string",
+                    "description": "Optional ISO date (YYYY-MM-DD) for historical or point-in-time resolution"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "description": "Multi-tenant partition identifier",
+                    "default": "org_default"
+                }
+            },
+            "required": ["counterparty", "topic"]
+        }
+    },
+    {
+        "name": "detect_contract_conflicts",
+        "description": "Detect conflicting numeric terms and slot discrepancies (e.g. Net 30 vs Net 45) across concurrently active instruments.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "counterparty": {
+                    "type": "string",
+                    "description": "Counterparty or vendor name"
+                },
+                "as_of_date": {
+                    "type": "string",
+                    "description": "Optional ISO date (YYYY-MM-DD)"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "description": "Multi-tenant partition identifier",
+                    "default": "org_default"
+                }
+            },
+            "required": ["counterparty"]
+        }
     }
 ]
 
@@ -459,6 +509,54 @@ def handle_ingest_document(args: dict[str, Any]) -> dict[str, Any]:
         db.close()
 
 
+def handle_resolve_controlling_clause(args: dict[str, Any]) -> dict[str, Any]:
+    counterparty = args.get("counterparty", "").strip()
+    topic = args.get("topic", "").strip()
+    as_of = args.get("as_of_date")
+    tenant_id = args.get("tenant_id", "org_default")
+    if not counterparty or not topic:
+        return {"error": "Both 'counterparty' and 'topic' are required."}
+
+    from ..backend.resolver import resolve_controlling_clause
+    from datetime import datetime
+    parsed_date = None
+    if as_of:
+        try:
+            parsed_date = datetime.fromisoformat(as_of)
+        except ValueError:
+            return {"error": "Invalid date format. Use ISO format (YYYY-MM-DD)."}
+
+    db = SessionLocal()
+    try:
+        return resolve_controlling_clause(db, tenant_id, counterparty, topic, parsed_date)
+    finally:
+        db.close()
+
+
+def handle_detect_conflicts(args: dict[str, Any]) -> dict[str, Any]:
+    counterparty = args.get("counterparty", "").strip()
+    as_of = args.get("as_of_date")
+    tenant_id = args.get("tenant_id", "org_default")
+    if not counterparty:
+        return {"error": "'counterparty' is required."}
+
+    from ..backend.resolver import detect_contract_conflicts
+    from datetime import datetime
+    parsed_date = None
+    if as_of:
+        try:
+            parsed_date = datetime.fromisoformat(as_of)
+        except ValueError:
+            return {"error": "Invalid date format. Use ISO format (YYYY-MM-DD)."}
+
+    db = SessionLocal()
+    try:
+        conflicts = detect_contract_conflicts(db, tenant_id, counterparty, parsed_date)
+        return {"counterparty": counterparty, "conflicts": conflicts, "total_conflicts": len(conflicts)}
+    finally:
+        db.close()
+
+
 DISPATCHER = {
     "search_contracts_and_policies": handle_search_contracts,
     "get_clause_details": handle_get_clause,
@@ -466,7 +564,9 @@ DISPATCHER = {
     "list_deal_matters": handle_list_deals,
     "draft_deal_brief": handle_draft_brief,
     "get_grounding_audit": handle_get_grounding_audit,
-    "ingest_business_document": handle_ingest_document
+    "ingest_business_document": handle_ingest_document,
+    "resolve_controlling_clause": handle_resolve_controlling_clause,
+    "detect_contract_conflicts": handle_detect_conflicts,
 }
 
 

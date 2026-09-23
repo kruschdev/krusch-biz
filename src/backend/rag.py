@@ -1,10 +1,24 @@
+"""
+src/backend/rag.py
+==================
+Commercial RAG, hybrid retrieval, authority hierarchy weighting,
+and assertion-level proposition grounding engine.
+Features:
+  - Hybrid dense ANN (pgvector / cosine) + full-text lexical search with Reciprocal Rank Fusion
+  - Hierarchical authority weighting and explainable ranking breakdown
+  - Assertion-level proposition grounding scanner with span overlap + structured slot match
+  - Multi-failure taxonomy: INVENTED_CLAUSE, DIVERGENT_TERM, SUPERSEDED_TERM, VERIFIED
+  - Refusal guardrails: CANNOT_DRAFT_WITHOUT_AUTHORITIES, REFUSAL_ALL_AUTHORITIES_SUPERSEDED
+"""
+
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import math
 import re
 import threading
-import uuid
 from collections import OrderedDict
 from typing import Any
 
@@ -14,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import CommercialClauseVector, CommercialGroundingReport
+from .taxonomy import CANONICAL_TOPICS, extract_structured_slots
 
 logger = logging.getLogger("kruschbiz.rag")
 
@@ -59,24 +74,23 @@ COMMERCIAL_ISSUE_RULES: list[dict[str, Any]] = [
         "commercial_terms": "Section 4.2 Late Payment Penalties late interest 1.5 percent per month suspend cloud service ten 10 business days prior written notice"
     },
     {
-        "issue": "Limitation of Liability Cap & Consequential Damages Waiver",
+        "issue": "Mutual Limitation of Liability Cap",
         "domain": "Risk & Indemnification",
         "governing_authorities": "Section 10.1",
         "keywords": [
-            r"\blimitation\s+of\s+liability\b", r"\bliability\s+cap\b", r"\bconsequential\s+damages?\b",
-            r"\bindirect\s+damages?\b", r"\blost\s+profits?\b", r"\blost\s+revenue\b",
-            r"\baggregate\s+liability\b", r"\b12\s+months?\s+fees?\b", r"\bwaive\s+claims\s+for\s+consequential\b",
-            r"\bstandard\s+aggregate\s+liability\b"
+            r"\blimitation\s+of\s+liability\b", r"\bliability\s+cap\b", r"\bconsequential\s+damages\b",
+            r"\btwelve\s*\(12\)\s*months\b", r"\b12\s+months\b", r"\bfees\s+paid\b",
+            r"\baggregate\s+liability\b", r"\bcap\s+on\s+damages\b"
         ],
-        "commercial_terms": "Section 10.1 Limitation of Liability maximum aggregate liability 12 month period fees paid lost profits consequential damages"
+        "commercial_terms": "Section 10.1 Limitation of Liability aggregate liability twelve 12 months preceding incident fees paid lost profits indirect damages"
     },
     {
-        "issue": "Carve-Outs to Limitation of Liability",
+        "issue": "Uncapped Liability Carve-Outs and Exclusions",
         "domain": "Risk & Indemnification",
         "governing_authorities": "Section 10.2",
         "keywords": [
-            r"\bcarve[\s-]?outs?\b", r"\bgross\s+negligence\b", r"\bwillful\s+misconduct\b",
-            r"\bintentional\s+fraud\b", r"\bconfidentiality\s+obligations\s+under\s+section\s*8\b",
+            r"\bcarve[\s-]?outs?\b", r"\buncapped\s+liability\b", r"\bgross\s+negligence\b",
+            r"\bwillful\s+misconduct\b", r"\bbreach\s+of\s+confidentiality\b", r"\bexclusions?\s+from\s+cap\b",
             r"\bexceptions?\s+to\s+liability\b", r"\bnot\s+apply\s+to\b"
         ],
         "commercial_terms": "Section 10.2 Carve-outs and Exclusions gross negligence willful misconduct intentional fraud breach confidentiality Section 8"
@@ -138,22 +152,33 @@ COMMERCIAL_ISSUE_RULES: list[dict[str, Any]] = [
         "domain": "Security & Data Privacy",
         "governing_authorities": "Exhibit C (DPA) Section 3.4",
         "keywords": [
-            r"\bdata\s+breach\b", r"\bsecurity\s+incident\b", r"\bnotification\s+deadline\b",
-            r"\b24\s+hours?\b", r"\btwenty-four\s+\(24\)\s+hours\b", r"\bcommunication\s+channels?\b",
-            r"\bemail\s+and\s+telephone\b", r"\bunauthorized\s+access\b"
+            r"\bsecurity\s+incident\b", r"\bbreach\s+notification\b", r"\b24\s+hours?\b",
+            r"\btwenty-four\s*\(24\)\s*hours?\b", r"\bpersonal\s+data\b", r"\bdata\s+breach\b",
+            r"\bunauthorized\s+access\b", r"\bdaily\s+status\s+briefings\b"
         ],
-        "commercial_terms": "Exhibit C Section 3.4 Security Incident Notification twenty-four 24 hours email telephone unauthorized access personal data"
+        "commercial_terms": "Exhibit C Section 3.4 Security Incident Notification twenty-four 24 hours email telephone daily briefings unauthorized access"
     },
     {
-        "issue": "Commercial Office Lease NNN Operating Expenses",
+        "issue": "Corporate Delegated Authority Approval Thresholds",
+        "domain": "Corporate Governance & Delegated Authority",
+        "governing_authorities": "Article IV Section 4.3",
+        "keywords": [
+            r"\bdelegated\s+authority\b", r"\bsignature\s+authorization\b", r"\bapproval\s+limits?\b",
+            r"\bboard\s+of\s+directors\b", r"\bboard\s+approval\b", r"\$1,?000,?000\b",
+            r"\bexceeding\s+\$1,?000,?000\b", r"\$250,?000\b", r"\$50,?000\b"
+        ],
+        "commercial_terms": "Article IV Section 4.3 Delegated Authority Thresholds signature limits Board Directors 1000000 CEO CFO 250000 VP 50000 Director"
+    },
+    {
+        "issue": "Commercial Office Lease NNN Operating Expenses & CAM",
         "domain": "Real Estate & Leasing",
         "governing_authorities": "Lease § 5.2",
         "keywords": [
-            r"\btriple\s+net\b", r"\bnnn\b", r"\bpro\s*rata\s+share\b", r"\b14\.2%?\b",
-            r"\boperating\s+expenses\b", r"\bcommon\s+area\s+maintenance\b", r"\bcam\b",
-            r"\bexclude\s+capital\s+expenditures\b", r"\bmortgage\s+interest\b", r"\bdepreciation\b"
+            r"\boperating\s+expenses\b", r"\bcam\b", r"\bcommon\s+area\s+maintenance\b",
+            r"\btriple\s+net\b", r"\bnnn\b", r"\bpro\s+rata\s+share\b", r"\b14\.2%?\b",
+            r"\badditional\s+rent\b", r"\bcapital\s+expenditures\b", r"\bmortgage\s+interest\b"
         ],
-        "commercial_terms": "Lease Section 5.2 Operating Expenses Pro Rata Share 14.2% Common Area Maintenance CAM exclude capital expenditures mortgage interest depreciation"
+        "commercial_terms": "Lease Section 5.2 Operating Expenses CAM Common Area Maintenance Pro Rata Share 14.2 percent capital expenditures mortgage interest exclusions"
     },
     {
         "issue": "Commercial Office Lease Annual CAM Audit Rights",
@@ -171,8 +196,8 @@ COMMERCIAL_ISSUE_RULES: list[dict[str, Any]] = [
 
 def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]]]:
     """
-    Spot commercial transaction and deal issues from natural language inquiries
-    and synthesize canonical search terms for contract and policy retrieval.
+    Spot commercial issues from natural language inquiries, extracting structured slots
+    and synthesizing canonical search terms.
     """
     if not text_content or not text_content.strip():
         return text_content, []
@@ -181,6 +206,14 @@ def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]
     collected_terms: list[str] = []
     text_lower = text_content.lower()
 
+    # 1. Closed taxonomy & structured slot extraction
+    topic, slots = extract_structured_slots(text_content)
+    if topic in CANONICAL_TOPICS:
+        collected_terms.append(topic.replace("_", " ").lower())
+    for k, v in slots.items():
+        collected_terms.append(f"{k} {v}")
+
+    # 2. Bootstrapping teacher rules
     for rule in COMMERCIAL_ISSUE_RULES:
         matched = False
         for kw in rule["keywords"]:
@@ -290,71 +323,37 @@ def get_embeddings_batch(queries: list[str]) -> list[list[float]]:
         timeout = max(settings.EMBED_TIMEOUT, settings.EMBED_TIMEOUT * (len(miss_texts) / 8.0))
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(f"{settings.OLLAMA_EMBED_HOST}/api/embed", json=payload)
-            if resp.status_code == 200:
+            if resp.status_code == 404:
+                # Fallback to single queries
+                for mt in miss_texts:
+                    s_resp = client.post(
+                        f"{settings.OLLAMA_EMBED_HOST}/api/embeddings",
+                        json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": mt}
+                    )
+                    s_resp.raise_for_status()
+                    fetched.append(s_resp.json().get("embedding", []))
+            else:
+                resp.raise_for_status()
                 data = resp.json()
-                embeddings = data.get("embeddings", [])
-                if len(embeddings) == len(miss_texts):
-                    fetched = embeddings
-            if not fetched:
-                fetched = [get_embedding(q) for q in miss_texts]
-    except Exception as e:
-        logger.warning(f"Batch embedding request failed ({e}), falling back to sequential embedding.")
-        fetched = [get_embedding(q) for q in miss_texts]
+                fetched = data.get("embeddings", [])
 
-    for idx, text_val, vec in zip(miss_indices, miss_texts, fetched):
-        embedding_cache.set(settings.OLLAMA_EMBED_MODEL, text_val, vec)
-        results[idx] = vec
+        for idx, vec in zip(miss_indices, fetched):
+            embedding_cache.set(settings.OLLAMA_EMBED_MODEL, clean_queries[idx], vec)
+            results[idx] = vec
+
+    except Exception as e:
+        logger.warning(f"Ollama batch embedding generation unavailable ({e}). Using mock vectors for offline mode.")
+        for idx in miss_indices:
+            dummy_vec = [0.05] * settings.EMBEDDING_DIM
+            results[idx] = dummy_vec
 
     return [r for r in results if r is not None]
 
 
 def get_embedding(query: str) -> list[float]:
-    """Generate a vector embedding via Ollama API with LRU cache."""
-    if not query or not query.strip():
-        raise ValueError("Cannot embed empty text.")
-
-    cached = embedding_cache.get(settings.OLLAMA_EMBED_MODEL, query)
-    if cached is not None:
-        return cached
-
-    payload = {
-        "model": settings.OLLAMA_EMBED_MODEL,
-        "input": query
-    }
-
-    try:
-        with httpx.Client(timeout=settings.EMBED_TIMEOUT) as client:
-            resp = client.post(f"{settings.OLLAMA_EMBED_HOST}/api/embed", json=payload)
-            if resp.status_code == 404:
-                resp = client.post(
-                    f"{settings.OLLAMA_EMBED_HOST}/api/embeddings",
-                    json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": query}
-                )
-                resp.raise_for_status()
-                embedding = resp.json().get("embedding", [])
-                if embedding:
-                    embedding_cache.set(settings.OLLAMA_EMBED_MODEL, query, embedding)
-                    return embedding
-                raise ValueError("Legacy Ollama endpoint returned empty embedding.")
-
-            resp.raise_for_status()
-            data = resp.json()
-            embeddings = data.get("embeddings", [])
-            if embeddings and len(embeddings) > 0 and len(embeddings[0]) > 0:
-                result_vec = embeddings[0]
-                embedding_cache.set(settings.OLLAMA_EMBED_MODEL, query, result_vec)
-                return result_vec
-            raise ValueError(f"Ollama returned unexpected payload structure: {data}")
-
-    except httpx.ConnectError as e:
-        logger.error(f"Failed to connect to Ollama embedding service at {settings.OLLAMA_EMBED_HOST}: {e}")
-        raise ConnectionError(
-            f"Could not connect to Ollama at {settings.OLLAMA_EMBED_HOST}. "
-            f"Please verify Ollama is running and has the '{settings.OLLAMA_EMBED_MODEL}' model pulled."
-        ) from e
-    except Exception as e:
-        logger.error(f"Embedding generation error: {e}")
-        raise
+    """Generate vector embedding for single query."""
+    res = get_embeddings_batch([query])
+    return res[0] if res else [0.05] * settings.EMBEDDING_DIM
 
 
 def retrieve_clauses(
@@ -366,27 +365,25 @@ def retrieve_clauses(
     agreement_type: str | None = None,
     domain: str | None = None,
     deal_id: int | None = None,
-    exclude_superseded: bool = True
+    exclude_superseded: bool = True,
+    tenant_id: str = "org_default"
 ) -> list[dict[str, Any]]:
     """
     Hybrid semantic (ANN) + lexical (FTS) retrieval across commercial contracts and policies.
-    Applies Reciprocal Rank Fusion (RRF k=60), authority hierarchy weighting, and section boosting.
+    Applies Reciprocal Rank Fusion, hierarchical authority weighting, and explainability tracking.
     """
     if not query or not query.strip():
         return []
 
     expanded_query, spotted_issues = expand_commercial_query(query)
-
     is_sqlite = db.bind.dialect.name == "sqlite"
 
-    # 1. Fetch query vector embedding
     query_vector = None
     try:
         query_vector = get_embedding(expanded_query)
     except Exception as e:
-        logger.warning(f"Could not generate vector embedding for search ({e}), relying on lexical retrieval.")
+        logger.warning(f"Could not generate vector embedding for search ({e}), relying on lexical.")
 
-    # 2. Extract explicit quoted phrases, section markers, and spotted authorities for boosting
     quoted_phrases = re.findall(r'"([^"]+)"', query)
     section_patterns = re.findall(
         r'(?:section|clause|art(?:icle)?|lease\s*§|§)\s*([\w\.\-]+(?:\([a-zA-Z\d]+\))*)',
@@ -398,7 +395,6 @@ def retrieve_clauses(
     raw_candidates: dict[int, dict[str, Any]] = {}
 
     if not is_sqlite and query_vector is not None:
-        # PostgreSQL with pgvector & tsvector
         try:
             vec_str = json.dumps(query_vector)
             sql = """
@@ -408,6 +404,7 @@ def retrieve_clauses(
                            ROW_NUMBER() OVER (ORDER BY embedding <=> :query_vector::vector) as v_rank
                     FROM commercial_clauses_vectors
                     WHERE embedding IS NOT NULL
+                      AND tenant_id = :tenant_id
                       AND (:organization IS NULL OR organization ILIKE :organization)
                       AND (:agreement_type IS NULL OR agreement_type ILIKE :agreement_type)
                       AND (:domain IS NULL OR domain ILIKE :domain)
@@ -427,7 +424,8 @@ def retrieve_clauses(
                                ) DESC
                            ) as f_rank
                     FROM commercial_clauses_vectors
-                    WHERE to_tsvector('english', coalesce(title, '') || ' ' || coalesce(section, '') || ' ' || coalesce(content, '')) @@ plainto_tsquery('english', :query)
+                    WHERE tenant_id = :tenant_id
+                      AND to_tsvector('english', coalesce(title, '') || ' ' || coalesce(section, '') || ' ' || coalesce(content, '')) @@ plainto_tsquery('english', :query)
                       AND (:organization IS NULL OR organization ILIKE :organization)
                       AND (:agreement_type IS NULL OR agreement_type ILIKE :agreement_type)
                       AND (:domain IS NULL OR domain ILIKE :domain)
@@ -437,38 +435,61 @@ def retrieve_clauses(
                 SELECT c.id, c.organization, c.counterparty, c.agreement_type, c.domain,
                        c.title, c.section, c.parent_section, c.hierarchy_level,
                        c.definitions_ref, c.exceptions_ref, c.authority_class,
-                       c.effective_date, c.expiration_date, c.amended_date,
-                       c.superseded, c.terminated, c.superseded_by, c.source_url,
-                       c.content, c.source_header, c.source_hash,
-                       coalesce(v.sim_score, 0.0) as sim_score,
-                       coalesce(f.fts_score, 0.0) as fts_score,
-                       coalesce(1.0 / (60.0 + v.v_rank), 0.0) + coalesce(1.0 / (60.0 + f.f_rank), 0.0) as rrf_score
+                       c.effective_date, c.superseded, c.terminated, c.superseded_by,
+                       c.source_url, c.content, c.structured_slots,
+                       COALESCE(vr.sim_score, 0.0) as vector_score,
+                       COALESCE(fr.fts_score, 0.0) as fts_score,
+                       COALESCE(1.0 / (60 + vr.v_rank), 0.0) + COALESCE(1.0 / (60 + fr.f_rank), 0.0) as rrf_score
                 FROM commercial_clauses_vectors c
-                LEFT JOIN vector_ranks v ON c.id = v.id
-                LEFT JOIN fts_ranks f ON c.id = f.id
-                WHERE (v.id IS NOT NULL OR f.id IS NOT NULL)
+                LEFT JOIN vector_ranks vr ON c.id = vr.id
+                LEFT JOIN fts_ranks fr ON c.id = fr.id
+                WHERE vr.id IS NOT NULL OR fr.id IS NOT NULL;
             """
             params = {
                 "query_vector": vec_str,
                 "query": query,
-                "organization": f"%{organization}%" if organization else None,
-                "agreement_type": f"%{agreement_type}%" if agreement_type else None,
-                "domain": f"%{domain}%" if domain else None,
+                "tenant_id": tenant_id,
+                "organization": organization,
+                "agreement_type": agreement_type,
+                "domain": domain,
                 "exclude_superseded": exclude_superseded,
             }
-            rows = db.execute(text(sql), params).fetchall()
-            for r in rows:
-                raw_candidates[r.id] = dict(r._mapping)
+            results = db.execute(text(sql), params).fetchall()
+            for r in results:
+                raw_candidates[r.id] = {
+                    "id": r.id,
+                    "organization": r.organization,
+                    "counterparty": r.counterparty,
+                    "agreement_type": r.agreement_type,
+                    "domain": r.domain,
+                    "title": r.title,
+                    "section": r.section,
+                    "parent_section": r.parent_section,
+                    "hierarchy_level": r.hierarchy_level,
+                    "definitions_ref": r.definitions_ref,
+                    "exceptions_ref": r.exceptions_ref,
+                    "authority_class": r.authority_class,
+                    "effective_date": r.effective_date,
+                    "superseded": r.superseded,
+                    "terminated": r.terminated,
+                    "superseded_by": r.superseded_by,
+                    "source_url": r.source_url,
+                    "content": r.content,
+                    "structured_slots": r.structured_slots,
+                    "vector_score": float(r.vector_score),
+                    "lexical_score": float(r.fts_score),
+                    "score": float(r.rrf_score),
+                }
         except Exception as e:
-            logger.warning(f"PostgreSQL hybrid search error ({e}), falling back to ORM query.")
+            logger.warning(f"PostgreSQL hybrid query fallback to ORM search: {e}")
+            raw_candidates.clear()
 
     if not raw_candidates:
-        # Fallback ORM / SQLite search
-        base_query = db.query(CommercialClauseVector)
+        base_query = db.query(CommercialClauseVector).filter(CommercialClauseVector.tenant_id == tenant_id)
         if exclude_superseded:
             base_query = base_query.filter(
-                CommercialClauseVector.superseded == False,
-                CommercialClauseVector.terminated == False
+                CommercialClauseVector.superseded.is_(False),
+                CommercialClauseVector.terminated.is_(False)
             )
         if organization:
             base_query = base_query.filter(CommercialClauseVector.organization.ilike(f"%{organization}%"))
@@ -477,29 +498,30 @@ def retrieve_clauses(
         if domain:
             base_query = base_query.filter(CommercialClauseVector.domain.ilike(f"%{domain}%"))
 
-        all_records = base_query.all()
-        tokens = [t.lower() for t in re.findall(r'\w+', expanded_query) if len(t) > 2]
+        all_clauses = base_query.all()
+        query_words = set(re.findall(r'\w+', expanded_query.lower()))
 
-        for c in all_records:
-            haystack = f"{c.title or ''} {c.section or ''} {c.content or ''} {c.organization or ''} {c.agreement_type or ''}".lower()
-            token_matches = sum(1 for tok in tokens if tok in haystack)
-            fts_score = (token_matches / max(len(tokens), 1))
+        for c in all_clauses:
+            text_to_search = f"{c.title or ''} {c.section or ''} {c.content or ''}".lower()
+            clause_words = set(re.findall(r'\w+', text_to_search))
 
-            sim_score = 0.0
-            if query_vector is not None and c.embedding is not None:
+            overlap = len(query_words.intersection(clause_words))
+            lex_score = overlap / (len(query_words) + 1e-5)
+
+            vec_score = 0.0
+            if query_vector is not None and c.embedding:
                 try:
                     c_vec = c.embedding if isinstance(c.embedding, list) else json.loads(c.embedding)
-                    # Cosine similarity
                     dot = sum(a * b for a, b in zip(query_vector, c_vec))
                     norm_a = math.sqrt(sum(a * a for a in query_vector))
                     norm_b = math.sqrt(sum(b * b for b in c_vec))
                     if norm_a > 0 and norm_b > 0:
-                        sim_score = dot / (norm_a * norm_b)
+                        vec_score = max(0.0, dot / (norm_a * norm_b))
                 except Exception:
-                    pass
+                    vec_score = 0.0
 
-            rrf_score = (fts_score * 0.5) + (max(0.0, sim_score) * 0.5)
-            if token_matches > 0 or sim_score > 0.4:
+            combined_score = 0.5 * lex_score + 0.5 * vec_score
+            if combined_score > 0.01 or overlap > 0:
                 raw_candidates[c.id] = {
                     "id": c.id,
                     "organization": c.organization,
@@ -514,186 +536,101 @@ def retrieve_clauses(
                     "exceptions_ref": c.exceptions_ref,
                     "authority_class": c.authority_class,
                     "effective_date": c.effective_date,
-                    "expiration_date": c.expiration_date,
-                    "amended_date": c.amended_date,
                     "superseded": c.superseded,
                     "terminated": c.terminated,
                     "superseded_by": c.superseded_by,
                     "source_url": c.source_url,
                     "content": c.content,
-                    "source_header": c.source_header,
-                    "source_hash": c.source_hash,
-                    "sim_score": sim_score,
-                    "fts_score": fts_score,
-                    "rrf_score": rrf_score
+                    "structured_slots": c.structured_slots,
+                    "vector_score": vec_score,
+                    "lexical_score": lex_score,
+                    "score": combined_score,
                 }
 
-    # 3. Apply authority weights, phrase boosts, and section match boosts
-    scored_items = []
-    for item_id, item in raw_candidates.items():
-        score = float(item.get("rrf_score", 0.0))
+    # 3. Apply authority class weighting, exact section boost, and explainability breakdown
+    scored_list = []
+    for cand in raw_candidates.values():
+        score = cand["score"]
+        auth_class = cand.get("authority_class", "governing_agreement")
+        auth_mult = AUTHORITY_WEIGHTS.get(auth_class, 1.0)
+        score *= auth_mult
 
-        # Authority hierarchy weight
-        auth_class = item.get("authority_class", "governing_agreement")
-        weight = AUTHORITY_WEIGHTS.get(auth_class, 1.0)
-        score *= weight
+        section_str = cand.get("section", "").lower()
+        title_str = cand.get("title", "").lower()
+        content_lower = cand.get("content", "").lower()
 
-        # Phrase boosting
-        content_lower = item.get("content", "").lower()
-        title_lower = (item.get("title") or "").lower()
+        boost = 1.0
+        for pat in section_patterns:
+            clean_pat = re.sub(r'[^\w\.]', '', pat.lower())
+            if clean_pat and (clean_pat in section_str or clean_pat in title_str):
+                boost *= 1.4
+
         for phrase in quoted_phrases:
-            phrase_clean = phrase.lower().strip()
-            if phrase_clean in content_lower or phrase_clean in title_lower:
-                score += 0.35
+            if phrase.lower() in content_lower:
+                boost *= 1.25
 
-        # Section symbol / number boost
-        item_sec = (item.get("section") or "").lower()
-        for sec in section_patterns:
-            if sec.lower() in item_sec or item_sec in sec.lower():
-                score += 0.50
+        for sp_auth in spotted_auths:
+            if sp_auth in section_str or sp_auth in title_str:
+                boost *= 1.6
+                break
 
-        # Spotted authority direct boost
-        for sa in spotted_auths:
-            if any(tok.strip() and tok.strip() in item_sec for tok in sa.split(",")):
-                score += 0.85
+        score *= boost
+        cand["score"] = score
+        cand["explanation"] = {
+            "lexical_score": round(cand.get("lexical_score", 0.0), 3),
+            "vector_score": round(cand.get("vector_score", 0.0), 3),
+            "authority_class": auth_class,
+            "authority_weight": round(auth_mult, 2),
+            "spotted_boost": round(boost, 2),
+            "final_score": round(score, 3),
+            "controlling_status": "superseded" if cand.get("superseded") else "active",
+            "structured_slots": cand.get("structured_slots") or {}
+        }
+        scored_list.append(cand)
 
-        # Substantive penalty if purely TOC or placeholder
-        if item.get("hierarchy_level") == "definitions" and "definition" not in query.lower():
-            score *= 0.95
-
-        scored_items.append((score, item))
-
-    # Sort descending by composite score
-    scored_items.sort(key=lambda x: x[0], reverse=True)
-    top_candidates = [item for _, item in scored_items[offset:offset + limit]]
-
-    # 4. Graph Hydration: Hydrate referenced definitions and exception clauses
-    hydrated_results = list(top_candidates)
-    existing_sections = {c.get("section") for c in hydrated_results if c.get("section")}
-
-    for cand in top_candidates:
-        def_ref = cand.get("definitions_ref")
-        if def_ref and def_ref not in existing_sections:
-            def_record = db.query(CommercialClauseVector).filter(
-                CommercialClauseVector.section == def_ref,
-                CommercialClauseVector.organization == cand.get("organization")
-            ).first()
-            if def_record:
-                hydrated_results.append({
-                    "id": def_record.id,
-                    "organization": def_record.organization,
-                    "counterparty": def_record.counterparty,
-                    "agreement_type": def_record.agreement_type,
-                    "domain": def_record.domain,
-                    "title": f"[Hydrated Definition] {def_record.title}",
-                    "section": def_record.section,
-                    "parent_section": def_record.parent_section,
-                    "hierarchy_level": "definitions",
-                    "definitions_ref": None,
-                    "exceptions_ref": None,
-                    "authority_class": def_record.authority_class,
-                    "effective_date": def_record.effective_date,
-                    "expiration_date": def_record.expiration_date,
-                    "amended_date": def_record.amended_date,
-                    "superseded": def_record.superseded,
-                    "terminated": def_record.terminated,
-                    "superseded_by": def_record.superseded_by,
-                    "source_url": def_record.source_url,
-                    "content": def_record.content,
-                    "source_header": def_record.source_header,
-                    "source_hash": def_record.source_hash,
-                    "sim_score": 0.5,
-                    "fts_score": 0.5,
-                    "rrf_score": 0.5,
-                    "is_hydrated": True
-                })
-                existing_sections.add(def_ref)
-
-        exc_ref = cand.get("exceptions_ref")
-        if exc_ref and exc_ref not in existing_sections:
-            exc_record = db.query(CommercialClauseVector).filter(
-                CommercialClauseVector.section == exc_ref,
-                CommercialClauseVector.organization == cand.get("organization")
-            ).first()
-            if exc_record:
-                hydrated_results.append({
-                    "id": exc_record.id,
-                    "organization": exc_record.organization,
-                    "counterparty": exc_record.counterparty,
-                    "agreement_type": exc_record.agreement_type,
-                    "domain": exc_record.domain,
-                    "title": f"[Hydrated Exception] {exc_record.title}",
-                    "section": exc_record.section,
-                    "parent_section": exc_record.parent_section,
-                    "hierarchy_level": "exceptions",
-                    "definitions_ref": None,
-                    "exceptions_ref": None,
-                    "authority_class": exc_record.authority_class,
-                    "effective_date": exc_record.effective_date,
-                    "expiration_date": exc_record.expiration_date,
-                    "amended_date": exc_record.amended_date,
-                    "superseded": exc_record.superseded,
-                    "terminated": exc_record.terminated,
-                    "superseded_by": exc_record.superseded_by,
-                    "source_url": exc_record.source_url,
-                    "content": exc_record.content,
-                    "source_header": exc_record.source_header,
-                    "source_hash": exc_record.source_hash,
-                    "sim_score": 0.5,
-                    "fts_score": 0.5,
-                    "rrf_score": 0.5,
-                    "is_hydrated": True
-                })
-                existing_sections.add(exc_ref)
-
-    return hydrated_results
+    scored_list.sort(key=lambda x: x["score"], reverse=True)
+    return scored_list[offset:offset + limit]
 
 
 def verify_commercial_grounding(
     analysis_text: str,
-    clauses: list[dict[str, Any]],
-    evidence: list[dict[str, Any]] | None = None
+    retrieved_clauses: list[dict[str, Any]],
+    allow_refusal: bool = True
 ) -> tuple[bool, list[dict[str, Any]], str, dict[str, Any]]:
     """
-    Assertion-level grounding scanner for corporate deals, executive memos, and contract reviews.
-    Decomposes analysis into propositions, cross-references with retrieved authorities & exhibits,
-    and classifies failures:
-      - invented_clause: Cites non-existent contract section or phantom SLA.
-      - divergent_term: Cites genuine section but misstates commercial terms (wrong cap, altered notice days).
-      - superseded_term: Cites an expired, amended, or terminated agreement.
-      - verified_grounded: Verbatim or strong overlap with source clause and citation locator.
+    Verify commercial assertions and citations in generated text against retrieved clauses.
+    Applies:
+      1. Section citation presence check (detects INVENTED_CLAUSE)
+      2. Superseded agreement check (detects SUPERSEDED_TERM)
+      3. Structured slot matching: compares numbers, days, percentages (detects DIVERGENT_TERM)
+      4. Text span overlap validation
     """
-    if not clauses and not evidence:
-        return False, [], "> ⚠️ **Warning: No authorities or evidence available to verify claims.**", {
-            "total_claims": 0, "supported_claims": 0, "unsupported_claims": 0,
-            "invented_clauses": 0, "superseded_terms": 0, "pass_rate": 0.0
-        }
+    if not analysis_text or not analysis_text.strip():
+        return False, [], "Analysis text is empty.", {"pass_rate": 0.0}
 
+    # Map known sections for fast retrieval
     known_sections: dict[str, dict[str, Any]] = {}
-    for c in clauses:
+    for c in retrieved_clauses:
         sec = c.get("section")
         if sec:
+            clean_sec = re.sub(r'^(?:Section|Clause|Article|Lease §|Exhibit [A-Z] \(SLA\) Section|Exhibit [A-Z] \(DPA\) Section|§)\s*', '', sec, flags=re.IGNORECASE).strip()
+            known_sections[clean_sec.lower()] = c
             known_sections[sec.lower()] = c
-            # Also register clean alphanumeric tokens
-            clean_sec = re.sub(r'[^\w\.]', '', sec.lower())
-            known_sections[clean_sec] = c
+            alpha_num_sec = re.sub(r'[^\w\.]', '', sec.lower())
+            known_sections[alpha_num_sec] = c
 
-    # Extract claims & citations from analysis
-    # Matches patterns like:
-    # "Under Section 10.1, the aggregate liability is capped..."
-    # "Pursuant to Clause 4.2..."
-    # "Section 8.22.030 requires..."
     claim_records: list[dict[str, Any]] = []
-
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', analysis_text) if s.strip()]
+
     total_claims = 0
     supported_claims = 0
     unsupported_claims = 0
     invented_clauses = 0
+    divergent_terms = 0
     superseded_terms = 0
 
     citation_pattern = re.compile(
-        r'(?:Section|Clause|Art(?:icle)?|Exhibit|§)\s*([\w\.\-]+(?:\([a-zA-Z\d]+\))*)',
+        r'((?:(?:Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Article\s+[IVXLCDM\d]+|Lease)\s*,?\s*)?(?:Section|Clause|§)\s*[\w\.\-]+(?:\([a-zA-Z\d]+\))*|Exhibit\s+[A-Za-z\d]+|Lease\s*§\s*[\w\.\-]+)',
         re.IGNORECASE
     )
 
@@ -705,15 +642,18 @@ def verify_commercial_grounding(
         for m in matches:
             total_claims += 1
             cited_sec_raw = m.group(0)
-            cited_sec_clean = m.group(1).lower().strip()
+            cited_sec_clean = cited_sec_raw.lower().strip()
             clean_token = re.sub(r'[^\w\.]', '', cited_sec_clean)
+            stripped_sec = re.sub(r'^(?:section|clause|article|lease\s*§|§)\s*', '', cited_sec_clean).strip()
 
             matching_clause = (
                 known_sections.get(cited_sec_clean)
                 or known_sections.get(clean_token)
+                or known_sections.get(stripped_sec)
                 or next((c for k, c in known_sections.items() if clean_token in k or k in clean_token), None)
             )
 
+            # 1. Check: Invented clause
             if not matching_clause:
                 invented_clauses += 1
                 unsupported_claims += 1
@@ -728,6 +668,7 @@ def verify_commercial_grounding(
                 })
                 continue
 
+            # 2. Check: Superseded term
             if matching_clause.get("superseded") or matching_clause.get("terminated"):
                 superseded_terms += 1
                 unsupported_claims += 1
@@ -737,12 +678,43 @@ def verify_commercial_grounding(
                     "cited_authority": cited_sec_raw,
                     "status": "superseded_term",
                     "failure_mode": "SUPERSEDED_TERM",
-                    "details": f"Authority '{cited_sec_raw}' is marked as superseded or terminated (replaced by: {matching_clause.get('superseded_by', 'amendment')}).",
+                    "details": f"Authority '{cited_sec_raw}' is superseded / inoperative (superseded by: {matching_clause.get('superseded_by', 'controlling agreement')}).",
                     "evidence_span": matching_clause.get("content", "")[:180] + "..."
                 })
                 continue
 
-            # Check textual overlap between sentence and clause content
+            # 3. Check: Structured slot discrepancy (e.g. Net 45 vs Net 30, $2M vs $1M)
+            _, sent_slots = extract_structured_slots(sentence)
+            clause_slots = matching_clause.get("structured_slots") or {}
+            if not clause_slots:
+                _, clause_slots = extract_structured_slots(matching_clause.get("content", ""))
+
+            slot_divergence = False
+            divergence_reason = ""
+            for skey in ("net_days", "uptime_pct", "late_interest_pct", "cap_period_months", "cap_amount", "notice_hours", "notice_days", "credit_pct"):
+                if skey in sent_slots and skey in clause_slots:
+                    val_sent = sent_slots[skey]
+                    val_clause = clause_slots[skey]
+                    if val_sent != val_clause:
+                        slot_divergence = True
+                        divergence_reason = f"Asserted slot '{skey}={val_sent}' diverges from contract authority '{skey}={val_clause}'."
+                        break
+
+            if slot_divergence:
+                divergent_terms += 1
+                unsupported_claims += 1
+                claim_records.append({
+                    "claim_id": f"claim_{total_claims}",
+                    "sentence": sentence,
+                    "cited_authority": cited_sec_raw,
+                    "status": "divergent_term",
+                    "failure_mode": "DIVERGENT_TERM",
+                    "details": divergence_reason,
+                    "evidence_span": matching_clause.get("content", "")[:180] + "..."
+                })
+                continue
+
+            # 4. Check: Lexical / token span overlap
             content = matching_clause.get("content", "")
             sent_words = set(re.findall(r'\w{4,}', sentence.lower()))
             content_words = set(re.findall(r'\w{4,}', content.lower()))
@@ -761,6 +733,7 @@ def verify_commercial_grounding(
                     "evidence_span": span_match
                 })
             else:
+                divergent_terms += 1
                 unsupported_claims += 1
                 claim_records.append({
                     "claim_id": f"claim_{total_claims}",
@@ -779,18 +752,14 @@ def verify_commercial_grounding(
         pass_rate = round((supported_claims / total_claims) * 100.0, 1)
         if pass_rate < 100.0:
             advisory_md = (
-                f"> ⚠️ **Commercial Assertion Grounding Advisory (Pass Rate: {pass_rate}%)**:\n"
-                f"> - **Total Proposition Claims**: {total_claims}\n"
-                f"> - **Verified Grounded Claims**: {supported_claims}\n"
-                f"> - **Invented / Phantom Clauses**: {invented_clauses}\n"
-                f"> - **Superseded / Expired Clauses**: {superseded_terms}\n"
-                f"> - **Divergent Commercial Terms**: {unsupported_claims - invented_clauses - superseded_terms}\n"
-                "> Independent verification against primary signed agreements is mandatory."
+                f"> ⚠️ **COMMERCIAL GROUNDING WARNING**: Only {supported_claims}/{total_claims} assertions ({pass_rate}%) "
+                f"are verified against the governing contract graph. "
+                f"{invented_clauses} invented clause(s), {divergent_terms} divergent term(s), and {superseded_terms} superseded term(s) detected."
             )
         else:
             advisory_md = (
-                f"> 🛡️ **Commercial Assertion Grounding Verified (Pass Rate: 100%)**: "
-                f"All {total_claims} assertions and contractual citations correspond directly to verified governing agreements."
+                f"> 🛡️ **COMMERCIAL GROUNDING VERIFIED**: 100% of asserted terms ({total_claims}/{total_claims}) "
+                f"are fully supported by active, controlling contractual authorities."
             )
 
     stats = {
@@ -798,10 +767,11 @@ def verify_commercial_grounding(
         "supported_claims": supported_claims,
         "unsupported_claims": unsupported_claims,
         "invented_clauses": invented_clauses,
+        "divergent_terms": divergent_terms,
         "superseded_terms": superseded_terms,
         "pass_rate": pass_rate
     }
-    is_grounded = (pass_rate >= 90.0 and invented_clauses == 0 and superseded_terms == 0)
+    is_grounded = (unsupported_claims == 0)
     return is_grounded, claim_records, advisory_md, stats
 
 
@@ -809,95 +779,112 @@ def generate_executive_brief(
     deal_title: str,
     context_facts: str,
     clauses: list[dict[str, Any]],
-    evidence: list[dict[str, Any]] | None = None,
-    deal_code: str | None = None,
     counterparty: str | None = None,
     deal_type: str | None = None,
+    deal_code: str | None = None,
     deal_id: int | None = None,
-    db: Session | None = None
+    db: Any = None,
+    model: str | None = None,
+    temperature: float = 0.1,
+    tenant_id: str = "org_default",
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
     """
-    Generate structured corporate executive analysis grounding deal facts with retrieved agreements.
-    Refuses if zero relevant contractual authorities exist.
+    Generate an executive commercial brief grounded in retrieved authorities.
+    Refuses drafting if:
+      - No authorities exist (CANNOT_DRAFT_WITHOUT_AUTHORITIES)
+      - All authorities are superseded (REFUSAL_ALL_AUTHORITIES_SUPERSEDED)
+    Persists GroundingAudit report to database if db and deal_id are provided.
     """
+    # 1. Guardrail Refusal: No Authorities
     if not clauses:
-        refusal = (
-            f"# Executive Commercial Memorandum: {deal_title}\n\n"
-            f"> 🛑 **CANNOT_DRAFT_WITHOUT_AUTHORITIES**: KruschBiz strictly refuses to draft an executive "
-            f"commercial brief without verified governing agreements or commercial policy authorities in the corpus. "
-            f"Please ingest the relevant Master Services Agreement, Statement of Work, or corporate policy to continue."
+        refusal_msg = (
+            "CANNOT_DRAFT_WITHOUT_AUTHORITIES: Insufficient governing contracts, amendments, or corporate policies "
+            "found in the local commercial graph to substantiate this deal review. "
+            "Please ingest the governing Master Agreement, SLA, or SOW before requesting executive synthesis."
         )
-        return refusal, {
-            "total_claims": 0, "supported_claims": 0, "unsupported_claims": 0,
-            "invented_clauses": 0, "superseded_terms": 0, "pass_rate": 0.0
-        }, []
+        stats = {
+            "total_claims": 0,
+            "supported_claims": 0,
+            "unsupported_claims": 0,
+            "invented_clauses": 0,
+            "divergent_terms": 0,
+            "superseded_terms": 0,
+            "pass_rate": 0.0,
+            "refusal_reason": "CANNOT_DRAFT_WITHOUT_AUTHORITIES"
+        }
+        return refusal_msg, stats, []
 
-    # Format clauses for LLM context prompt
-    clause_bullets = []
-    for c in clauses:
-        sec = c.get("section") or "General"
-        auth = c.get("authority_class") or "Agreement"
-        title = c.get("title") or sec
-        content = c.get("content") or ""
-        clause_bullets.append(f"[{auth.upper()}] {title} ({sec}):\n{content}")
+    # 2. Guardrail Refusal: All Authorities Superseded
+    if all(c.get("superseded", False) or c.get("terminated", False) for c in clauses):
+        refusal_msg = (
+            "REFUSAL_ALL_AUTHORITIES_SUPERSEDED: All governing authorities retrieved for this commercial matter "
+            "are superseded, terminated, or expired instruments. "
+            "Executive briefs cannot be drafted against inoperative terms. Please ingest active controlling agreements."
+        )
+        stats = {
+            "total_claims": 0,
+            "supported_claims": 0,
+            "unsupported_claims": 0,
+            "invented_clauses": 0,
+            "divergent_terms": 0,
+            "superseded_terms": len(clauses),
+            "pass_rate": 0.0,
+            "refusal_reason": "REFUSAL_ALL_AUTHORITIES_SUPERSEDED"
+        }
+        return refusal_msg, stats, []
 
-    clauses_block = "\n\n".join(clause_bullets)
+    model_name = model or settings.OLLAMA_LLM_MODEL
+    authorities_text = ""
+    for idx, c in enumerate(clauses[:5], 1):
+        authorities_text += (
+            f"[{idx}] {c.get('agreement_type')} | {c.get('section', 'General')} ({c.get('title', '')}):\n"
+            f"{c.get('content', '')}\n\n"
+        )
 
-    evidence_bullets = []
-    if evidence:
-        for ev in evidence:
-            loc = ev.get("section_locator") or f"p.{ev.get('page_number')}"
-            evidence_bullets.append(f"[{ev.get('filename')} - {loc}]: {ev.get('content', '')[:300]}")
-    evidence_block = "\n".join(evidence_bullets) if evidence_bullets else "None provided."
+    system_prompt = (
+        "You are an executive commercial counsel and corporate deal strategist. "
+        "Your task is to draft a rigorous, balanced Executive Commercial Memorandum. "
+        "Strict Rule: Every factual obligation, cap, SLA metric, and penalty MUST be explicitly cited to one of the "
+        "governing authorities provided below (e.g. 'Pursuant to Section 4.1...'). "
+        "Never invent sections or obligations not present in the authorities."
+    )
 
-    prompt = f"""You are KruschBiz, a sovereign on-premise corporate intelligence and contract review engine.
-Analyze the following corporate transaction and produce a formal, high-impact 4-Part Executive Deal Memorandum.
-
-TRANSACTION DETAILS:
-- Deal Code: {deal_code or 'DEAL-INTERNAL'}
-- Deal Title: {deal_title}
-- Counterparty: {counterparty or 'Confidential'}
-- Transaction Type: {deal_type or 'Commercial Agreement'}
-
-BACKGROUND CONTEXT & FACTS:
+    user_prompt = f"""
+TRANSACTION: {deal_title}
+COUNTERPARTY: {counterparty or 'Counterparty'}
+TYPE: {deal_type or 'Commercial Transaction'}
+BACKGROUND / DEAL FACTS:
 {context_facts}
 
-RETRIEVED CONTRACTUAL AUTHORITIES & POLICIES:
-{clauses_block}
+GOVERNING AUTHORITIES:
+{authorities_text}
 
-DEAL ROOM DISCOVERY EXHIBITS:
-{evidence_block}
-
-INSTRUCTIONS:
-1. Ground every legal and commercial finding strictly in the retrieved authorities.
-2. Cite specific sections (e.g. Section 10.1, Exhibit B, Clause 4.2). Do NOT invent sections or terms.
-3. Structure your response into exactly four sections:
-   # I. KEY COMMERCIAL TERMS & TRANSACTION OVERVIEW
-   # II. MATERIAL RISK EXPOSURE & CARVE-OUTS
-   # III. OPERATIONAL, SLA & COMPLIANCE ALIGNMENT
-   # IV. STRATEGIC RECOMMENDATIONS & REDLINE PRIORITIES
+Draft the Executive Commercial Memorandum with 4 sections:
+I. KEY COMMERCIAL TERMS & TRANSACTION OVERVIEW
+II. MATERIAL RISK EXPOSURE & CARVE-OUTS
+III. OPERATIONAL, SLA & COMPLIANCE ALIGNMENT
+IV. STRATEGIC RECOMMENDATIONS & REDLINE PRIORITIES
 """
 
-    analysis_text = ""
-    # Try local Ollama inference
+    analysis_text = None
     try:
         with httpx.Client(timeout=settings.LLM_TIMEOUT) as client:
             resp = client.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
-                    "model": settings.OLLAMA_LLM_MODEL,
-                    "prompt": prompt,
+                    "model": model_name,
+                    "prompt": user_prompt,
+                    "system": system_prompt,
                     "stream": False,
-                    "options": {"temperature": 0.1, "top_p": 0.9}
+                    "options": {"temperature": temperature}
                 }
             )
             if resp.status_code == 200:
-                analysis_text = resp.json().get("response", "")
+                analysis_text = resp.json().get("response")
     except Exception as e:
-        logger.warning(f"Ollama LLM generation unavailable ({e}), generating deterministic structured template.")
+        logger.warning(f"Ollama generation unavailable ({e}). Using deterministic executive template.")
 
     if not analysis_text:
-        # High quality deterministic template for offline/mock mode
         c0 = clauses[0]
         sec0 = c0.get("section", "Section 1.1")
         title0 = c0.get("title", "Governing Agreement")
@@ -915,39 +902,32 @@ A critical review of the risk architecture indicates significant exposure requir
 Operational parameters demand strict enforcement of service delivery benchmarks. In accordance with {sec0}, performance metrics, maintenance schedules, and audit verification windows require continuous monitoring. Any divergence between operational actuals and agreed terms triggers formal remedy mechanisms.
 
 ## IV. STRATEGIC RECOMMENDATIONS & REDLINE PRIORITIES
-1. Formalize redlines to {sec0} to ensure unambiguous liability protections.
-2. Mandate audit verification rights prior to contract execution.
-3. Require confirmation of cyber liability and business insurance coverage.
+1. **Preserve Carve-Out Invariants**: Maintain uncapped exposure exceptions under {sec0}.
+2. **Harmonize Invoicing Benchmarks**: Verify payment milestones and credit calculations prior to execution.
+3. **Audit Execution**: Exercise scheduled verification rights to validate compliance with data security and SLA thresholds.
 """
 
-    # Run assertion-level grounding scan
-    is_grounded, claim_records, advisory_md, stats = verify_commercial_grounding(analysis_text, clauses, evidence)
+    is_grounded, claims, advisory, stats = verify_commercial_grounding(analysis_text, clauses)
 
-    # Persist report if db session provided
     if db is not None and deal_id is not None:
         try:
             report = CommercialGroundingReport(
-                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
                 deal_id=deal_id,
-                total_claims=stats["total_claims"],
-                supported_claims=stats["supported_claims"],
-                unsupported_claims=stats["unsupported_claims"],
-                invented_clauses=stats["invented_clauses"],
-                superseded_terms=stats["superseded_terms"],
-                pass_rate=stats["pass_rate"],
-                claims_json=json.dumps(claim_records),
-                advisory_markdown=advisory_md
+                total_claims=stats.get("total_claims", 0),
+                supported_claims=stats.get("supported_claims", 0),
+                unsupported_claims=stats.get("unsupported_claims", 0),
+                invented_clauses=stats.get("invented_clauses", 0),
+                divergent_terms=stats.get("divergent_terms", 0),
+                superseded_terms=stats.get("superseded_terms", 0),
+                pass_rate=stats.get("pass_rate", 100.0),
+                claims_json=json.dumps(claims),
+                advisory_markdown=advisory
             )
             db.add(report)
             db.commit()
-        except Exception as pe:
-            logger.warning(f"Could not persist CommercialGroundingReport: {pe}")
-            db.rollback()
+        except Exception as e:
+            logger.warning(f"Failed to persist grounding report for deal {deal_id}: {e}")
 
-    full_response = (
-        f"{analysis_text}\n\n---\n\n"
-        f"{advisory_md}\n\n---\n\n"
-        f"> 💼 **Corporate Governance Notice**:\n> {COMMERCIAL_DISCLAIMER}"
-    )
-
-    return full_response, stats, claim_records
+    full_output = f"{analysis_text}\n\n{advisory}\n\n---\n*{COMMERCIAL_DISCLAIMER}*"
+    return full_output, stats, claims

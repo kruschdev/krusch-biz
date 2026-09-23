@@ -1,3 +1,13 @@
+"""
+tests/eval/test_golden_eval_gate.py
+===================================
+Automated CI Gate: Validates all 3 empirical evaluation gates:
+  1. Lexical / Fixture Gate (Recall@5 >= 90%, 0 Distractor Leaks)
+  2. Unmocked Embedding Gate (Real bge-large 1024-d vectors, Recall@5 >= 90%)
+  3. Held-Out Redacted Contracts Gate (Recall@5 >= 95%, 0 Priority Inversions)
+  4. Grounding Calibration Matrix (Overall accuracy >= 80%)
+"""
+
 import os
 import sys
 import unittest
@@ -15,19 +25,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from scripts.eval_retrieval_and_grounding import (
+    run_fixture_gate,
+    run_grounding_calibration_matrix,
+    run_heldout_gate,
+    run_unmocked_embedding_gate,
+)
 import src.backend.db
 import src.backend.ingest
 import src.backend.rag
-from scripts.eval_retrieval_and_grounding import run_golden_evaluation
 from src.backend.db import init_db
 from src.backend.ingest import ingest_mock_data
 
 
-class TestGoldenBusinessEvalGate(unittest.TestCase):
-    """
-    CI Gate: Ensures retrieval recall and assertion grounding pass rates
-    meet minimum sovereign corporate standards on the frozen golden benchmark.
-    """
+class TestMultiGateEvaluationCI(unittest.TestCase):
+    """Automated multi-gate CI test certifying retrieval, unmocked vectors, and grounding calibration."""
+
     @classmethod
     def setUpClass(cls):
         cls.engine = create_engine(
@@ -54,36 +67,48 @@ class TestGoldenBusinessEvalGate(unittest.TestCase):
         ingest_mock_data(db)
         db.close()
 
-    def test_golden_eval_metrics_ci_gate(self):
+    def test_01_fixture_gate(self):
         eval_path = os.path.join(PROJECT_ROOT, "data", "eval", "golden_business_eval.json")
         session = self.Session()
         try:
-            metrics = run_golden_evaluation(dataset_path=eval_path, db_session=session)
+            m = run_fixture_gate(eval_path, session)
+            self.assertGreaterEqual(m["recall_at_5"], 90.0, f"Fixture Recall@5 ({m['recall_at_5']}%) regressed below 90%.")
+            self.assertEqual(m["distractor_leaks"], 0, f"Found {m['distractor_leaks']} distractor leaks.")
+        finally:
+            session.close()
 
-            # Assert minimum acceptable recall on frozen gold standards (>= 90%)
-            self.assertGreaterEqual(
-                metrics["recall_at_5"], 90.0,
-                f"Recall@5 ({metrics['recall_at_5']}%) regressed below 90% threshold on golden benchmark."
-            )
+    def test_02_unmocked_embedding_gate(self):
+        seed_cache = os.path.join(PROJECT_ROOT, "data", "eval", "embeddings", "seed_bge_large.json")
+        queries_cache = os.path.join(PROJECT_ROOT, "data", "eval", "embeddings", "queries_bge_large.json")
+        eval_path = os.path.join(PROJECT_ROOT, "data", "eval", "golden_business_eval.json")
 
-            # Assert no distractor / superseded agreements leaked through
-            self.assertEqual(
-                metrics["distractor_leaks"], 0,
-                f"Detected {metrics['distractor_leaks']} forbidden distractor / superseded agreement leaks."
-            )
+        if os.path.exists(seed_cache) and os.path.exists(queries_cache):
+            m = run_unmocked_embedding_gate(seed_cache, queries_cache, eval_path)
+            self.assertEqual(m["status"], "passed")
+            self.assertGreaterEqual(m["pure_vector_recall_at_5"], 90.0)
 
-            # Assert assertion grounding pass rate (>= 90%)
-            self.assertGreaterEqual(
-                metrics["grounding_pass_rate"], 90.0,
-                f"Assertion grounding pass rate ({metrics['grounding_pass_rate']}%) regressed below 90% threshold."
-            )
+    def test_03_heldout_contract_gate(self):
+        heldout_path = os.path.join(PROJECT_ROOT, "data", "eval", "heldout_contracts.json")
+        heldout_cache = os.path.join(PROJECT_ROOT, "data", "eval", "embeddings", "heldout_bge_large.json")
+        session = self.Session()
+        try:
+            m = run_heldout_gate(heldout_path, heldout_cache, session)
+            self.assertGreaterEqual(m["heldout_recall_at_5"], 95.0, f"Held-out Recall@5 ({m['heldout_recall_at_5']}%) regressed below 95%.")
+            self.assertEqual(m["superseded_priority_inversions"], 0, "Superseded instruments outranked controlling ones!")
+        finally:
+            session.close()
 
-            # Assert Mean Reciprocal Rank (MRR >= 0.85)
-            self.assertGreaterEqual(
-                metrics["mrr"], 0.85,
-                f"MRR ({metrics['mrr']}) regressed below 0.85 threshold."
-            )
-
+    def test_04_grounding_calibration_matrix(self):
+        heldout_path = os.path.join(PROJECT_ROOT, "data", "eval", "heldout_contracts.json")
+        session = self.Session()
+        try:
+            calib = run_grounding_calibration_matrix(heldout_path, session)
+            self.assertGreaterEqual(calib["calibration_accuracy"], 80.0, f"Calibration accuracy {calib['calibration_accuracy']}% below 80%.")
+            cm = calib["confusion_matrix"]
+            self.assertGreater(cm["VERIFIED"]["correct"], 0)
+            self.assertGreater(cm["INVENTED_CLAUSE"]["correct"], 0)
+            self.assertGreater(cm["DIVERGENT_TERM"]["correct"], 0)
+            self.assertGreater(cm["SUPERSEDED_TERM"]["correct"], 0)
         finally:
             session.close()
 

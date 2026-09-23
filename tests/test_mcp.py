@@ -106,6 +106,21 @@ class TestMCP(unittest.TestCase):
         self.assertTrue(res["review_required"])
         self.assertIn("EXECUTIVE COMMERCIAL MEMORANDUM", res["brief"])
 
+    def test_07_resolve_controlling_clause_mcp(self):
+        from src.mcp.server import handle_resolve_controlling_clause
+        res = handle_resolve_controlling_clause({
+            "counterparty": "CloudScale AI",
+            "topic": "PAYMENT_TERMS"
+        })
+        self.assertIn(res.get("status"), ("resolved", "no_candidate_clauses"))
+
+    def test_08_detect_contract_conflicts_mcp(self):
+        from src.mcp.server import handle_detect_conflicts
+        res = handle_detect_conflicts({
+            "counterparty": "CloudScale AI"
+        })
+        self.assertIn("conflicts", res)
+
 
 if __name__ == "__main__":
     unittest.main()

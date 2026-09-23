@@ -1,0 +1,99 @@
+name: KruschBiz CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    # Nightly pgvector integration job at 04:00 UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  lint-and-test:
+    name: Lint, Test Suite & Cached-Embedding Eval (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils tesseract-ocr
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+          pip install -r requirements.txt
+          pip install -r requirements-frontend.txt || true
+
+      - name: Ruff Code Quality Lint
+        run: |
+          ruff check .
+
+      - name: Unit & Integration Tests (SQLite Engine)
+        env:
+          APP_ENV: development
+          ALLOW_LAN: 1
+          DATABASE_URL: sqlite:///:memory:
+        run: |
+          python -m unittest discover tests
+
+      - name: 3-Gate Evaluation Harness (Frozen BGE-Large Vector Gate & Held-Out Contracts)
+        env:
+          APP_ENV: development
+          ALLOW_LAN: 1
+          DATABASE_URL: sqlite:///:memory:
+        run: |
+          python scripts/eval_retrieval_and_grounding.py
+
+  nightly-pgvector:
+    name: Nightly Integration (Postgres + pgvector)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: kruschbiz_test_db
+          POSTGRES_USER: kruschbiz
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt psycopg2-binary
+
+      - name: Run Tests on PostgreSQL + pgvector
+        env:
+          APP_ENV: development
+          ALLOW_LAN: 1
+          DATABASE_URL: postgresql://kruschbiz:test_password@localhost:5432/kruschbiz_test_db
+        run: |
+          python -m unittest discover tests

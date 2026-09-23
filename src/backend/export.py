@@ -37,18 +37,23 @@ def set_cell_margins(cell, top=100, bottom=100, left=150, right=150):
 
 
 def generate_brief_docx(
-    brief_content: str,
-    deal_title: str,
+    brief_content: str = "",
+    deal_title: str = "",
     deal_code: str | None = None,
     counterparty: str | None = None,
     deal_type: str | None = None,
     claims_audit: list[dict[str, Any]] | None = None,
     retrieved_clauses: list[dict[str, Any]] | None = None,
-    disclaimer: str | None = None
+    disclaimer: str | None = None,
+    analysis_text: str | None = None,
+    claims_records: list[dict[str, Any]] | None = None,
 ) -> bytes:
     """
     Format a generated executive deal brief into a styled Microsoft Word (.docx) document.
     """
+    brief_content = brief_content or analysis_text or ""
+    claims_audit = claims_audit or claims_records or []
+
     doc = docx.Document()
 
     # 1. Page Setup - 1-inch margins
@@ -365,16 +370,20 @@ def generate_brief_docx(
 
 
 def generate_brief_markdown(
-    brief_content: str,
-    deal_title: str,
+    brief_content: str = "",
+    deal_title: str = "",
     deal_code: str | None = None,
     counterparty: str | None = None,
     deal_type: str | None = None,
     claims_audit: list[dict[str, Any]] | None = None,
     retrieved_clauses: list[dict[str, Any]] | None = None,
-    disclaimer: str | None = None
+    disclaimer: str | None = None,
+    analysis_text: str | None = None,
+    claims_records: list[dict[str, Any]] | None = None,
 ) -> str:
     """Format executive brief into structured markdown with audit tables."""
+    brief_content = brief_content or analysis_text or ""
+    claims_audit = claims_audit or claims_records or []
     lines = [
         "# EXECUTIVE COMMERCIAL MEMORANDUM & CONTRACT ANALYSIS",
         f"**Transaction / Title**: {deal_title}  ",
@@ -416,3 +425,8 @@ def generate_brief_markdown(
     lines.append(f"> {disclaimer or 'Subject to independent executive and legal verification.'}\n")
 
     return "\n".join(lines)
+
+
+# Aliases for backward compatibility and canonical export naming
+export_executive_memo_docx = generate_brief_docx
+export_executive_memo_markdown = generate_brief_markdown

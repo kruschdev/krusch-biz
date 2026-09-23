@@ -1,28 +1,71 @@
+"""
+src/backend/ingest.py
+=====================
+Corporate contract, deal exhibit, and policy document ingestion engine.
+Features:
+  - Universal parsing via KruschNexus or standalone fallback adapter
+  - MIME magic byte verification
+  - Maximum chunk count per document (DOS protection)
+  - Open structured slot extraction into JSON schemas
+  - Dual population of relational graph (Agreements -> Clauses -> Agreement Relations)
+    and denormalized CommercialClauseVector for fast hybrid search
+  - Transactional IngestJob state machine (queued -> parsing -> chunking -> extracting_slots -> embedding -> indexed | failed)
+"""
+
+from __future__ import annotations
+
 import hashlib
 import logging
 import os
-import sys
 import time
+import uuid
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import CommercialClauseVector, DealEvidence, SessionLocal
+from .db import (
+    Agreement,
+    AgreementRelation,
+    Clause,
+    CommercialClauseVector,
+    DealEvidence,
+    IngestJob,
+    SessionLocal,
+)
+from .nexus_adapter import chunk_document, parse_document
 from .rag import get_embeddings_batch
+from .taxonomy import extract_structured_slots
 
 logger = logging.getLogger("kruschbiz.ingest")
 
-# Maximum permitted file size for air-gapped sandboxed ingestion (50MB)
 MAX_INGEST_FILE_SIZE_BYTES = 50 * 1024 * 1024
+MAX_INGEST_CHUNKS_PER_DOC = 1000
+
+
+def validate_file_magic_bytes(file_path: str, ext: str) -> bool:
+    """Validate that file headers match declared extension to prevent MIME-spoofing."""
+    if not os.path.exists(file_path):
+        return False
+    with open(file_path, "rb") as f:
+        header = f.read(16)
+    ext = ext.lower()
+    if ext == ".pdf":
+        return header.startswith(b"%PDF-")
+    elif ext in (".docx", ".doc"):
+        return header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")
+    elif ext in (".txt", ".md", ".csv", ".json", ".htm", ".html", ".eml", ".msg"):
+        try:
+            header.decode("utf-8", errors="strict")
+            return True
+        except UnicodeDecodeError:
+            return False
+    return True
+
 
 # ---------------------------------------------------------------------------
 # HIERARCHICAL & VERSIONED CORPORATE CONTRACT & POLICY GRAPH FIXTURES
-#
-# Models real-world enterprise agreements:
-#   Master Agreement -> Articles -> Clauses -> Subclauses -> SLA Metrics / Carve-Outs
-# Includes temporal validity (effective dates, amendments) and authority classes.
 # ---------------------------------------------------------------------------
 SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
     {
@@ -77,11 +120,10 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
         "counterparty": "CloudScale AI",
         "agreement_type": "Master Services Agreement",
         "domain": "Risk & Indemnification",
-        "title": "Acme MSA: Aggregate Limitation of Liability",
+        "title": "Acme MSA: Mutual Limitation of Liability Cap",
         "section": "Section 10.1",
         "parent_section": "Article X",
         "hierarchy_level": "clause",
-        "definitions_ref": "Section 1.1",
         "exceptions_ref": "Section 10.2",
         "authority_class": "governing_agreement",
         "effective_date": datetime(2025, 1, 1),
@@ -90,10 +132,10 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
         "superseded_by": None,
         "source_url": "https://contracts.acmecorp.internal/agreements/msa_2025_cloudscale.pdf",
         "content": (
-            "Section 10.1 Limitation of Liability: Except as expressly set forth in Section 10.2, each party's maximum aggregate "
-            "liability arising out of or related to this Agreement, whether in contract, tort (including negligence), or otherwise, "
-            "shall not exceed the total fees paid or payable by Customer in the twelve (12) month period immediately preceding the "
-            "event giving rise to liability. In no event shall either party be liable for any lost profits, lost revenue, or consequential damages."
+            "Section 10.1 Limitation of Liability: Except for obligations under Section 10.2 (Carve-outs), each party's maximum "
+            "aggregate liability arising out of or related to this Agreement shall be limited to the total fees paid or payable by Customer "
+            "to Vendor in the twelve (12) months preceding the incident giving rise to liability. Neither party shall be liable for lost profits, "
+            "special, indirect, incidental, or consequential damages."
         )
     },
     {
@@ -101,11 +143,10 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
         "counterparty": "CloudScale AI",
         "agreement_type": "Master Services Agreement",
         "domain": "Risk & Indemnification",
-        "title": "Acme MSA: Carve-Outs to Limitation of Liability",
+        "title": "Acme MSA: Uncapped Liability Carve-Out Exceptions",
         "section": "Section 10.2",
         "parent_section": "Section 10.1",
         "hierarchy_level": "carve_out",
-        "definitions_ref": "Section 1.1",
         "authority_class": "governing_agreement",
         "effective_date": datetime(2025, 1, 1),
         "superseded": False,
@@ -113,33 +154,10 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
         "superseded_by": None,
         "source_url": "https://contracts.acmecorp.internal/agreements/msa_2025_cloudscale.pdf",
         "content": (
-            "Section 10.2 Carve-outs and Exclusions: The liability limitations and damages waivers set forth in Section 10.1 shall "
-            "NOT apply to: (a) a party's breach of its confidentiality obligations under Section 8; (b) indemnification obligations "
-            "under Section 11; (c) damages resulting from a party's gross negligence, willful misconduct, or intentional fraud; or "
-            "(d) Customer's obligation to pay all undisputed fees and charges when due."
-        )
-    },
-    {
-        "organization": "Acme Corp",
-        "counterparty": "CloudScale AI",
-        "agreement_type": "Master Services Agreement",
-        "domain": "Risk & Indemnification",
-        "title": "Acme MSA: Mutual Indemnification for Third-Party Claims",
-        "section": "Section 11.1",
-        "parent_section": "Article XI",
-        "hierarchy_level": "clause",
-        "definitions_ref": "Section 1.1",
-        "authority_class": "governing_agreement",
-        "effective_date": datetime(2025, 1, 1),
-        "superseded": False,
-        "terminated": False,
-        "superseded_by": None,
-        "source_url": "https://contracts.acmecorp.internal/agreements/msa_2025_cloudscale.pdf",
-        "content": (
-            "Section 11.1 Mutual Indemnification: Vendor shall defend, indemnify, and hold harmless Customer and its officers, "
-            "directors, and employees against any third-party claims, suits, or proceedings alleging that Customer's authorized use "
-            "of the Cloud Services infringes or misappropriates any valid United States patent, copyright, or trademark. Vendor's "
-            "obligations are conditioned upon Customer providing prompt written notice, sole control of defense and settlement, and reasonable cooperation."
+            "Section 10.2 Liability Carve-Outs: The limitations and exclusions in Section 10.1 shall NOT apply to: "
+            "(a) a party's breach of confidentiality obligations under Article VII; (b) a party's indemnification obligations "
+            "under Section 11 (Third-Party IP Infringement); (c) damages caused by gross negligence or willful misconduct; or "
+            "(d) Customer's payment obligations for services rendered."
         )
     },
     {
@@ -250,6 +268,28 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
     },
     {
         "organization": "Acme Corp",
+        "counterparty": "Internal Governance",
+        "agreement_type": "Corporate Bylaws",
+        "domain": "Corporate Governance & Delegated Authority",
+        "title": "Acme Bylaws: Executive Expenditure Approval Authority Thresholds",
+        "section": "Article IV Section 4.3",
+        "parent_section": "Article IV",
+        "hierarchy_level": "clause",
+        "authority_class": "corporate_policy",
+        "effective_date": datetime(2024, 1, 1),
+        "superseded": False,
+        "terminated": False,
+        "superseded_by": None,
+        "source_url": "https://governance.acmecorp.internal/bylaws_2024.pdf",
+        "content": (
+            "Article IV Section 4.3 Delegated Authority Thresholds: Operational commitments, contracts, and purchase orders are subject "
+            "to signature authorization limits: (a) Department Directors: up to $50,000 USD; (b) Vice Presidents: up to $250,000 USD; "
+            "(c) Chief Executive Officer or Chief Financial Officer: up to $1,000,000 USD. Any commercial commitment exceeding $1,000,000 USD "
+            "requires formal resolution and approval by the Board of Directors."
+        )
+    },
+    {
+        "organization": "Acme Corp",
         "counterparty": "Metropolitan Office Towers LLC",
         "agreement_type": "Commercial Lease",
         "domain": "Real Estate & Leasing",
@@ -317,19 +357,29 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
 ]
 
 
-def ingest_mock_data(db: Session) -> dict[str, Any]:
-    """Seed hierarchical, versioned corporate contract & policy graph fixtures into database."""
+def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, Any]:
+    """
+    Seed hierarchical, versioned corporate contract & policy graph fixtures into database.
+    Populates:
+      1. Relational Agreements table
+      2. Clauses table with extracted structured slots
+      3. Agreement Relations table (AMENDS, SUPERSEDES, INCORPORATES)
+      4. Denormalized CommercialClauseVector table for hybrid retrieval
+    """
     inserted = 0
     skipped = 0
 
     to_embed_texts = []
     to_insert_records = []
 
+    # Map of agreement_title -> Agreement object
+    agreements_map: dict[str, Agreement] = {}
+
     for item in SEED_COMMERCIAL_FIXTURES:
         content = item["content"]
         source_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-        existing = db.query(CommercialClauseVector).filter(
+        existing = db.query(CommercialClauseVector.id).filter(
             CommercialClauseVector.section == item["section"],
             CommercialClauseVector.organization == item["organization"],
             CommercialClauseVector.agreement_type == item["agreement_type"]
@@ -347,7 +397,66 @@ def ingest_mock_data(db: Session) -> dict[str, Any]:
         vectors = get_embeddings_batch(to_embed_texts)
 
         for (item, source_hash), vec in zip(to_insert_records, vectors):
-            record = CommercialClauseVector(
+            topic, extracted_slots = extract_structured_slots(item["content"])
+
+            # 1. Ensure Agreement instrument exists in relational graph
+            ag_title = f"{item['organization']} - {item['agreement_type']}"
+            if ag_title not in agreements_map:
+                existing_ag = db.query(Agreement).filter(
+                    Agreement.title == ag_title,
+                    Agreement.tenant_id == tenant_id
+                ).first()
+                if not existing_ag:
+                    inst_type = "master_services_agreement"
+                    ag_type_lower = item["agreement_type"].lower()
+                    if "sla" in ag_type_lower or "service level" in ag_type_lower:
+                        inst_type = "service_level_agreement"
+                    elif "dpa" in ag_type_lower or "data protection" in ag_type_lower:
+                        inst_type = "data_processing_agreement"
+                    elif "lease" in ag_type_lower:
+                        inst_type = "commercial_lease"
+                    elif "bylaw" in ag_type_lower:
+                        inst_type = "bylaws"
+
+                    ag_status = "superseded" if item.get("superseded") else "active"
+                    new_ag = Agreement(
+                        tenant_id=tenant_id,
+                        title=ag_title,
+                        instrument_type=inst_type,
+                        counterparty=item.get("counterparty"),
+                        effective_date=item.get("effective_date"),
+                        expiration_date=item.get("expiration_date"),
+                        status=ag_status,
+                        source_filename=item.get("source_url"),
+                    )
+                    db.add(new_ag)
+                    db.flush()
+                    agreements_map[ag_title] = new_ag
+                else:
+                    agreements_map[ag_title] = existing_ag
+
+            agreement_obj = agreements_map[ag_title]
+
+            # 2. Add relational Clause
+            relational_clause = Clause(
+                tenant_id=tenant_id,
+                agreement_id=agreement_obj.id,
+                section=item["section"],
+                title=item["title"],
+                topic=topic,
+                hierarchy_level=item.get("hierarchy_level", "clause"),
+                authority_class=item.get("authority_class", "governing_agreement"),
+                content=item["content"],
+                structured_slots=extracted_slots,
+                chunk_index=0,
+                is_active=not item.get("superseded", False),
+                embedding=vec
+            )
+            db.add(relational_clause)
+
+            # 3. Add flat CommercialClauseVector for fast hybrid search
+            flat_record = CommercialClauseVector(
+                tenant_id=tenant_id,
                 organization=item["organization"],
                 counterparty=item.get("counterparty"),
                 agreement_type=item["agreement_type"],
@@ -371,10 +480,53 @@ def ingest_mock_data(db: Session) -> dict[str, Any]:
                 source_hash=source_hash,
                 chunk_index=0,
                 is_substantive=True,
+                structured_slots=extracted_slots,
                 embedding=vec
             )
-            db.add(record)
+            db.add(flat_record)
             inserted += 1
+
+        # 4. Create explicit AgreementRelations (Graph Edges)
+        msa_2025 = agreements_map.get("Acme Corp - Master Services Agreement")
+        msa_2021 = agreements_map.get("Acme Corp - Master Services Agreement (Old 2021 Version)")
+        sla_2025 = agreements_map.get("CloudScale AI - Service Level Agreement")
+        dpa_2024 = agreements_map.get("Global Infosec Standard - Data Protection Addendum")
+
+        if msa_2025 and msa_2021:
+            rel = AgreementRelation(
+                tenant_id=tenant_id,
+                source_agreement_id=msa_2025.id,
+                target_agreement_id=msa_2021.id,
+                relation_type="SUPERSEDES",
+                effective_date=datetime(2025, 1, 1),
+                clause_scope="ALL",
+                notes="2025 MSA completely supersedes the expired 2021 MSA."
+            )
+            db.add(rel)
+
+        if sla_2025 and msa_2025:
+            rel = AgreementRelation(
+                tenant_id=tenant_id,
+                source_agreement_id=sla_2025.id,
+                target_agreement_id=msa_2025.id,
+                relation_type="INCORPORATES",
+                effective_date=datetime(2025, 1, 1),
+                clause_scope="ALL",
+                notes="CloudScale SLA is incorporated into the Acme MSA as Exhibit B."
+            )
+            db.add(rel)
+
+        if dpa_2024 and msa_2025:
+            rel = AgreementRelation(
+                tenant_id=tenant_id,
+                source_agreement_id=dpa_2024.id,
+                target_agreement_id=msa_2025.id,
+                relation_type="INCORPORATES",
+                effective_date=datetime(2024, 6, 1),
+                clause_scope="ALL",
+                notes="Global DPA is incorporated into the Acme MSA as Exhibit C."
+            )
+            db.add(rel)
 
         db.commit()
 
@@ -387,12 +539,12 @@ def ingest_business_document(
     deal_id: int | None = None,
     doc_type: str = "contract",
     organization: str = "Acme Corp",
+    tenant_id: str = "org_default",
     db: Session | None = None
 ) -> dict[str, Any]:
     """
-    Ingest a corporate contract, deal exhibit, policy, or discovery document
-    (PDF with OCR fallback, DOCX, EML, TXT, MD, CSV) using the KruschNexus parser and chunking engine.
-    Populates CommercialClauseVector (for enterprise search) and DealEvidence (for isolated deal rooms).
+    Ingest a corporate contract or deal document with transactional safety,
+    MIME magic byte validation, slot extraction, and DOS protection.
     """
     abs_path = os.path.abspath(file_path)
     allowed_dirs = settings.allowed_ingest_dirs_list
@@ -406,114 +558,143 @@ def ingest_business_document(
 
     start_time = time.time()
     filename = os.path.basename(file_path)
+    ext = os.path.splitext(file_path)[1].lower()
 
-    # Bridge to KruschNexus parser and chunking engine
-    try:
-        from krusch_nexus.chunking import chunk_document_pages
-        from krusch_nexus.parsers import parse_document
-    except ImportError:
-        candidate_paths = [
-            settings.KRUSCH_NEXUS_PATH,
-            os.getenv("KRUSCH_NEXUS_PATH"),
-            "/nexus/src",
-            "/home/krusch/homelab/projects/krusch-nexus/src",
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "krusch-nexus", "src"),
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "krusch-nexus", "src"),
-        ]
-        for p in candidate_paths:
-            if p and os.path.isdir(p) and p not in sys.path:
-                sys.path.insert(0, p)
-                break
-        from krusch_nexus.chunking import chunk_document_pages
-        from krusch_nexus.parsers import parse_document
-
-    parsed_doc = parse_document(abs_path, filename)
-    if not parsed_doc or not parsed_doc.pages:
-        raise ValueError(f"No text extracted from document '{filename}'")
-
-    pages = parsed_doc.pages
-    total_pages = len(pages)
-    ocr_pages = [p.page_number for p in pages if getattr(p, "ocr_applied", False) and p.page_number is not None]
-
-    file_hash = parsed_doc.file_hash
-    if not file_hash:
-        with open(abs_path, "rb") as f:
-            file_hash = hashlib.sha256(f.read()).hexdigest()
-
-    chunks = chunk_document_pages(
-        pages=pages,
-        filename=filename,
-        file_hash=file_hash,
-        max_chars=2000,
-        overlap_chars=150,
-        base_metadata={"deal_id": deal_id, "doc_type": doc_type, "organization": organization}
-    )
+    # 1. MIME Magic byte validation
+    if not validate_file_magic_bytes(abs_path, ext):
+        raise ValueError(f"MIME verification failure: File header does not match declared extension '{ext}'.")
 
     own_session = False
     if db is None:
         db = SessionLocal()
         own_session = True
 
-    inserted = 0
+    # 2. Compute file hash
+    with open(abs_path, "rb") as f:
+        file_hash = hashlib.sha256(f.read()).hexdigest()
+
+    job_id = str(uuid.uuid4())
+    job = IngestJob(
+        id=job_id,
+        tenant_id=tenant_id,
+        file_path=abs_path,
+        raw_file_hash=file_hash,
+        status="running",
+        stage="parsing",
+    )
+    db.add(job)
+    db.commit()
+
     try:
+        # 3. Parse Document
+        job.stage = "parsing"
+        db.commit()
+        parsed_doc = parse_document(abs_path)
+        if not parsed_doc or not parsed_doc.pages:
+            raise ValueError(f"No text extracted from document '{filename}'")
+
+        # 4. Chunk Document
+        job.stage = "chunking"
+        job.total_pages = parsed_doc.total_pages
+        db.commit()
+        chunks = chunk_document(parsed_doc)
+
+        if len(chunks) > MAX_INGEST_CHUNKS_PER_DOC:
+            raise ValueError(
+                f"DOS Protection: Document generated {len(chunks)} chunks, exceeding max limit ({MAX_INGEST_CHUNKS_PER_DOC})."
+            )
+
+        job.chunks_total = len(chunks)
+        job.stage = "extracting_slots"
+        db.commit()
+
+        # 5. Extract structured slots & prepare records
         batch_chunks = []
         for ch in chunks:
-            exists = db.query(CommercialClauseVector.id).filter(CommercialClauseVector.source_hash == ch.source_hash).first()
+            ch_hash = hashlib.sha256(ch.text.encode("utf-8")).hexdigest()
+            exists = db.query(CommercialClauseVector.id).filter(
+                CommercialClauseVector.source_hash == ch_hash,
+                CommercialClauseVector.tenant_id == tenant_id
+            ).first()
+
             if not exists:
-                header_display = ch.header or "Section"
-                sec_str = ch.citation if getattr(ch, "citation", None) else (
-                    f"p. {ch.page_number} § {header_display}" if ch.page_number is not None else f"§ {header_display}"
-                )
-                src_hdr = (
-                    f"[{filename} - p.{ch.page_number}] {header_display}"
-                    if ch.page_number is not None
-                    else f"[{filename}] {header_display}"
-                )
+                topic, slots = extract_structured_slots(ch.text)
                 batch_chunks.append({
-                    "organization": organization,
-                    "counterparty": None,
-                    "agreement_type": doc_type.title(),
-                    "domain": "Commercial Documentation",
-                    "title": filename,
-                    "section": sec_str,
-                    "parent_section": None,
-                    "hierarchy_level": "clause",
-                    "authority_class": "statement_of_work" if "sow" in filename.lower() else "governing_agreement",
                     "content": ch.text,
-                    "source_header": src_hdr,
-                    "source_hash": ch.source_hash,
+                    "section": ch.section_locator or "Section",
                     "chunk_index": ch.chunk_index,
                     "page_number": ch.page_number,
+                    "source_hash": ch_hash,
+                    "topic": topic,
+                    "slots": slots
                 })
 
+        inserted = 0
         if batch_chunks:
+            job.stage = "embedding"
+            db.commit()
             texts = [c["content"] for c in batch_chunks]
             vectors = get_embeddings_batch(texts)
+            job.chunks_embedded = len(vectors)
+
+            # Relational Agreement record
+            ag_title = f"{organization} - {filename}"
+            ag_record = Agreement(
+                tenant_id=tenant_id,
+                title=ag_title,
+                instrument_type=doc_type.lower(),
+                counterparty=None,
+                status="active",
+                source_filename=filename,
+                raw_hash=file_hash
+            )
+            db.add(ag_record)
+            db.flush()
 
             for c, vec in zip(batch_chunks, vectors):
-                record = CommercialClauseVector(
-                    organization=c["organization"],
-                    counterparty=c["counterparty"],
-                    agreement_type=c["agreement_type"],
-                    domain=c["domain"],
-                    title=c["title"],
+                # Relational Clause
+                cl_record = Clause(
+                    tenant_id=tenant_id,
+                    agreement_id=ag_record.id,
                     section=c["section"],
-                    parent_section=c["parent_section"],
-                    hierarchy_level=c["hierarchy_level"],
-                    authority_class=c["authority_class"],
+                    title=f"{filename} - {c['section']}",
+                    topic=c["topic"],
+                    hierarchy_level="clause",
+                    authority_class="statement_of_work" if "sow" in filename.lower() else "governing_agreement",
                     content=c["content"],
-                    source_header=c["source_header"],
+                    structured_slots=c["slots"],
+                    chunk_index=c["chunk_index"],
+                    is_active=True,
+                    embedding=vec
+                )
+                db.add(cl_record)
+
+                # Denormalized vector record
+                flat_record = CommercialClauseVector(
+                    tenant_id=tenant_id,
+                    organization=organization,
+                    counterparty=None,
+                    agreement_type=doc_type.title(),
+                    domain="Commercial Documentation",
+                    title=filename,
+                    section=c["section"],
+                    parent_section=None,
+                    hierarchy_level="clause",
+                    authority_class="statement_of_work" if "sow" in filename.lower() else "governing_agreement",
+                    content=c["content"],
+                    source_header=f"[{filename}] {c['section']}",
                     source_hash=c["source_hash"],
                     chunk_index=c["chunk_index"],
                     is_substantive=True,
+                    structured_slots=c["slots"],
                     embedding=vec
                 )
-                db.add(record)
+                db.add(flat_record)
                 inserted += 1
 
-                # If associated with a deal matter, also store in isolated DealEvidence
                 if deal_id is not None:
                     ev_record = DealEvidence(
+                        tenant_id=tenant_id,
                         deal_id=deal_id,
                         filename=filename,
                         doc_type=doc_type,
@@ -525,22 +706,30 @@ def ingest_business_document(
                     )
                     db.add(ev_record)
 
-            db.commit()
+        job.status = "completed"
+        job.stage = "indexed"
+        job.inserted_records = inserted
+        db.commit()
 
         elapsed = time.time() - start_time
         return {
             "status": "completed",
+            "job_id": job_id,
             "file_path": abs_path,
             "filename": filename,
             "file_hash": file_hash,
             "deal_id": deal_id,
             "doc_type": doc_type,
-            "pages_in": total_pages,
-            "ocr_pages": ocr_pages,
+            "pages_in": parsed_doc.total_pages,
             "chunks_out": len(chunks),
             "records_inserted": inserted,
             "duration_ms": round(elapsed * 1000, 2)
         }
+    except Exception as e:
+        job.status = "failed"
+        job.error_message = str(e)
+        db.commit()
+        raise
     finally:
         if own_session:
             db.close()
@@ -551,6 +740,7 @@ def ingest_uploaded_business_file(
     deal_id: int | None = None,
     doc_type: str = "contract",
     organization: str = "Acme Corp",
+    tenant_id: str = "org_default",
     db: Session | None = None
 ) -> dict[str, Any]:
     """Handle multipart file upload for business document ingestion."""
@@ -582,6 +772,7 @@ def ingest_uploaded_business_file(
             deal_id=deal_id,
             doc_type=doc_type,
             organization=organization,
+            tenant_id=tenant_id,
             db=db
         )
         report["filename"] = filename

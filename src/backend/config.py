@@ -1,3 +1,11 @@
+"""
+src/backend/config.py
+=====================
+Centralized configuration and sovereign air-gap security boundaries for KruschBiz.
+"""
+
+from __future__ import annotations
+
 import os
 
 from pydantic_settings import BaseSettings
@@ -5,6 +13,10 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Centralized configuration for KruschBiz backend."""
+
+    APP_ENV: str = os.getenv("APP_ENV", "development")
+    HOST: str = os.getenv("HOST", "127.0.0.1")
+    ALLOW_LAN: bool = os.getenv("ALLOW_LAN", "0") in ("1", "true", "True")
 
     # Database (Port 5436 to avoid conflict with KruschLaw 5435 and default 5432)
     DATABASE_URL: str = os.getenv(
@@ -30,6 +42,7 @@ class Settings(BaseSettings):
     EMBED_TIMEOUT: float = float(os.getenv("EMBED_TIMEOUT", "30.0"))
     LLM_TIMEOUT: float = float(os.getenv("LLM_TIMEOUT", "120.0"))
     DEFAULT_RETRIEVAL_LIMIT: int = int(os.getenv("DEFAULT_RETRIEVAL_LIMIT", "5"))
+    MAX_INGEST_CHUNKS_PER_DOC: int = int(os.getenv("MAX_INGEST_CHUNKS_PER_DOC", "1000"))
 
     # Batching & Performance
     EMBED_BATCH_SIZE: int = int(os.getenv("EMBED_BATCH_SIZE", "16"))
@@ -55,7 +68,6 @@ class Settings(BaseSettings):
     @property
     def allowed_ingest_dirs_list(self) -> list[str]:
         dirs = [os.path.abspath(d.strip()) for d in self.ALLOWED_INGEST_DIRS.split(",") if d.strip()]
-        # Include repo local data directory if present
         local_data = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
         if local_data not in dirs:
             dirs.append(local_data)
@@ -93,6 +105,18 @@ def is_loopback_or_private_host(url_or_host: str) -> bool:
         return ip.is_loopback or ip.is_private
     except Exception:
         return False
+
+
+def validate_security_invariants(s: Settings) -> None:
+    """Enforce API key requirement outside development and loopback binding unless ALLOW_LAN is set."""
+    if s.APP_ENV != "development" and not s.API_KEY:
+        raise RuntimeError(
+            "Security Violation: API_KEY is strictly required outside development environment (APP_ENV != 'development')."
+        )
+    if (s.HOST == "0.0.0.0" or not is_loopback_or_private_host(s.HOST)) and not s.ALLOW_LAN:
+        raise RuntimeError(
+            f"Security Violation: Refusing to bind to non-loopback host '{s.HOST}' without ALLOW_LAN=1."
+        )
 
 
 settings = Settings()
