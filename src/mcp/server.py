@@ -250,6 +250,29 @@ TOOLS_CATALOG = [
             },
             "required": ["counterparty"]
         }
+    },
+    {
+        "name": "diff_contract_instruments",
+        "description": "Diff two legal instruments side-by-side to align clauses by topic, extract text diffs, and highlight diverging structured slots.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "agreement_a_id": {
+                    "type": "integer",
+                    "description": "Base Agreement ID (e.g. 2021 Master Agreement)"
+                },
+                "agreement_b_id": {
+                    "type": "integer",
+                    "description": "Target Agreement ID (e.g. 2025 Master Agreement or Amendment)"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "description": "Multi-tenant partition identifier",
+                    "default": "org_default"
+                }
+            },
+            "required": ["agreement_a_id", "agreement_b_id"]
+        }
     }
 ]
 
@@ -443,6 +466,14 @@ def handle_draft_brief(args: dict[str, Any]) -> dict[str, Any]:
             db=db
         )
 
+        if stats.get("refusal_reason"):
+            return {
+                "status": "refused",
+                "error_code": stats["refusal_reason"],
+                "message": brief_text,
+                "conflict_details": stats.get("conflict_details")
+            }
+
         return {
             "status": "drafted",
             "review_required": True,
@@ -557,6 +588,21 @@ def handle_detect_conflicts(args: dict[str, Any]) -> dict[str, Any]:
         db.close()
 
 
+def handle_diff_instruments(args: dict[str, Any]) -> dict[str, Any]:
+    ag_a_id = args.get("agreement_a_id")
+    ag_b_id = args.get("agreement_b_id")
+    tenant_id = args.get("tenant_id", "org_default")
+    if ag_a_id is None or ag_b_id is None:
+        return {"error": "Both 'agreement_a_id' and 'agreement_b_id' are required."}
+
+    from ..backend.resolver import diff_agreements
+    db = SessionLocal()
+    try:
+        return diff_agreements(db, int(ag_a_id), int(ag_b_id), tenant_id)
+    finally:
+        db.close()
+
+
 DISPATCHER = {
     "search_contracts_and_policies": handle_search_contracts,
     "get_clause_details": handle_get_clause,
@@ -567,6 +613,7 @@ DISPATCHER = {
     "ingest_business_document": handle_ingest_document,
     "resolve_controlling_clause": handle_resolve_controlling_clause,
     "detect_contract_conflicts": handle_detect_conflicts,
+    "diff_contract_instruments": handle_diff_instruments,
 }
 
 

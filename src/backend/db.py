@@ -15,6 +15,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -175,6 +176,16 @@ class Clause(Base):
     Contains extracted structured slots and vector embedding.
     """
     __tablename__ = "clauses"
+    __table_args__ = (
+        CheckConstraint(
+            "authority_class IN ('governing_agreement', 'amendment', 'amendment_addendum', 'executed_amendment', 'statement_of_work', 'corporate_policy', 'regulatory_framework', 'commercial_code', 'statutory_code', 'secondary_guideline')",
+            name="ck_clause_authority_class"
+        ),
+        CheckConstraint(
+            "hierarchy_level IN ('agreement', 'article', 'clause', 'subclause', 'sla_metric', 'carve_out', 'penalty')",
+            name="ck_clause_hierarchy_level"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
@@ -252,6 +263,14 @@ class CommercialClauseVector(Base):
     __tablename__ = "commercial_clauses_vectors"
     __table_args__ = (
         UniqueConstraint("organization", "title", "section", "chunk_index", name="uq_clause_org_title_sec_chunk"),
+        CheckConstraint(
+            "authority_class IN ('governing_agreement', 'amendment', 'amendment_addendum', 'executed_amendment', 'statement_of_work', 'corporate_policy', 'regulatory_framework', 'commercial_code', 'statutory_code', 'secondary_guideline')",
+            name="ck_vector_authority_class"
+        ),
+        CheckConstraint(
+            "hierarchy_level IN ('agreement', 'article', 'clause', 'subclause', 'sla_metric', 'carve_out', 'penalty')",
+            name="ck_vector_hierarchy_level"
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)

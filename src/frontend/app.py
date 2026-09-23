@@ -516,6 +516,103 @@ with tab2:
             except Exception as e:
                 st.error(f"Conflict detection error: {e}")
 
+    st.markdown("---")
+    st.subheader("📑 Side-by-Side Instrument Diffing & Provision Alignment")
+    st.write(
+        "Compare two legal instruments side-by-side to align clauses by commercial topic and section, "
+        "highlight changed numeric slots (e.g. Net 30 → Net 45), and generate unified text diff snippets."
+    )
+
+    # Fetch available agreements
+    ag_list = []
+    try:
+        ar = httpx.get(f"{BACKEND_URL}/api/agreements", headers=get_auth_headers(), timeout=5.0)
+        if ar.status_code == 200:
+            ag_list = ar.json()
+    except Exception:
+        pass
+
+    ag_options = {a["id"]: f"#{a['id']}: {a['title']} ({a.get('instrument_type', 'agreement')})" for a in ag_list}
+
+    if len(ag_options) >= 2:
+        keys = list(ag_options.keys())
+        d_col1, d_col2 = st.columns(2)
+        with d_col1:
+            sel_ag_a = st.selectbox("Base Instrument (A):", options=keys, index=0, format_func=lambda x: ag_options[x], key="diff_ag_a")
+        with d_col2:
+            sel_ag_b = st.selectbox("Amending / Successor Instrument (B):", options=keys, index=min(1, len(keys)-1), format_func=lambda x: ag_options[x], key="diff_ag_b")
+    else:
+        d_col1, d_col2 = st.columns(2)
+        with d_col1:
+            sel_ag_a = st.number_input("Base Agreement ID (A):", min_value=1, value=1, step=1, key="diff_ag_a_num")
+        with d_col2:
+            sel_ag_b = st.number_input("Target Agreement ID (B):", min_value=1, value=2, step=1, key="diff_ag_b_num")
+
+    if st.button("📊 Run Side-by-Side Instrument Diff", type="primary", use_container_width=True):
+        with st.spinner("Aligning provisions and calculating unified diffs..."):
+            try:
+                d_resp = httpx.get(
+                    f"{BACKEND_URL}/api/resolver/diff",
+                    params={"agreement_a_id": int(sel_ag_a), "agreement_b_id": int(sel_ag_b)},
+                    headers=get_auth_headers(),
+                    timeout=15.0
+                )
+                if d_resp.status_code == 200:
+                    d_data = d_resp.json()
+                    st.success(f"Successfully compared instruments #{sel_ag_a} and #{sel_ag_b}")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Modified Provisions", d_data.get("modified_count", 0))
+                    m2.metric("Structured Slot Divergences", d_data.get("slot_changes_count", 0))
+                    m3.metric("Added in B", d_data.get("added_count", 0))
+                    m4.metric("Deleted from A", d_data.get("deleted_count", 0))
+
+                    # Slot Changes Alert
+                    slot_changes = d_data.get("slot_changes", [])
+                    if slot_changes:
+                        st.markdown("#### ⚡ Commercial Term / Slot Changes")
+                        for sc in slot_changes:
+                            st.warning(
+                                f"**{sc.get('slot')}** changed in `{sc.get('key')}`: "
+                                f"**A:** `{sc.get('value_a')}` ➔ **B:** `{sc.get('value_b')}` "
+                                f"*(Sections: {sc.get('section_a')} vs {sc.get('section_b')})*"
+                            )
+
+                    # Unified Diff Snippets
+                    mod_provisions = d_data.get("modified_provisions", [])
+                    if mod_provisions:
+                        st.markdown("#### 📝 Clause Text Modifications")
+                        for mp in mod_provisions:
+                            with st.expander(f"Modified: {mp.get('topic')} ({mp.get('section_a')} ➔ {mp.get('section_b')})", expanded=True):
+                                if mp.get("slot_changes"):
+                                    st.write(f"**Slot Divergence:** `{mp['slot_changes']}`")
+                                st.code(mp.get("diff_snippet", ""), language="diff")
+
+                    # Added Provisions
+                    added_provisions = d_data.get("added_provisions", [])
+                    if added_provisions:
+                        st.markdown("#### ➕ New Provisions in Instrument B")
+                        for ap in added_provisions:
+                            with st.expander(f"Added: {ap.get('section')} ({ap.get('topic')})"):
+                                st.write(ap.get("content"))
+                                if ap.get("slots"):
+                                    st.caption(f"Structured Slots: {ap.get('slots')}")
+
+                    # Deleted Provisions
+                    del_provisions = d_data.get("deleted_provisions", [])
+                    if del_provisions:
+                        st.markdown("#### ➖ Removed / Omitted Provisions from Instrument A")
+                        for dp in del_provisions:
+                            with st.expander(f"Removed: {dp.get('section')} ({dp.get('topic')})"):
+                                st.write(dp.get("content"))
+                                if dp.get("slots"):
+                                    st.caption(f"Structured Slots: {dp.get('slots')}")
+                elif d_resp.status_code == 404:
+                    st.error(f"One or both agreements not found: {d_resp.json().get('detail')}")
+                else:
+                    st.error(f"Diff failed with status {d_resp.status_code}: {d_resp.text}")
+            except Exception as e:
+                st.error(f"Diff execution error: {e}")
+
 # ---------------------------------------------------------------------------
 # TAB 3: Contract & Policy Explorer (Explainable Ranking)
 # ---------------------------------------------------------------------------

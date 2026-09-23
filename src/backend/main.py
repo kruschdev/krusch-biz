@@ -17,17 +17,18 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .config import settings, validate_security_invariants
 from .db import (
+    Agreement,
     AuditLog,
     CommercialClauseVector,
     CommercialGroundingReport,
@@ -46,7 +47,11 @@ from .rag import (
     get_embedding,
     retrieve_clauses,
 )
-from .resolver import detect_contract_conflicts, resolve_controlling_clause
+from .resolver import (
+    detect_contract_conflicts,
+    diff_agreements,
+    resolve_controlling_clause,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
 logger = logging.getLogger("kruschbiz.api")
@@ -116,13 +121,13 @@ def verify_api_key(x_api_key: str | None = Header(None)):
 # Pydantic Schemas
 # ---------------------------------------------------------------------------
 class DealCreate(BaseModel):
-    deal_code: str | None = Field(None, example="DEAL-2026-081")
-    company_name: str | None = Field(None, example="Acme Corp")
-    counterparty_name: str | None = Field(None, example="CloudScale AI LLC")
-    deal_type: str | None = Field(None, example="Vendor Procurement")
-    title: str = Field(..., example="Enterprise Cloud Hosting Services Agreement")
+    deal_code: str | None = Field(None, json_schema_extra={"example": "DEAL-2026-081"})
+    company_name: str | None = Field(None, json_schema_extra={"example": "Acme Corp"})
+    counterparty_name: str | None = Field(None, json_schema_extra={"example": "CloudScale AI LLC"})
+    deal_type: str | None = Field(None, json_schema_extra={"example": "Vendor Procurement"})
+    title: str = Field(..., json_schema_extra={"example": "Enterprise Cloud Hosting Services Agreement"})
     description: str | None = None
-    context_facts: str = Field(..., example="Vendor submitted proposal with Net 30 payment terms and 99.9% uptime SLA.")
+    context_facts: str = Field(..., json_schema_extra={"example": "Vendor submitted proposal with Net 30 payment terms and 99.9% uptime SLA."})
 
 
 class DealUpdate(BaseModel):
@@ -137,6 +142,8 @@ class DealUpdate(BaseModel):
 
 
 class DealResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     tenant_id: str
     deal_code: str | None
@@ -150,11 +157,10 @@ class DealResponse(BaseModel):
     created_at: datetime
     updated_at: datetime | None
 
-    class Config:
-        from_attributes = True
-
 
 class ClauseResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     tenant_id: str = "org_default"
     organization: str
@@ -178,9 +184,6 @@ class ClauseResponse(BaseModel):
     score: float | None = None
     vector_score: float | None = None
     lexical_score: float | None = None
-
-    class Config:
-        from_attributes = True
 
 
 class ConsultResponse(BaseModel):
@@ -231,7 +234,7 @@ def health_check(db: Session = Depends(get_db)):
             "frontend": settings.FRONTEND_PORT,
             "database": settings.DATABASE_PORT
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -519,6 +522,58 @@ def get_contract_conflicts(
     return {"counterparty": counterparty, "conflicts": conflicts, "total_conflicts": len(conflicts)}
 
 
+@app.get("/api/resolver/diff")
+def diff_contract_instruments(
+    agreement_a_id: int = Query(..., description="Base Agreement ID (e.g. 2021 MSA)"),
+    agreement_b_id: int = Query(..., description="Target Agreement ID (e.g. 2025 MSA or Amendment)"),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """
+    Diff two legal instruments side-by-side:
+    Compares aligned clauses, extracts text diffs, and highlights diverging structured slots.
+    """
+    diff_report = diff_agreements(
+        db=db,
+        agreement_a_id=agreement_a_id,
+        agreement_b_id=agreement_b_id,
+        tenant_id=x_tenant_id
+    )
+    if diff_report.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=diff_report["message"])
+    return diff_report
+
+
+@app.get("/api/agreements")
+def list_agreements(
+    counterparty: str | None = Query(None),
+    status_filter: str | None = Query(None, alias="status"),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """List legal instruments / agreements for the active tenant."""
+    query = db.query(Agreement).filter(Agreement.tenant_id == x_tenant_id)
+    if counterparty:
+        query = query.filter(Agreement.counterparty.ilike(f"%{counterparty}%"))
+    if status_filter:
+        query = query.filter(Agreement.status == status_filter)
+    agreements = query.order_by(Agreement.effective_date.desc().nullslast()).all()
+    return [
+        {
+            "id": a.id,
+            "title": a.title,
+            "instrument_type": a.instrument_type,
+            "counterparty": a.counterparty,
+            "status": a.status,
+            "effective_date": a.effective_date.isoformat() if a.effective_date else None,
+            "clauses_count": len(a.clauses) if a.clauses else 0
+        }
+        for a in agreements
+    ]
+
+
 # --- Corporate Intelligence Consult & Memo Generation ---
 
 @app.get("/api/consult", response_model=ConsultResponse)
@@ -643,7 +698,7 @@ def export_deal_docx(
         claims_records=req.claims_records,
         retrieved_clauses=req.retrieved_clauses
     )
-    filename = f"Executive_Memo_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.docx"
+    filename = f"Executive_Memo_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.docx"
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -667,7 +722,7 @@ def export_deal_markdown(
         claims_records=req.claims_records,
         retrieved_clauses=req.retrieved_clauses
     )
-    filename = f"Executive_Memo_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.md"
+    filename = f"Executive_Memo_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.md"
     return Response(
         content=md_content,
         media_type="text/markdown; charset=utf-8",

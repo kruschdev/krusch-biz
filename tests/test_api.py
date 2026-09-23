@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 import src.backend.ingest
 import src.backend.main
 import src.backend.rag
-from src.backend.db import init_db
+from src.backend.db import Agreement, Clause, init_db
 from src.backend.ingest import ingest_mock_data
 from src.backend.main import app, get_db
 
@@ -150,6 +150,63 @@ class TestAPI(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Unsupported document format", resp.json()["detail"])
+
+    def test_08_diff_endpoint(self):
+        db = self.TestingSessionLocal()
+        ag1 = Agreement(
+            tenant_id="org_default",
+            title="Cloud Services Master Agreement 2024",
+            instrument_type="master_services_agreement",
+            counterparty="VendorCorp"
+        )
+        ag2 = Agreement(
+            tenant_id="org_default",
+            title="Cloud Services Master Agreement 2026",
+            instrument_type="master_services_agreement",
+            counterparty="VendorCorp"
+        )
+        db.add(ag1)
+        db.add(ag2)
+        db.flush()
+
+        cl1 = Clause(
+            tenant_id="org_default",
+            agreement_id=ag1.id,
+            section="Section 4.1",
+            title="Payment Terms",
+            topic="PAYMENT_TERMS",
+            authority_class="governing_agreement",
+            content="Customer shall pay within thirty (30) days.",
+            structured_slots={"net_days": 30}
+        )
+        cl2 = Clause(
+            tenant_id="org_default",
+            agreement_id=ag2.id,
+            section="Section 4.1",
+            title="Payment Terms",
+            topic="PAYMENT_TERMS",
+            authority_class="governing_agreement",
+            content="Customer shall pay within forty-five (45) days.",
+            structured_slots={"net_days": 45}
+        )
+        db.add(cl1)
+        db.add(cl2)
+        db.commit()
+        ag1_id, ag2_id = ag1.id, ag2.id
+        db.close()
+
+        resp = self.client.get(f"/api/resolver/diff?agreement_a_id={ag1_id}&agreement_b_id={ag2_id}")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "compared")
+        self.assertEqual(data["slot_changes_count"], 1)
+        self.assertEqual(data["slot_changes"][0]["slot"], "net_days")
+        self.assertEqual(data["slot_changes"][0]["value_a"], 30)
+        self.assertEqual(data["slot_changes"][0]["value_b"], 45)
+
+    def test_09_diff_endpoint_not_found(self):
+        resp = self.client.get("/api/resolver/diff?agreement_a_id=9999&agreement_b_id=9998")
+        self.assertEqual(resp.status_code, 404)
 
 
 if __name__ == "__main__":

@@ -121,6 +121,21 @@ class TestMCP(unittest.TestCase):
         })
         self.assertIn("conflicts", res)
 
+    def test_09_diff_contract_instruments_mcp(self):
+        from src.backend.db import Agreement
+        from src.mcp.server import handle_diff_instruments
+        db = self.SessionLocal()
+        ags = db.query(Agreement).limit(2).all()
+        db.close()
+        if len(ags) >= 2:
+            res = handle_diff_instruments({
+                "agreement_a_id": ags[0].id,
+                "agreement_b_id": ags[1].id
+            })
+            self.assertEqual(res["status"], "compared")
+            self.assertIn("modified_provisions", res)
+            self.assertIn("slot_changes", res)
+
 
 if __name__ == "__main__":
     unittest.main()

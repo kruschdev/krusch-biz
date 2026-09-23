@@ -9,6 +9,7 @@ terms between concurrently active instruments.
 
 from __future__ import annotations
 
+import difflib
 import logging
 from datetime import datetime
 from typing import Any
@@ -140,6 +141,7 @@ def resolve_controlling_clause(
     authority_rank = {
         "amendment": 100,
         "amendment_addendum": 100,
+        "executed_amendment": 100,
         "governing_agreement": 80,
         "statement_of_work": 60,
         "sla": 50,
@@ -277,3 +279,146 @@ def detect_contract_conflicts(
                         })
 
     return conflicts
+
+
+def diff_agreements(
+    db: Session,
+    agreement_a_id: int,
+    agreement_b_id: int,
+    tenant_id: str = "org_default"
+) -> dict[str, Any]:
+    """
+    Compare two legal instruments side-by-side:
+      - Aligns clauses by commercial topic and section
+      - Detects text modifications with unified diff snippets
+      - Identifies changed structured numeric slots (payment days, late fees, SLA uptime, caps)
+      - Surfaces clauses present in A but omitted in B, and new provisions in B
+    """
+    ag_a = db.query(Agreement).filter(Agreement.id == agreement_a_id, Agreement.tenant_id == tenant_id).first()
+    ag_b = db.query(Agreement).filter(Agreement.id == agreement_b_id, Agreement.tenant_id == tenant_id).first()
+
+    if not ag_a or not ag_b:
+        return {
+            "status": "not_found",
+            "message": f"Agreement #{agreement_a_id} or #{agreement_b_id} not found for tenant '{tenant_id}'."
+        }
+
+    clauses_a = db.query(Clause).filter(Clause.agreement_id == agreement_a_id, Clause.tenant_id == tenant_id).all()
+    clauses_b = db.query(Clause).filter(Clause.agreement_id == agreement_b_id, Clause.tenant_id == tenant_id).all()
+
+    # Align clauses across instruments:
+    # 1. Match by specialized topic (excluding GENERAL_COMMERCIAL)
+    # 2. Match remaining clauses by normalized section
+    # 3. Classify remaining unmatched in A as deleted, in B as added
+    matched_pairs: list[tuple[Clause, Clause, str]] = []
+    unmatched_a: list[Clause] = list(clauses_a)
+    unmatched_b: list[Clause] = list(clauses_b)
+
+    # Match by topic
+    for ca in list(unmatched_a):
+        if ca.topic and ca.topic != "GENERAL_COMMERCIAL":
+            for cb in list(unmatched_b):
+                if cb.topic == ca.topic:
+                    matched_pairs.append((ca, cb, ca.topic))
+                    unmatched_a.remove(ca)
+                    unmatched_b.remove(cb)
+                    break
+
+    # Match by normalized section
+    for ca in list(unmatched_a):
+        if ca.section:
+            sec_norm = ca.section.strip().lower()
+            for cb in list(unmatched_b):
+                if cb.section and cb.section.strip().lower() == sec_norm:
+                    matched_pairs.append((ca, cb, ca.section))
+                    unmatched_a.remove(ca)
+                    unmatched_b.remove(cb)
+                    break
+
+    modified_provisions = []
+    slot_changes = []
+
+    for ca, cb, key in matched_pairs:
+        # Check slot changes
+        slots_a = ca.structured_slots or {}
+        slots_b = cb.structured_slots or {}
+        differing_slots = {}
+        for sk in set(slots_a.keys()) | set(slots_b.keys()):
+            va = slots_a.get(sk)
+            vb = slots_b.get(sk)
+            if va != vb:
+                differing_slots[sk] = {"instrument_a": va, "instrument_b": vb}
+                slot_changes.append({
+                    "key": key,
+                    "slot": sk,
+                    "value_a": va,
+                    "value_b": vb,
+                    "section_a": ca.section,
+                    "section_b": cb.section
+                })
+
+        # Check text difference
+        if ca.content.strip() != cb.content.strip():
+            diff_lines = list(difflib.unified_diff(
+                ca.content.splitlines(),
+                cb.content.splitlines(),
+                fromfile=f"{ag_a.title} ({ca.section})",
+                tofile=f"{ag_b.title} ({cb.section})",
+                lineterm=""
+            ))
+            modified_provisions.append({
+                "key": key,
+                "section_a": ca.section,
+                "section_b": cb.section,
+                "topic": ca.topic,
+                "slot_changes": differing_slots,
+                "diff_snippet": "\n".join(diff_lines[:15])
+            })
+
+    deleted_provisions = [
+        {
+            "key": ca.section or ca.topic,
+            "section": ca.section,
+            "topic": ca.topic,
+            "content": ca.content,
+            "slots": ca.structured_slots
+        }
+        for ca in unmatched_a
+    ]
+
+    added_provisions = [
+        {
+            "key": cb.section or cb.topic,
+            "section": cb.section,
+            "topic": cb.topic,
+            "content": cb.content,
+            "slots": cb.structured_slots
+        }
+        for cb in unmatched_b
+    ]
+
+    return {
+        "status": "compared",
+        "agreement_a": {
+            "id": ag_a.id,
+            "title": ag_a.title,
+            "instrument_type": ag_a.instrument_type,
+            "effective_date": str(ag_a.effective_date) if ag_a.effective_date else None,
+            "counterparty": ag_a.counterparty
+        },
+        "agreement_b": {
+            "id": ag_b.id,
+            "title": ag_b.title,
+            "instrument_type": ag_b.instrument_type,
+            "effective_date": str(ag_b.effective_date) if ag_b.effective_date else None,
+            "counterparty": ag_b.counterparty
+        },
+        "modified_count": len(modified_provisions),
+        "added_count": len(added_provisions),
+        "deleted_count": len(deleted_provisions),
+        "slot_changes_count": len(slot_changes),
+        "modified_provisions": modified_provisions,
+        "added_provisions": added_provisions,
+        "deleted_provisions": deleted_provisions,
+        "slot_changes": slot_changes
+    }

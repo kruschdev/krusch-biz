@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import os
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Centralized configuration for KruschBiz backend."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     APP_ENV: str = os.getenv("APP_ENV", "development")
     HOST: str = os.getenv("HOST", "127.0.0.1")
@@ -80,10 +82,6 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.DATABASE_URL.startswith("sqlite")
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
 
 
 def is_loopback_or_private_host(url_or_host: str) -> bool:

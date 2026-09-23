@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .db import IngestJob, SessionLocal
 from .ingest import ingest_business_document
@@ -32,7 +32,7 @@ def process_next_job():
         logger.info(f"Picked up IngestJob {job.id} for file: {job.file_path}")
         job.status = "running"
         job.stage = "parsing"
-        job.heartbeat_at = datetime.utcnow()
+        job.heartbeat_at = datetime.now(timezone.utc)
         db.commit()
 
         try:

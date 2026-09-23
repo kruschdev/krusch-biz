@@ -833,6 +833,51 @@ def generate_executive_brief(
         }
         return refusal_msg, stats, []
 
+    # 3. Guardrail Refusal: Contract Conflicts Detected across Active Authorities
+    topic_clauses: dict[str, list[dict[str, Any]]] = {}
+    for c in clauses:
+        if not c.get("superseded", False) and not c.get("terminated", False):
+            t = c.get("topic") or "GENERAL_COMMERCIAL"
+            if t != "GENERAL_COMMERCIAL":
+                topic_clauses.setdefault(t, []).append(c)
+
+    conflicting_topic = None
+    diverging_details = None
+    for t, t_cls in topic_clauses.items():
+        if len(t_cls) >= 2:
+            first_slots = t_cls[0].get("structured_slots") or {}
+            for other_c in t_cls[1:]:
+                other_slots = other_c.get("structured_slots") or {}
+                for k in ("net_days", "late_interest_pct", "uptime_pct", "cap_period_months", "notice_hours"):
+                    if k in first_slots and k in other_slots and first_slots[k] != other_slots[k]:
+                        conflicting_topic = t
+                        diverging_details = f"{k}: {first_slots[k]} in '{t_cls[0].get('title')}' vs {other_slots[k]} in '{other_c.get('title')}'"
+                        break
+                if conflicting_topic:
+                    break
+        if conflicting_topic:
+            break
+
+    if conflicting_topic:
+        refusal_msg = (
+            f"CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS: Contract conflict detected on topic '{conflicting_topic}' "
+            f"between operative agreements ({diverging_details}). "
+            f"KruschBiz strictly refuses to synthesize an executive brief while live controlling terms diverge. "
+            f"Please run 'resolve_controlling_clause' or execute an amendment to harmonize the conflicting terms."
+        )
+        stats = {
+            "total_claims": 0,
+            "supported_claims": 0,
+            "unsupported_claims": 0,
+            "invented_clauses": 0,
+            "divergent_terms": 1,
+            "superseded_terms": 0,
+            "pass_rate": 0.0,
+            "refusal_reason": "CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS",
+            "conflict_details": diverging_details
+        }
+        return refusal_msg, stats, []
+
     model_name = model or settings.OLLAMA_LLM_MODEL
     authorities_text = ""
     for idx, c in enumerate(clauses[:5], 1):
