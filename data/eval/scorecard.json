@@ -1,0 +1,86 @@
+{
+  "timestamp": "1790281724.6228237",
+  "gate1_fixture_smoke_test": {
+    "total_cases": 25,
+    "recall_at_1": 80.0,
+    "recall_at_5": 92.0,
+    "precision_at_5": 20.0,
+    "mrr": 0.853,
+    "distractor_leaks": 0,
+    "avg_latency_ms": 123.78
+  },
+  "gate2_unmocked_embedding": {
+    "status": "passed",
+    "total_cases": 25,
+    "pure_vector_recall_at_1": 80.0,
+    "pure_vector_recall_at_5": 92.0,
+    "pure_vector_mrr": 0.86
+  },
+  "gate3_heldout_controlling": {
+    "total_heldout_cases": 12,
+    "heldout_recall_at_1": 91.67,
+    "heldout_recall_at_5": 100.0,
+    "heldout_precision_at_5": 20.0,
+    "heldout_mrr": 0.958,
+    "superseded_priority_inversions": 0,
+    "superseded_in_top_1_rate": 0.0
+  },
+  "gate4_grounding_calibration": {
+    "calibration_accuracy": 91.67,
+    "macro_precision": 100.0,
+    "macro_recall": 93.37,
+    "macro_f1": 96.41,
+    "confusion_matrix": {
+      "VERIFIED": {
+        "expected": 12,
+        "correct": 11
+      },
+      "INVENTED_CLAUSE": {
+        "expected": 12,
+        "correct": 12
+      },
+      "DIVERGENT_TERM": {
+        "expected": 11,
+        "correct": 9
+      },
+      "SUPERSEDED_TERM": {
+        "expected": 1,
+        "correct": 1
+      }
+    },
+    "per_failure_mode_metrics": {
+      "VERIFIED": {
+        "precision": 100.0,
+        "recall": 91.67,
+        "f1": 95.65,
+        "tp": 11,
+        "fp": 0,
+        "fn": 1
+      },
+      "INVENTED_CLAUSE": {
+        "precision": 100.0,
+        "recall": 100.0,
+        "f1": 100.0,
+        "tp": 12,
+        "fp": 0,
+        "fn": 0
+      },
+      "DIVERGENT_TERM": {
+        "precision": 100.0,
+        "recall": 81.82,
+        "f1": 90.0,
+        "tp": 9,
+        "fp": 0,
+        "fn": 2
+      },
+      "SUPERSEDED_TERM": {
+        "precision": 100.0,
+        "recall": 100.0,
+        "f1": 100.0,
+        "tp": 1,
+        "fp": 0,
+        "fn": 0
+      }
+    }
+  }
+}

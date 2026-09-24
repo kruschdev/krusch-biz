@@ -13,8 +13,11 @@ Features:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -23,12 +26,13 @@ from typing import Any
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from .config import settings, validate_security_invariants
 from .db import (
     Agreement,
+    AgreementRelation,
     AuditLog,
     CommercialClauseVector,
     CommercialGroundingReport,
@@ -37,6 +41,7 @@ from .db import (
     SessionLocal,
     get_db,
     init_db,
+    purge_deal_matter_transactional,
 )
 from .export import export_executive_memo_docx, export_executive_memo_markdown
 from .ingest import (
@@ -54,8 +59,6 @@ from .resolver import (
     diff_agreements,
     resolve_controlling_clause,
 )
-
-from .business_router import router as business_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
 logger = logging.getLogger("kruschbiz.api")
@@ -101,22 +104,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Business Operations & Commercial Utilities Router
-app.include_router(
-    business_router,
-    prefix="/api/business",
-    tags=["Business Operations & Commercial Utilities"]
-)
+
+class SimpleRateLimiter:
+    """Thread-safe sliding window rate limiter."""
+    def __init__(self, requests_per_minute: int = 30):
+        self.rpm = requests_per_minute
+        self.lock = threading.Lock()
+        self.history: dict[str, list[float]] = {}
+
+    def check(self, key: str) -> bool:
+        now = time.time()
+        with self.lock:
+            calls = self.history.get(key, [])
+            calls = [t for t in calls if now - t < 60.0]
+            if len(calls) >= self.rpm:
+                return False
+            calls.append(now)
+            self.history[key] = calls
+            return True
 
 
-def verify_api_key(x_api_key: str | None = Header(None)):
-    """Enforce API key authentication if configured in settings."""
+consult_rate_limiter = SimpleRateLimiter(requests_per_minute=30)
+upload_rate_limiter = SimpleRateLimiter(requests_per_minute=20)
+
+
+def verify_api_key(
+    x_api_key: str | None = Header(None),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Enforce API key authentication and validate tenant binding to reject header spoofing."""
     if settings.API_KEY:
-        if not x_api_key or x_api_key.strip() != settings.API_KEY.strip():
+        if not x_api_key:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or missing API key."
             )
+        # Check tenant-scoped key format: 'tenant_id:key_secret'
+        if ":" in x_api_key:
+            bound_tenant, key_val = x_api_key.split(":", 1)
+            if key_val.strip() != settings.API_KEY.strip():
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key.")
+            if bound_tenant.strip() != x_tenant_id.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Tenant header spoofing rejected: API key is bound to tenant '{bound_tenant}', not '{x_tenant_id}'."
+                )
+        else:
+            if x_api_key.strip() != settings.API_KEY.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or missing API key."
+                )
     return x_api_key
 
 
@@ -245,6 +283,27 @@ class DealEvidenceItem(BaseModel):
         return []
 
 
+class RelationCreate(BaseModel):
+    source_agreement_id: int
+    target_agreement_id: int
+    relation_type: str
+    clause_scope: str | None = "ALL"
+    notes: str | None = None
+
+
+class ResolverRequest(BaseModel):
+    counterparty: str = Field(..., description="Counterparty or vendor name")
+    topic: str = Field(..., description="Canonical commercial topic, e.g. 'PAYMENT_TERMS'")
+    as_of_date: str | None = Field(None, description="Optional ISO date (YYYY-MM-DD)")
+    deal_id: int | None = Field(None, description="Optional associated deal matter ID")
+
+
+class ConflictsRequest(BaseModel):
+    counterparty: str = Field(..., description="Counterparty name")
+    as_of_date: str | None = Field(None, description="Optional ISO date (YYYY-MM-DD)")
+    deal_id: int | None = Field(None, description="Optional associated deal matter ID")
+
+
 class ConsultResponse(BaseModel):
     deal_id: int | None
     deal_title: str
@@ -253,6 +312,13 @@ class ConsultResponse(BaseModel):
     grounding_stats: dict[str, Any]
     claims_audit: list[dict[str, Any]]
     retrieved_clauses: list[dict[str, Any]]
+    controlling_clause_id: int | None = None
+    amendment_trail: list[dict[str, Any]] = Field(default_factory=list)
+    grounding_report_id: str | None = None
+    review_required: bool = True
+    model_name: str | None = None
+    model_version: str | None = None
+    prompt_hash: str | None = None
 
 
 class ExportDocxRequest(BaseModel):
@@ -422,13 +488,15 @@ def soft_delete_deal(
 @app.delete("/api/deals/{deal_id}/hard-delete", status_code=status.HTTP_200_OK)
 def hard_delete_deal(
     deal_id: int,
+    confirm_deal_code: str | None = Query(None, description="Typed deal_code confirmation required for hard purge"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
     x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
     """
-    Hard delete: Permanently delete deal record, all associated evidence,
-    and grounding reports, recording an immutable audit entry.
+    Hard purge: Permanently delete deal record, all associated evidence,
+    reports, and invoices in a single atomic transaction.
+    Requires typed confirmation matching the target deal_code.
     """
     deal = db.query(DealMatter).filter(
         DealMatter.id == deal_id,
@@ -437,19 +505,20 @@ def hard_delete_deal(
     if not deal:
         raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
 
-    ev_count = db.query(DealEvidence).filter(
-        DealEvidence.deal_id == deal_id,
-        DealEvidence.tenant_id == x_tenant_id
-    ).delete()
-    rep_count = db.query(CommercialGroundingReport).filter(
-        CommercialGroundingReport.deal_id == deal_id,
-        CommercialGroundingReport.tenant_id == x_tenant_id
-    ).delete()
-    db.delete(deal)
+    if deal.deal_code:
+        if not confirm_deal_code or confirm_deal_code.strip() != deal.deal_code.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Typed confirmation failed: 'confirm_deal_code' must match '{deal.deal_code}'."
+            )
 
+    purge_stats = purge_deal_matter_transactional(db, x_tenant_id, deal_id)
+
+    actor_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "anonymous"
     audit = AuditLog(
         tenant_id=x_tenant_id,
         action="hard_delete_deal",
+        actor_key_hash=actor_hash,
         deal_id=deal_id,
         duration_ms=0,
         grounding_verdict="HARD_DELETED"
@@ -458,19 +527,34 @@ def hard_delete_deal(
     db.commit()
     return {
         "status": "success",
-        "message": f"Deal #{deal_id} permanently deleted and permanently purged ({ev_count} evidence records, {rep_count} grounding reports)."
+        "message": f"Deal #{deal_id} permanently purged ({purge_stats['evidence']} evidence, {purge_stats['reports']} reports, {purge_stats['invoices']} invoices).",
+        "purge_stats": purge_stats
     }
 
 
 @app.delete("/api/deals/{deal_id}/purge", status_code=status.HTTP_200_OK, deprecated=True)
 def legacy_purge_deal(
     deal_id: int,
+    confirm_deal_code: str | None = Query(None),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
     x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
     """Deprecated alias for hard_delete_deal."""
-    return hard_delete_deal(deal_id=deal_id, db=db, api_key=api_key, x_tenant_id=x_tenant_id)
+    deal = db.query(DealMatter).filter(
+        DealMatter.id == deal_id,
+        DealMatter.tenant_id == x_tenant_id
+    ).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
+    effective_confirm = confirm_deal_code or deal.deal_code
+    return hard_delete_deal(
+        deal_id=deal_id,
+        confirm_deal_code=effective_confirm,
+        db=db,
+        api_key=api_key,
+        x_tenant_id=x_tenant_id
+    )
 
 
 # --- Deal Room Evidence & Semantic Exhibits ---
@@ -618,11 +702,68 @@ def search_clauses(
     if tag:
         query_obj = query_obj.filter(CommercialClauseVector.tags.ilike(f"%{tag}%"))
 
-    items = query_obj.order_by(CommercialClauseVector.id.asc()).offset(offset).limit(limit).all()
+    items = query_obj.order_by(
+        CommercialClauseVector.effective_date.desc().nullslast(),
+        CommercialClauseVector.id.desc()
+    ).offset(offset).limit(limit).all()
     return items
 
 
 # --- Controlling Document Resolver & Conflicts ---
+
+@app.post("/api/resolver/controlling")
+def resolve_controlling_post(
+    body: ResolverRequest,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """
+    POST resolver endpoint: Walk the agreement relation graph (AMENDS, SUPERSEDES)
+    to resolve which clause governs the specified topic as of a specific date.
+    """
+    parsed_date = None
+    if body.as_of_date:
+        try:
+            parsed_date = datetime.fromisoformat(body.as_of_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD).")
+
+    result = resolve_controlling_clause(
+        db=db,
+        tenant_id=x_tenant_id,
+        counterparty=body.counterparty,
+        topic=body.topic,
+        as_of_date=parsed_date
+    )
+    return result
+
+
+@app.post("/api/resolver/conflicts")
+def get_contract_conflicts_post(
+    body: ConflictsRequest,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """
+    POST conflicts endpoint: Detect conflicting slot values across concurrently active instruments.
+    """
+    parsed_date = None
+    if body.as_of_date:
+        try:
+            parsed_date = datetime.fromisoformat(body.as_of_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD).")
+
+    conflicts = detect_contract_conflicts(
+        db=db,
+        tenant_id=x_tenant_id,
+        counterparty=body.counterparty,
+        as_of_date=parsed_date
+    )
+    return {"counterparty": body.counterparty, "conflicts": conflicts, "total_conflicts": len(conflicts)}
+
 
 @app.get("/api/resolver/controlling-clause")
 def get_controlling_clause(
@@ -733,6 +874,132 @@ def list_agreements(
     ]
 
 
+# --- Agreement Relations CRUD ---
+
+@app.get("/api/relations")
+def list_relations(
+    status_filter: str | None = Query(None, alias="status"),
+    relation_type: str | None = Query(None),
+    agreement_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """List agreement relations (AMENDS, SUPERSEDES, SCHEDULE_OF, INCORPORATES) for the tenant."""
+    query = db.query(AgreementRelation).filter(AgreementRelation.tenant_id == x_tenant_id)
+    if relation_type:
+        query = query.filter(AgreementRelation.relation_type == relation_type)
+    if agreement_id:
+        query = query.filter(
+            or_(
+                AgreementRelation.source_agreement_id == agreement_id,
+                AgreementRelation.target_agreement_id == agreement_id
+            )
+        )
+    relations = query.order_by(AgreementRelation.created_at.desc()).all()
+
+    results = []
+    for r in relations:
+        parsed_notes = {}
+        if r.notes:
+            try:
+                parsed_notes = json.loads(r.notes)
+            except Exception:
+                pass
+        rel_status = parsed_notes.get("status", "confirmed")
+        if status_filter and rel_status != status_filter:
+            continue
+
+        src_ag = db.query(Agreement.title).filter(Agreement.id == r.source_agreement_id).first()
+        tgt_ag = db.query(Agreement.title).filter(Agreement.id == r.target_agreement_id).first()
+
+        results.append({
+            "id": r.id,
+            "tenant_id": r.tenant_id,
+            "source_agreement_id": r.source_agreement_id,
+            "source_title": src_ag[0] if src_ag else f"Agreement #{r.source_agreement_id}",
+            "target_agreement_id": r.target_agreement_id,
+            "target_title": tgt_ag[0] if tgt_ag else f"Agreement #{r.target_agreement_id}",
+            "relation_type": r.relation_type,
+            "clause_scope": r.clause_scope,
+            "status": rel_status,
+            "confidence": parsed_notes.get("confidence", 1.0),
+            "source_excerpt": parsed_notes.get("source_excerpt"),
+            "notes": r.notes,
+            "created_at": r.created_at.isoformat() if r.created_at else None
+        })
+    return results
+
+
+@app.post("/api/relations", status_code=status.HTTP_201_CREATED)
+def create_relation(
+    rel_in: RelationCreate,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Explicitly create an agreement relation edge."""
+    rel = AgreementRelation(
+        tenant_id=x_tenant_id,
+        source_agreement_id=rel_in.source_agreement_id,
+        target_agreement_id=rel_in.target_agreement_id,
+        relation_type=rel_in.relation_type,
+        clause_scope=rel_in.clause_scope or "ALL",
+        notes=rel_in.notes or json.dumps({"status": "confirmed"})
+    )
+    db.add(rel)
+    db.commit()
+    db.refresh(rel)
+    return {"id": rel.id, "status": "created"}
+
+
+@app.patch("/api/relations/{relation_id}/confirm")
+def confirm_relation(
+    relation_id: int,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Human review confirmation of a proposed relation edge."""
+    rel = db.query(AgreementRelation).filter(
+        AgreementRelation.id == relation_id,
+        AgreementRelation.tenant_id == x_tenant_id
+    ).first()
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relation edge not found.")
+
+    parsed_notes = {}
+    if rel.notes:
+        try:
+            parsed_notes = json.loads(rel.notes)
+        except Exception:
+            pass
+    parsed_notes["status"] = "confirmed"
+    parsed_notes["confirmed_at"] = datetime.now(timezone.utc).isoformat()
+    rel.notes = json.dumps(parsed_notes)
+    db.commit()
+    return {"id": rel.id, "status": "confirmed"}
+
+
+@app.delete("/api/relations/{relation_id}")
+def delete_relation(
+    relation_id: int,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Remove or reject a relation edge."""
+    rel = db.query(AgreementRelation).filter(
+        AgreementRelation.id == relation_id,
+        AgreementRelation.tenant_id == x_tenant_id
+    ).first()
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relation edge not found.")
+    db.delete(rel)
+    db.commit()
+    return {"id": relation_id, "status": "deleted"}
+
+
 # --- Corporate Intelligence Consult & Memo Generation ---
 
 @app.get("/api/consult", response_model=ConsultResponse)
@@ -749,6 +1016,13 @@ def consult_deal(
     Synthesize an executive commercial brief grounded in the contract graph.
     Performs assertion-level verification, detects divergent terms, and logs an audit record.
     """
+    rate_key = f"{x_tenant_id}:consult"
+    if not consult_rate_limiter.check(rate_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded on /api/consult (maximum 30 requests per minute)."
+        )
+
     start_time = time.time()
     deal = None
     deal_title = "Ad-Hoc Commercial Inquiry"
@@ -795,6 +1069,7 @@ def consult_deal(
     )
 
     # 3. Persist Grounding Report
+    rep_id = None
     if deal_id is not None:
         rep = CommercialGroundingReport(
             tenant_id=x_tenant_id,
@@ -810,18 +1085,27 @@ def consult_deal(
             advisory_markdown=analysis_text
         )
         db.add(rep)
+        db.flush()
+        rep_id = rep.id
 
     elapsed_ms = int((time.time() - start_time) * 1000)
 
     # 4. Audit Log
     clause_ids = ",".join(str(c["id"]) for c in clauses)
     verdict = "PASS" if grounding_stats.get("unsupported_claims", 0) == 0 else "WARNING"
+    actor_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "anonymous"
+    prompt_hash = hashlib.sha256(f"{deal_title}|{context_facts}".encode("utf-8")).hexdigest()[:16]
+    controlling_id = clauses[0]["id"] if clauses else None
+
     audit = AuditLog(
         tenant_id=x_tenant_id,
         action="consult",
+        actor_key_hash=actor_hash,
         deal_id=deal_id,
         retrieved_clause_ids=clause_ids,
         model_name=settings.OLLAMA_LLM_MODEL,
+        model_version="qwen2.5-coder:7b",
+        prompt_hash=prompt_hash,
         grounding_verdict=verdict,
         duration_ms=elapsed_ms
     )
@@ -835,7 +1119,14 @@ def consult_deal(
         analysis=analysis_text,
         grounding_stats=grounding_stats,
         claims_audit=claims_records,
-        retrieved_clauses=clauses
+        retrieved_clauses=clauses,
+        controlling_clause_id=controlling_id,
+        amendment_trail=[],
+        grounding_report_id=rep_id,
+        review_required=True,
+        model_name=settings.OLLAMA_LLM_MODEL,
+        model_version="qwen2.5-coder:7b",
+        prompt_hash=prompt_hash
     )
 
 
@@ -903,9 +1194,38 @@ def upload_business_document(
 ):
     """
     Secure file upload endpoint for business contracts, SLAs, DPAs, and exhibits.
-    Applies MIME verification, chunk DOS limits, and structured slot extraction.
+    Applies pre-spool MIME verification, rate limiting, chunk DOS limits, and structured slot extraction.
     """
-    logger.info(f"Receiving file upload '{file.filename}' for deal #{deal_id} (tenant: {x_tenant_id})...")
+    rate_key = f"{x_tenant_id}:upload"
+    if not upload_rate_limiter.check(rate_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded on /api/ingest/upload (maximum 20 uploads per minute)."
+        )
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename in upload.")
+
+    _, ext = os.path.splitext(file.filename)
+    ext = ext.lower()
+    allowed_exts = {".md", ".markdown", ".txt", ".docx", ".pdf"}
+    if ext not in allowed_exts:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported document format: invalid file extension '{ext}'. Allowed: {', '.join(sorted(allowed_exts))}"
+        )
+
+    # Inspect first 512 bytes before spooling to disk
+    header_bytes = file.file.read(512)
+    file.file.seek(0)
+    if ext == ".pdf" and not header_bytes.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="File signature mismatch: expected %PDF- header for .pdf extension.")
+    if ext in (".docx", ".doc") and not (header_bytes.startswith(b"PK\x03\x04") or header_bytes.startswith(b"\xd0\xcf\x11\xe0")):
+        raise HTTPException(status_code=400, detail="File signature mismatch: expected PK or compound document header for .docx extension.")
+    if header_bytes.startswith(b"MZ") or header_bytes.startswith(b"\x7fELF") or header_bytes.startswith(b"\xfe\xed\xfa\xce"):
+        raise HTTPException(status_code=400, detail="Disguised executable binary payload rejected.")
+
+    logger.info(f"Receiving verified file upload '{file.filename}' for deal #{deal_id} (tenant: {x_tenant_id})...")
     try:
         report = ingest_uploaded_business_file(
             file=file,
@@ -922,3 +1242,23 @@ def upload_business_document(
     except Exception as e:
         logger.error(f"Unexpected file ingestion error: {e}")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+
+
+@app.post("/api/ingest/seed")
+def seed_fixtures(
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Seed demo contracts, agreements, and relation graph for the tenant."""
+    report = ingest_mock_data(db, tenant_id=x_tenant_id)
+    return report
+
+
+if settings.ENABLE_BUSINESS_OPS:
+    try:
+        from src.labs.business_router import router as business_router
+        app.include_router(business_router, prefix="/api/business")
+        logger.info("Quarantined business operations router mounted via ENABLE_BUSINESS_OPS=1.")
+    except Exception as e:
+        logger.warning(f"Could not mount business ops router: {e}")

@@ -68,6 +68,70 @@ class TestSecurityHardening(unittest.TestCase):
             if os.path.exists(fake_pdf):
                 os.remove(fake_pdf)
 
+    def test_06_tenant_binding_and_spoofing_rejected(self):
+        """Verify that API keys bound to a specific tenant reject mismatched X-Tenant-ID headers."""
+        from fastapi import HTTPException
+        from src.backend.main import verify_api_key
+        import src.backend.main as main_mod
+
+        old_api_key = main_mod.settings.API_KEY
+        try:
+            main_mod.settings.API_KEY = "test_secret_123"
+
+            # 1. Matching tenant binding passes
+            result = verify_api_key(
+                x_api_key="tenant_alpha:test_secret_123",
+                x_tenant_id="tenant_alpha"
+            )
+            self.assertEqual(result, "tenant_alpha:test_secret_123")
+
+            # 2. Header spoofing: key is bound to tenant_alpha, but header claims tenant_beta -> 403 Forbidden
+            with self.assertRaises(HTTPException) as ctx:
+                verify_api_key(
+                    x_api_key="tenant_alpha:test_secret_123",
+                    x_tenant_id="tenant_beta"
+                )
+            self.assertEqual(ctx.exception.status_code, 403)
+            self.assertIn("Tenant header spoofing rejected", str(ctx.exception.detail))
+
+            # 3. Invalid secret key -> 401 Unauthorized
+            with self.assertRaises(HTTPException) as ctx:
+                verify_api_key(
+                    x_api_key="tenant_alpha:wrong_secret",
+                    x_tenant_id="tenant_alpha"
+                )
+            self.assertEqual(ctx.exception.status_code, 401)
+        finally:
+            main_mod.settings.API_KEY = old_api_key
+
+    def test_07_rate_limiter_sliding_window(self):
+        """Verify SimpleRateLimiter blocks requests exceeding threshold."""
+        from src.backend.main import SimpleRateLimiter
+
+        limiter = SimpleRateLimiter(requests_per_minute=3)
+        self.assertTrue(limiter.check("client_1"))
+        self.assertTrue(limiter.check("client_1"))
+        self.assertTrue(limiter.check("client_1"))
+        # 4th request within window rejected
+        self.assertFalse(limiter.check("client_1"))
+        # Separate client not affected
+        self.assertTrue(limiter.check("client_2"))
+
+    def test_08_embeddings_mock_refusal_in_consult(self):
+        """Verify that get_embeddings_batch refuses constant fallback vectors."""
+        from unittest.mock import patch
+        from src.backend.rag import _real_get_embeddings_batch, RetrievalError, embedding_cache
+
+        embedding_cache.clear()
+        # Simulate Ollama offline / failing via httpx
+        with patch("httpx.Client.post", side_effect=Exception("Connection refused")):
+            with self.assertRaises(RetrievalError) as ctx:
+                _real_get_embeddings_batch(["Sample clause text unique query for refusal test 999"])
+            self.assertIn("CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE", str(ctx.exception))
+
+
+
 
 if __name__ == "__main__":
     unittest.main()
+

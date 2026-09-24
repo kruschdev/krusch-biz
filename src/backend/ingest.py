@@ -32,6 +32,7 @@ from .db import (
     Clause,
     CommercialClauseVector,
     DealEvidence,
+    DealMatter,
     IngestJob,
     SessionLocal,
 )
@@ -573,6 +574,26 @@ def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, A
     return {"inserted": inserted, "skipped": skipped, "total_records": inserted + skipped}
 
 
+def extract_proposed_relations(
+    text: str,
+    filename: str,
+    tenant_id: str,
+    db: Session,
+    source_ag_id: int | None = None
+) -> list[dict[str, Any]]:
+    """
+    Extract proposed relational edges from contract filename and preamble/header cues.
+    Delegates to relations.extract_candidate_relations for deterministic regex + review workflow.
+    """
+    from .relations import extract_candidate_relations
+    return extract_candidate_relations(
+        text=text,
+        filename=filename,
+        tenant_id=tenant_id,
+        db=db,
+    )
+
+
 def ingest_business_document(
     file_path: str,
     deal_id: int | None = None,
@@ -706,6 +727,19 @@ def ingest_business_document(
             db.add(ag_record)
             db.flush()
 
+            if deal_id is not None:
+                dm = db.query(DealMatter).filter(DealMatter.id == deal_id).first()
+                if not dm:
+                    dm = DealMatter(
+                        id=deal_id,
+                        tenant_id=tenant_id,
+                        title=f"Deal Matter #{deal_id}",
+                        context_facts=f"Auto-created matter for {filename}",
+                        status="active"
+                    )
+                    db.add(dm)
+                    db.flush()
+
             for c, vec in zip(batch_chunks, vectors):
                 # Relational Clause
                 cl_record = Clause(
@@ -769,6 +803,19 @@ def ingest_business_document(
                     )
                     db.add(ev_record)
 
+        # 6. Extract Proposed Relational Edges
+        job.stage = "extracting_relations"
+        db.commit()
+        full_doc_text = " ".join([ch.text for ch in chunks[:5]])
+        source_id = ag_record.id if "ag_record" in locals() and ag_record else None
+        proposed_relations = extract_proposed_relations(
+            text=full_doc_text,
+            filename=filename,
+            tenant_id=tenant_id,
+            db=db,
+            source_ag_id=source_id
+        )
+
         job.status = "completed"
         job.stage = "indexed"
         job.inserted_records = inserted
@@ -786,6 +833,7 @@ def ingest_business_document(
             "pages_in": parsed_doc.total_pages,
             "chunks_out": len(chunks),
             "records_inserted": inserted,
+            "proposed_relations": proposed_relations,
             "duration_ms": round(elapsed * 1000, 2)
         }
     except Exception as e:

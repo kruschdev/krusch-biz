@@ -95,6 +95,8 @@ class TestMultiGateEvaluationCI(unittest.TestCase):
             m = run_heldout_gate(heldout_path, heldout_cache, session)
             self.assertGreaterEqual(m["heldout_recall_at_5"], 95.0, f"Held-out Recall@5 ({m['heldout_recall_at_5']}%) regressed below 95%.")
             self.assertEqual(m["superseded_priority_inversions"], 0, "Superseded instruments outranked controlling ones!")
+            self.assertEqual(m["superseded_in_top_1_rate"], 0.0, "Superseded clause appeared as top-1 hit!")
+            self.assertGreater(m["heldout_precision_at_5"], 0.0, "Held-out Precision@5 must be reported.")
         finally:
             session.close()
 
@@ -109,6 +111,17 @@ class TestMultiGateEvaluationCI(unittest.TestCase):
             self.assertGreater(cm["INVENTED_CLAUSE"]["correct"], 0)
             self.assertGreater(cm["DIVERGENT_TERM"]["correct"], 0)
             self.assertGreater(cm["SUPERSEDED_TERM"]["correct"], 0)
+
+            # Assert Per-Failure-Mode Precision and Recall reporting
+            pfm = calib["per_failure_mode_metrics"]
+            for mode in ("VERIFIED", "INVENTED_CLAUSE", "DIVERGENT_TERM", "SUPERSEDED_TERM"):
+                self.assertIn(mode, pfm, f"Missing per-failure mode metrics for '{mode}'.")
+                self.assertIn("precision", pfm[mode])
+                self.assertIn("recall", pfm[mode])
+                self.assertIn("f1", pfm[mode])
+                self.assertGreaterEqual(pfm[mode]["recall"], 60.0, f"Recall for mode '{mode}' below 60%.")
+
+            self.assertGreaterEqual(calib["macro_f1"], 75.0, f"Macro F1 {calib['macro_f1']}% below 75%.")
         finally:
             session.close()
 

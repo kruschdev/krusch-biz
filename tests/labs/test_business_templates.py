@@ -2,11 +2,11 @@ import os
 import sys
 import unittest
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.backend.business_templates import (
+from src.labs.business_templates import (
     generate_commercial_document,
     get_commercial_template,
     list_commercial_templates,

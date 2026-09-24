@@ -11,7 +11,9 @@ Features:
 """
 
 import json
+import logging
 import uuid
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -30,7 +32,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.types import UserDefinedType
 
 from .config import settings
@@ -61,6 +63,9 @@ except ImportError:
                         return value
                 return value
             return process
+
+
+logger = logging.getLogger(__name__)
 
 
 class JSONType(UserDefinedType):
@@ -145,6 +150,9 @@ class Agreement(Base):
     Top-level node in the commercial contract graph.
     """
     __tablename__ = "agreements"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "raw_hash", name="uq_agreement_tenant_raw_hash"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
@@ -210,6 +218,8 @@ class Clause(Base):
     summary = Column(Text, nullable=True)                             # 1-sentence commercial micro-digest
     chunk_index = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
+    clause_uid = Column(String(64), nullable=True, index=True)
+    restates_clause_id = Column(Integer, ForeignKey("clauses.id", ondelete="SET NULL"), nullable=True, index=True)
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -222,6 +232,9 @@ class AgreementRelation(Base):
     Supports AMENDS, SUPERSEDES, INCORPORATES, DEFINES, CARVES_OUT, SCHEDULE_OF.
     """
     __tablename__ = "agreement_relations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "source_agreement_id", "target_agreement_id", "relation_type", "effective_date", name="uq_agreement_relation"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
@@ -235,6 +248,10 @@ class AgreementRelation(Base):
     # CARVES_OUT: source carves out terms from target
     effective_date = Column(DateTime(timezone=True), nullable=True)
     clause_scope = Column(String(100), nullable=True)                 # e.g. "Section 4.1" or "ALL"
+    extractor = Column(String(50), default="manual", nullable=True)   # regex, llm, manual, heuristic
+    confidence = Column(Float, default=1.0, nullable=True)
+    span = Column(Text, nullable=True)
+    status = Column(String(50), default="accepted", nullable=False, index=True)  # proposed, accepted, rejected
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -249,6 +266,9 @@ class AgreementRelation(Base):
 class DealMatter(Base):
     """Corporate deal, transaction, vendor review, or business advisory matter."""
     __tablename__ = "deal_matters"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "deal_code", name="uq_deal_matter_tenant_deal_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
@@ -325,7 +345,7 @@ class DealEvidence(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
-    deal_id = Column(Integer, nullable=False, index=True)
+    deal_id = Column(Integer, ForeignKey("deal_matters.id", ondelete="CASCADE"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
     doc_type = Column(String(50), default="contract", nullable=False)
     page_number = Column(Integer, nullable=True)
@@ -337,6 +357,8 @@ class DealEvidence(Base):
     topic = Column(String(100), nullable=True, index=True)            # Canonical commercial topic
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    deal_matter = relationship("DealMatter", backref="evidence")
 
 
 class ContractPortfolio(Base):
@@ -371,6 +393,9 @@ class Invoice(Base):
     Commercial client invoicing, line items, and accounts receivable tracking.
     """
     __tablename__ = "invoices"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "invoice_number", name="uq_invoice_tenant_number"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
@@ -437,6 +462,17 @@ class AuditLog(Base):
     prompt_hash = Column(String(64), nullable=True)
     grounding_verdict = Column(String(50), nullable=True)    # PASS, WARNING, FAIL
     duration_ms = Column(Integer, nullable=True)
+
+
+@event.listens_for(AuditLog, "before_update")
+def _audit_log_prevent_update(mapper, connection, target):
+    raise PermissionError("AuditLog records are append-only and strictly immutable.")
+
+
+@event.listens_for(AuditLog, "before_delete")
+def _audit_log_prevent_delete(mapper, connection, target):
+    raise PermissionError("AuditLog records are append-only and strictly immutable.")
+
 
 
 class IngestJob(Base):
@@ -520,4 +556,142 @@ def init_db(target_engine=None):
             conn.execute(text("ALTER TABLE commercial_clauses_vectors ADD COLUMN IF NOT EXISTS summary TEXT;"))
             conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS tags TEXT;"))
             conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS summary TEXT;"))
+
+            # Multi-Tenant PostgreSQL Row Level Security (RLS) Policies
+            rls_tables = [
+                "agreements",
+                "clauses",
+                "agreement_relations",
+                "commercial_clauses_vectors",
+                "deal_matters",
+                "deal_evidence",
+                "commercial_grounding_reports",
+                "contracts_portfolio",
+                "invoices",
+                "commercial_audit_log",
+                "ingest_jobs",
+            ]
+            for tbl in rls_tables:
+                try:
+                    conn.execute(text(f"ALTER TABLE {tbl} ENABLE ROW LEVEL SECURITY;"))
+                    conn.execute(text(f"""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_policies WHERE tablename = '{tbl}' AND policyname = 'tenant_isolation_policy_{tbl}'
+                            ) THEN
+                                CREATE POLICY tenant_isolation_policy_{tbl} ON {tbl}
+                                FOR ALL USING (
+                                    tenant_id = current_setting('app.current_tenant', true)
+                                    OR current_setting('app.current_tenant', true) IS NULL
+                                    OR current_setting('app.current_tenant', true) = ''
+                                );
+                            END IF;
+                        END $$;
+                    """))
+                except Exception as rls_err:
+                    logger.warning(f"Could not apply RLS policy to table {tbl}: {rls_err}")
             conn.commit()
+
+
+def purge_deal_matter_transactional(db: Session, tenant_id: str, deal_id: int) -> dict[str, int]:
+    """
+    Wrap hard purge of a deal matter and all associated evidence, reports, and invoices
+    into a single atomic transaction.
+    """
+    deal = db.query(DealMatter).filter(
+        DealMatter.id == deal_id,
+        DealMatter.tenant_id == tenant_id
+    ).first()
+    if not deal:
+        return {"deal_id": deal_id, "deleted": 0, "evidence": 0, "reports": 0, "invoices": 0}
+
+    inv_count = db.query(Invoice).filter(
+        Invoice.deal_id == deal_id,
+        Invoice.tenant_id == tenant_id
+    ).delete(synchronize_session=False)
+
+    ev_count = db.query(DealEvidence).filter(
+        DealEvidence.deal_id == deal_id,
+        DealEvidence.tenant_id == tenant_id
+    ).delete(synchronize_session=False)
+
+    rep_count = db.query(CommercialGroundingReport).filter(
+        CommercialGroundingReport.deal_id == deal_id,
+        CommercialGroundingReport.tenant_id == tenant_id
+    ).delete(synchronize_session=False)
+
+    db.delete(deal)
+    db.commit()
+
+    return {
+        "deal_id": deal_id,
+        "deleted": 1,
+        "evidence": ev_count,
+        "reports": rep_count,
+        "invoices": inv_count
+    }
+
+
+def purge_agreement_transactional(db: Session, tenant_id: str, agreement_id: int) -> dict[str, int]:
+    """
+    Wrap hard purge of an agreement and all associated relations, clauses, vectors, and portfolio entries
+    into a single atomic transaction.
+    """
+    ag = db.query(Agreement).filter(
+        Agreement.id == agreement_id,
+        Agreement.tenant_id == tenant_id
+    ).first()
+    if not ag:
+        return {"agreement_id": agreement_id, "deleted": 0, "portfolio": 0, "relations": 0, "clauses": 0, "vectors": 0}
+
+    # Delete portfolio entries
+    pf_count = db.query(ContractPortfolio).filter(
+        ContractPortfolio.agreement_id == agreement_id,
+        ContractPortfolio.tenant_id == tenant_id
+    ).delete(synchronize_session=False)
+
+    # Delete relations where source or target
+    rel_count = db.query(AgreementRelation).filter(
+        (AgreementRelation.source_agreement_id == agreement_id) | (AgreementRelation.target_agreement_id == agreement_id),
+        AgreementRelation.tenant_id == tenant_id
+    ).delete(synchronize_session=False)
+
+    # Delete commercial clause vectors matching title / organization
+    vec_count = db.query(CommercialClauseVector).filter(
+        CommercialClauseVector.title == ag.title,
+        CommercialClauseVector.tenant_id == tenant_id
+    ).delete(synchronize_session=False)
+
+    # Delete clauses
+    cl_count = db.query(Clause).filter(
+        Clause.agreement_id == agreement_id,
+        Clause.tenant_id == tenant_id
+    ).delete(synchronize_session=False)
+
+    db.delete(ag)
+    db.commit()
+
+    return {
+        "agreement_id": agreement_id,
+        "deleted": 1,
+        "portfolio": pf_count,
+        "relations": rel_count,
+        "clauses": cl_count,
+        "vectors": vec_count
+    }
+
+
+def write_clause_and_vector_transactional(
+    db: Session,
+    clause_kwargs: dict[str, Any],
+    vector_kwargs: dict[str, Any]
+) -> tuple[Clause, CommercialClauseVector]:
+    """Single transactional entry point ensuring Clause and CommercialClauseVector stay strictly synchronized."""
+    clause = Clause(**clause_kwargs)
+    vector = CommercialClauseVector(**vector_kwargs)
+    db.add(clause)
+    db.add(vector)
+    return clause, vector
+
+

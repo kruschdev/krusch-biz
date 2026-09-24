@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 import src.backend.db
 from src.backend.db import ContractPortfolio, Invoice, init_db
 from src.backend.main import app, get_db
+from src.labs.business_router import router as business_router
 
 
 class TestBusinessOperations(unittest.TestCase):
@@ -39,6 +40,8 @@ class TestBusinessOperations(unittest.TestCase):
 
         app.dependency_overrides[get_db] = override_get_db
         src.backend.db.SessionLocal = cls.TestingSessionLocal
+        # Mount quarantined router for labs testing
+        app.include_router(business_router, prefix="/api/business")
         cls.client = TestClient(app)
 
     def test_01_register_contract_portfolio(self):

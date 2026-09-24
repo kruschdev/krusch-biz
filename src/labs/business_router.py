@@ -26,7 +26,7 @@ from .business_templates import (
     list_commercial_templates,
     revise_commercial_document,
 )
-from .db import (
+from ..backend.db import (
     ContractPortfolio,
     Invoice,
     get_db,

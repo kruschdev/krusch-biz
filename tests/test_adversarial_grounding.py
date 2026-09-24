@@ -116,6 +116,132 @@ class TestAdversarialGrounding(unittest.TestCase):
         self.assertTrue(brief.startswith("REFUSAL_ALL_AUTHORITIES_SUPERSEDED"))
         self.assertEqual(stats["refusal_reason"], "REFUSAL_ALL_AUTHORITIES_SUPERSEDED")
 
+    def test_09_detect_wrong_instrument_same_section(self):
+        """Detect WRONG_INSTRUMENT when claim attributes section to SOW but authority is in MSA."""
+        sow_and_msa_clauses = [
+            {
+                "section": "Section 4.1",
+                "title": "Payment Terms",
+                "agreement_title": "Master Services Agreement 2024",
+                "instrument_type": "master_services_agreement",
+                "content": "Customer shall pay within thirty (30) days ('Net 30').",
+                "structured_slots": {"net_days": 30},
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        # Draft explicitly attributes Section 4.1 to SOW instead of MSA
+        draft = "Under SOW Section 4.1, Customer shall remit payment within thirty (30) days ('Net 30')."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, sow_and_msa_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["wrong_instruments"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "WRONG_INSTRUMENT")
+
+    def test_10_word_and_number_normalization_net_thirty(self):
+        """Verify spoken words 'thirty (30)' align with normalized slot 'Net 30'."""
+        draft = "Pursuant to Section 4.1, Customer shall remit payment within Net 30 days."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
+        self.assertTrue(is_grounded)
+        self.assertEqual(claims[0]["status"], "verified_grounded")
+
+    def test_11_detect_currency_and_rate_basis_divergence(self):
+        """Detect currency mismatch (€ vs $) and interest rate basis mismatch (APR vs monthly)."""
+        # 1. Currency divergence: €500,000 vs $500,000
+        draft_curr = "Pursuant to Section 10.1, aggregate cumulative liability is capped at €500,000."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft_curr, self.mock_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["divergent_terms"], 1)
+        self.assertIn("Currency mismatch", claims[0]["details"])
+
+        # 2. Rate basis divergence: 18% APR vs 1.5% per month
+        payment_clause_with_rate = [
+            {
+                "section": "Section 4.1",
+                "title": "Payment Terms",
+                "content": "Undisputed overdue balances accrue late interest of 1.5% per month.",
+                "structured_slots": {"late_interest_pct": 1.5},
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        draft_rate = "Pursuant to Section 4.1, overdue balances accrue late interest of 18% APR."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft_rate, payment_clause_with_rate)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["divergent_terms"], 1)
+        self.assertIn("Rate unit mismatch", claims[0]["details"])
+
+    def test_12_detect_dropped_carveout_negation(self):
+        """Detect NEGATED_OBLIGATION when an assertion asserts absolute cap dropping gross negligence carve-outs."""
+        carveout_clauses = [
+            {
+                "section": "Section 10.1",
+                "title": "Limitation of Liability",
+                "content": "Each party's aggregate liability shall be capped at $500,000, except for gross negligence or willful misconduct.",
+                "structured_slots": {"cap_amount": 500000.0, "carve_outs": ["gross_negligence", "willful_misconduct"]},
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        # Dropping carve-outs
+        draft = "Pursuant to Section 10.1, aggregate liability is capped at $500,000 for all claims without exception including gross negligence."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, carveout_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["negated_obligations"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "NEGATED_OBLIGATION")
+
+    def test_13_amendment_modifies_one_slot_leaves_rest(self):
+        """Verify that an amendment modifying Net 45 correctly validates Net 45 while catching invalid numbers."""
+        amd_clauses = [
+            {
+                "section": "Section 4.1",
+                "title": "Amended Payment Terms",
+                "content": "Section 4.1 is amended: invoices payable Net 45 days.",
+                "structured_slots": {"net_days": 45},
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        # Legitimate assertion of amended term
+        draft_good = "Pursuant to Section 4.1, invoices are payable within Net 45 days."
+        is_grounded, _, _, stats = verify_commercial_grounding(draft_good, amd_clauses)
+        self.assertTrue(is_grounded)
+        self.assertEqual(stats["pass_rate"], 100.0)
+
+        # Divergent assertion on amended term
+        draft_bad = "Pursuant to Section 4.1, invoices are payable within Net 60 days."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft_bad, amd_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(claims[0]["failure_mode"], "DIVERGENT_TERM")
+
+    def test_14_section_symbol_normalization(self):
+        """Verify citation '§4.1' matches clause indexed under 'Section 4.1'."""
+        draft = "Pursuant to §4.1, Customer shall pay all undisputed invoice amounts within thirty (30) days of invoice date ('Net 30')."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
+        self.assertTrue(is_grounded)
+        self.assertEqual(stats["pass_rate"], 100.0)
+        self.assertEqual(claims[0]["status"], "verified_grounded")
+
+    def test_15_multiclaim_paragraph_partial_invention(self):
+        """In a multi-claim paragraph where one claim is authentic and one is invented, fail grounding."""
+        draft = (
+            "Pursuant to Section 4.1, Customer shall pay all undisputed invoice amounts within thirty (30) days of invoice date. "
+            "Under Section 99.9, Vendor must supply free hardware replacements."
+        )
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["total_claims"], 2)
+        self.assertEqual(stats["supported_claims"], 1)
+        self.assertEqual(stats["invented_clauses"], 1)
+        self.assertEqual(stats["pass_rate"], 50.0)
+
+    def test_16_detect_partial_support_missing_number(self):
+        """Detect PARTIAL_SUPPORT when claim sentence mentions payment obligation but omits the required net days."""
+        draft = "Pursuant to Section 4.1, Customer shall pay all invoices in accordance with the billing schedule."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["partial_supports"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "PARTIAL_SUPPORT")
+
 
 if __name__ == "__main__":
     unittest.main()

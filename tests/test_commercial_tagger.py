@@ -118,6 +118,44 @@ class TestCommercialTagger(unittest.TestCase):
             self.assertIn("corporate-finance", res["tags"])
             self.assertIn("accounts-payable", res["tags"])
 
+    def test_10_llm_tagger_json_repair_and_allowlist(self):
+        """Verify 1-pass JSON repair handles trailing commas and filters tags to allowlist + 1 free tag."""
+        # Trailing comma before closing brace
+        malformed_json = '{"summary": "Annual audit rights.", "tags": ["audit-rights", "inspection", "invented-custom-tag", "another-custom-tag"], "topic": "AUDIT_RIGHTS",}'
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"response": malformed_json}
+
+        with patch("httpx.Client.post", return_value=mock_resp):
+            res = tag_commercial_chunk_with_llm("Customer may audit books once per year.", filename="audit.pdf")
+            self.assertIsNotNone(res)
+            self.assertEqual(res["topic"], "AUDIT_RIGHTS")
+            self.assertIn("audit-rights", res["tags"])
+            self.assertIn("inspection", res["tags"])
+            # At most 1 free non-allowlist tag permitted
+            self.assertIn("invented-custom-tag", res["tags"])
+            self.assertNotIn("another-custom-tag", res["tags"])
+
+    def test_11_llm_tagger_cache(self):
+        """Verify tagger caches responses and returns without network calls on cache hit."""
+        from src.backend.tagger import tagger_cache
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": '{"summary": "Governing law of New York.", "tags": ["governing-law", "jurisdiction"], "topic": "GOVERNING_LAW"}'
+        }
+
+        with patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+            # First call
+            res1 = tag_commercial_chunk_with_llm("Governing law shall be the State of New York.", filename="gov.pdf")
+            self.assertIsNotNone(res1)
+            self.assertEqual(mock_post.call_count, 1)
+
+            # Second call with identical content should hit cache
+            res2 = tag_commercial_chunk_with_llm("Governing law shall be the State of New York.", filename="gov.pdf")
+            self.assertEqual(res1, res2)
+            self.assertEqual(mock_post.call_count, 1, "Cache hit should not trigger additional HTTP request!")
+
 
 if __name__ == "__main__":
     unittest.main()

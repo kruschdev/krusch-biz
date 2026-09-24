@@ -37,6 +37,9 @@ class TestRAG(unittest.TestCase):
         cls.SessionLocal = sessionmaker(bind=cls.engine)
         init_db(cls.engine)
 
+        cls._orig_get_embeddings_batch = src.backend.rag.get_embeddings_batch
+        cls._orig_get_embedding = src.backend.rag.get_embedding
+
         mock_vec = [0.02] * 1024
         src.backend.rag.get_embedding = MagicMock(return_value=mock_vec)
         src.backend.rag.get_embeddings_batch = MagicMock(side_effect=lambda texts: [mock_vec] * len(texts))
@@ -132,6 +135,75 @@ class TestRAG(unittest.TestCase):
         )
         self.assertIn("CANNOT_DRAFT_WITHOUT_AUTHORITIES", refusal)
         self.assertEqual(stats["pass_rate"], 0.0)
+
+    def test_08_retrieval_score_breakdown_and_deduplication(self):
+        """Verify unified Python scorer emits full score breakdown and deduplicates identical chunks."""
+        db = self.SessionLocal()
+        try:
+            results = retrieve_clauses(db=db, query="payment terms invoice Net 30", limit=5)
+            self.assertTrue(len(results) >= 1)
+            first_hit = results[0]
+            self.assertIn("explanation", first_hit)
+            expl = first_hit["explanation"]
+            for key in ("vec_score", "lex_score", "tag_score", "authority_weight", "section_boost", "superseded_penalty", "final_score"):
+                self.assertIn(key, expl)
+            self.assertEqual(expl["superseded_penalty"], 1.0)
+        finally:
+            db.close()
+
+    def test_09_superseded_penalty_beats_close_lexical_match(self):
+        """Verify Gate 3 invariant: superseded penalty (0.05) prevents superseded clause from winning over active controlling clause."""
+        from src.backend.rag import score_retrieval_candidate
+        # Candidate A: Active controlling clause with moderate lexical overlap
+        cand_active = {
+            "title": "Payment Terms 2024",
+            "section": "Section 4.1",
+            "content": "Invoices payable within Net 30 days.",
+            "authority_class": "governing_agreement",
+            "superseded": False,
+            "terminated": False
+        }
+        # Candidate B: Superseded clause with 100% exact lexical overlap to query
+        cand_superseded = {
+            "title": "Payment Terms 2021 Expired",
+            "section": "Section 4.1",
+            "content": "Special vendor terms payment terms invoice Net 30 exactly matching query.",
+            "authority_class": "governing_agreement",
+            "superseded": True,
+            "terminated": True
+        }
+
+        query_words = {"payment", "terms", "invoice", "net", "30"}
+        res_active = score_retrieval_candidate(
+            cand=cand_active,
+            query_vector=None,
+            query_words=query_words,
+            quoted_phrases=[],
+            section_patterns=["4.1"],
+            spotted_auths=[],
+            spotted_tags=set()
+        )
+        res_super = score_retrieval_candidate(
+            cand=cand_superseded,
+            query_vector=None,
+            query_words=query_words,
+            quoted_phrases=[],
+            section_patterns=["4.1"],
+            spotted_auths=[],
+            spotted_tags=set()
+        )
+
+        self.assertGreater(res_active["score"], res_super["score"], "Active controlling clause must rank higher than superseded clause due to superseded_penalty!")
+        self.assertEqual(res_super["explanation"]["superseded_penalty"], 0.05)
+
+    def test_10_embeddings_offline_refusal(self):
+        """Verify that when embeddings are required and fail, drafting refuses with CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE."""
+        from src.backend.rag import RetrievalError, _real_get_embeddings_batch, embedding_cache
+        embedding_cache.clear()
+        with unittest.mock.patch("httpx.Client.post", side_effect=Exception("Ollama offline")):
+            with self.assertRaises(RetrievalError) as ctx:
+                _real_get_embeddings_batch(["Unique un-cached sample query for offline test"])
+            self.assertIn("CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE", str(ctx.exception))
 
 
 if __name__ == "__main__":

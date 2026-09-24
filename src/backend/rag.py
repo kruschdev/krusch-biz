@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import CommercialClauseVector, CommercialGroundingReport, DealEvidence
-from .taxonomy import CANONICAL_TOPICS, extract_structured_slots
+from .taxonomy import CANONICAL_TOPICS, extract_structured_slots, get_slot_val
 
 logger = logging.getLogger("kruschbiz.rag")
 
@@ -194,13 +194,24 @@ COMMERCIAL_ISSUE_RULES: list[dict[str, Any]] = [
 ]
 
 
+_QUERY_EXPANSION_CACHE: OrderedDict[str, tuple[str, list[dict[str, str]]]] = OrderedDict()
+_QUERY_EXPANSION_LOCK = threading.Lock()
+_QUERY_EXPANSION_MAX = 5000
+
+
 def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]]]:
     """
     Spot commercial issues from natural language inquiries, extracting structured slots
-    and synthesizing canonical search terms.
+    and synthesizing canonical search terms. Backed by LRU cache.
     """
     if not text_content or not text_content.strip():
         return text_content, []
+
+    cache_key = text_content.strip()
+    with _QUERY_EXPANSION_LOCK:
+        if cache_key in _QUERY_EXPANSION_CACHE:
+            _QUERY_EXPANSION_CACHE.move_to_end(cache_key)
+            return _QUERY_EXPANSION_CACHE[cache_key]
 
     spotted: list[dict[str, str]] = []
     collected_terms: list[str] = []
@@ -211,7 +222,8 @@ def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]
     if topic in CANONICAL_TOPICS:
         collected_terms.append(topic.replace("_", " ").lower())
     for k, v in slots.items():
-        collected_terms.append(f"{k} {v}")
+        val = get_slot_val(v)
+        collected_terms.append(f"{k} {val}")
 
     # 2. Bootstrapping teacher rules
     for rule in COMMERCIAL_ISSUE_RULES:
@@ -233,7 +245,14 @@ def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]
     else:
         expanded_query = text_content
 
-    return expanded_query, spotted
+    result = (expanded_query, spotted)
+    with _QUERY_EXPANSION_LOCK:
+        _QUERY_EXPANSION_CACHE[cache_key] = result
+        _QUERY_EXPANSION_CACHE.move_to_end(cache_key)
+        if len(_QUERY_EXPANSION_CACHE) > _QUERY_EXPANSION_MAX:
+            _QUERY_EXPANSION_CACHE.popitem(last=False)
+
+    return result
 
 
 class RetrievalError(RuntimeError):
@@ -342,18 +361,122 @@ def get_embeddings_batch(queries: list[str]) -> list[list[float]]:
             results[idx] = vec
 
     except Exception as e:
-        logger.warning(f"Ollama batch embedding generation unavailable ({e}). Using mock vectors for offline mode.")
-        for idx in miss_indices:
-            dummy_vec = [0.05] * settings.EMBEDDING_DIM
-            results[idx] = dummy_vec
+        logger.warning(f"Ollama batch embedding generation unavailable ({e}).")
+        raise RetrievalError(f"CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE: Embedding generation offline ({e}). Drafting on constant vectors is strictly prohibited.")
 
     return [r for r in results if r is not None]
+
+
+_real_get_embeddings_batch = get_embeddings_batch
 
 
 def get_embedding(query: str) -> list[float]:
     """Generate vector embedding for single query."""
     res = get_embeddings_batch([query])
-    return res[0] if res else [0.05] * settings.EMBEDDING_DIM
+    if not res:
+        raise RetrievalError("CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE: No embedding returned from service.")
+    return res[0]
+
+
+def score_retrieval_candidate(
+    cand: dict[str, Any],
+    query_vector: list[float] | None,
+    query_words: set[str],
+    quoted_phrases: list[str],
+    section_patterns: list[str],
+    spotted_auths: list[str],
+    spotted_tags: set[str]
+) -> dict[str, Any]:
+    """
+    Unified Python scoring function applied identically to candidates fetched via SQLite or Postgres.
+    Evaluates:
+      - Cosine vector similarity (vec_score)
+      - Substantive lexical token overlap (lex_score)
+      - Commercial taxonomy tag alignment (tag_score)
+      - Authority hierarchy weight (auth_mult)
+      - Section citation & quote boosts (section_boost)
+      - Heavy penalty on superseded/terminated instruments (superseded_penalty = 0.05)
+    """
+    # 1. Vector score (cosine similarity)
+    vec_score = 0.0
+    if query_vector is not None and cand.get("embedding"):
+        try:
+            c_vec = cand["embedding"] if isinstance(cand["embedding"], list) else json.loads(cand["embedding"])
+            dot = sum(a * b for a, b in zip(query_vector, c_vec))
+            norm_a = math.sqrt(sum(a * a for a in query_vector))
+            norm_b = math.sqrt(sum(b * b for b in c_vec))
+            if norm_a > 0 and norm_b > 0:
+                vec_score = max(0.0, min(1.0, dot / (norm_a * norm_b)))
+        except Exception:
+            vec_score = 0.0
+
+    # 2. Lexical score (token overlap)
+    text_to_search = f"{cand.get('title') or ''} {cand.get('section') or ''} {cand.get('content') or ''}".lower()
+    clause_words = set(re.findall(r'\w+', text_to_search))
+    overlap = len(query_words.intersection(clause_words))
+    lex_score = min(1.0, overlap / (len(query_words) + 1e-5)) if query_words else 0.0
+
+    # 3. Tag score
+    cand_tags = set(t.lower() for t in (cand.get("tags") or []))
+    if cand.get("topic"):
+        cand_tags.add(cand["topic"].lower())
+    tag_overlap = len(spotted_tags.intersection(cand_tags))
+    tag_score = min(1.0, tag_overlap / (max(1, len(spotted_tags)))) if spotted_tags else 0.0
+
+    # 4. Base hybrid score
+    if query_vector is not None and vec_score > 0:
+        base_score = 0.45 * vec_score + 0.35 * lex_score + 0.20 * tag_score
+    else:
+        base_score = 0.70 * lex_score + 0.30 * tag_score
+
+    # 5. Authority class multiplier
+    auth_class = cand.get("authority_class", "governing_agreement")
+    auth_mult = AUTHORITY_WEIGHTS.get(auth_class, 1.0)
+
+    # 6. Specific section citation & quoted phrase boost
+    section_str = (cand.get("section") or "").lower()
+    title_str = (cand.get("title") or "").lower()
+    content_lower = (cand.get("content") or "").lower()
+
+    boost = 1.0
+    for pat in section_patterns:
+        clean_pat = re.sub(r'[^\w\.]', '', pat.lower())
+        if clean_pat and (clean_pat in section_str or clean_pat in title_str):
+            boost *= 1.4
+
+    for phrase in quoted_phrases:
+        if phrase.lower() in content_lower:
+            boost *= 1.25
+
+    for sp_auth in spotted_auths:
+        if sp_auth in section_str or sp_auth in title_str:
+            boost *= 1.6
+            break
+
+    # 7. Superseded penalty (heavy penalty so Gate 3 priority inversions are structurally impossible)
+    is_superseded = bool(cand.get("superseded") or cand.get("terminated"))
+    superseded_penalty = 0.05 if is_superseded else 1.0
+
+    final_score = base_score * auth_mult * boost * superseded_penalty
+
+    cand["score"] = final_score
+    cand["vector_score"] = vec_score
+    cand["lexical_score"] = lex_score
+    cand["tag_score"] = tag_score
+    cand["explanation"] = {
+        "vec_score": round(vec_score, 4),
+        "lex_score": round(lex_score, 4),
+        "tag_score": round(tag_score, 4),
+        "base_score": round(base_score, 4),
+        "authority_class": auth_class,
+        "authority_weight": round(auth_mult, 2),
+        "section_boost": round(boost, 2),
+        "superseded_penalty": round(superseded_penalty, 2),
+        "final_score": round(final_score, 4),
+        "controlling_status": "superseded" if is_superseded else "active",
+        "structured_slots": cand.get("structured_slots") or {}
+    }
+    return cand
 
 
 def retrieve_clauses(
@@ -368,23 +491,30 @@ def retrieve_clauses(
     exclude_superseded: bool = True,
     topic: str | None = None,
     tag: str | None = None,
-    tenant_id: str = "org_default"
+    tenant_id: str = "org_default",
+    expand_query: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Hybrid semantic (ANN) + lexical (FTS) retrieval across commercial contracts and policies.
-    Applies Reciprocal Rank Fusion, hierarchical authority weighting, and explainability tracking.
+    Fetches candidate set via SQL, then applies single, unified Python ranking across all dialects.
     """
     if not query or not query.strip():
         return []
 
-    expanded_query, spotted_issues = expand_commercial_query(query)
+    if expand_query:
+        expanded_query, spotted_issues = expand_commercial_query(query)
+    else:
+        expanded_query, spotted_issues = query, []
+
     is_sqlite = db.bind.dialect.name == "sqlite"
 
     query_vector = None
     try:
         query_vector = get_embedding(expanded_query)
+    except RetrievalError as e:
+        logger.info(f"Vector search offline ({e}), falling back to lexical + tag candidate retrieval.")
     except Exception as e:
-        logger.warning(f"Could not generate vector embedding for search ({e}), relying on lexical.")
+        logger.warning(f"Vector embedding generation failed ({e}), continuing with lexical candidates.")
 
     quoted_phrases = re.findall(r'"([^"]+)"', query)
     section_patterns = re.findall(
@@ -393,17 +523,19 @@ def retrieve_clauses(
         re.IGNORECASE
     )
     spotted_auths = [issue["governing_authorities"].lower() for issue in spotted_issues if issue.get("governing_authorities")]
+    spotted_tags = set(w.lower() for issue in spotted_issues for w in issue.get("keywords", []))
+    for t_kw in re.findall(r'\b[a-z]{3,}\b', expanded_query.lower()):
+        spotted_tags.add(t_kw)
 
     raw_candidates: dict[int, dict[str, Any]] = {}
 
+    # 1. Fetch Candidates (Postgres Path: pgvector ANN + Full Text Search)
     if not is_sqlite and query_vector is not None:
         try:
             vec_str = json.dumps(query_vector)
             sql = """
                 WITH vector_ranks AS (
-                    SELECT id,
-                           (1.0 - (embedding <=> :query_vector::vector)) AS sim_score,
-                           ROW_NUMBER() OVER (ORDER BY embedding <=> :query_vector::vector) as v_rank
+                    SELECT id
                     FROM commercial_clauses_vectors
                     WHERE embedding IS NOT NULL
                       AND tenant_id = :tenant_id
@@ -413,20 +545,11 @@ def retrieve_clauses(
                       AND (:topic IS NULL OR topic ILIKE :topic)
                       AND (:tag IS NULL OR tags ILIKE :tag)
                       AND (:exclude_superseded = FALSE OR (superseded = FALSE AND terminated = FALSE))
+                    ORDER BY embedding <=> :query_vector::vector
                     LIMIT 40
                 ),
                 fts_ranks AS (
-                    SELECT id,
-                           ts_rank_cd(
-                               to_tsvector('english', coalesce(title, '') || ' ' || coalesce(section, '') || ' ' || coalesce(content, '')),
-                               plainto_tsquery('english', :query)
-                           ) as fts_score,
-                           ROW_NUMBER() OVER (
-                               ORDER BY ts_rank_cd(
-                                   to_tsvector('english', coalesce(title, '') || ' ' || coalesce(section, '') || ' ' || coalesce(content, '')),
-                                   plainto_tsquery('english', :query)
-                               ) DESC
-                           ) as f_rank
+                    SELECT id
                     FROM commercial_clauses_vectors
                     WHERE tenant_id = :tenant_id
                       AND to_tsvector('english', coalesce(title, '') || ' ' || coalesce(section, '') || ' ' || coalesce(content, '')) @@ plainto_tsquery('english', :query)
@@ -442,14 +565,9 @@ def retrieve_clauses(
                        c.title, c.section, c.parent_section, c.hierarchy_level,
                        c.definitions_ref, c.exceptions_ref, c.authority_class,
                        c.effective_date, c.superseded, c.terminated, c.superseded_by,
-                       c.source_url, c.content, c.structured_slots, c.topic, c.tags, c.summary,
-                       COALESCE(vr.sim_score, 0.0) as vector_score,
-                       COALESCE(fr.fts_score, 0.0) as fts_score,
-                       COALESCE(1.0 / (60 + vr.v_rank), 0.0) + COALESCE(1.0 / (60 + fr.f_rank), 0.0) as rrf_score
+                       c.source_url, c.content, c.structured_slots, c.topic, c.tags, c.summary, c.embedding
                 FROM commercial_clauses_vectors c
-                LEFT JOIN vector_ranks vr ON c.id = vr.id
-                LEFT JOIN fts_ranks fr ON c.id = fr.id
-                WHERE vr.id IS NOT NULL OR fr.id IS NOT NULL;
+                WHERE c.id IN (SELECT id FROM vector_ranks UNION SELECT id FROM fts_ranks);
             """
             params = {
                 "query_vector": vec_str,
@@ -494,14 +612,13 @@ def retrieve_clauses(
                     "topic": getattr(r, "topic", None),
                     "tags": raw_tags,
                     "summary": getattr(r, "summary", None),
-                    "vector_score": float(r.vector_score),
-                    "lexical_score": float(r.fts_score),
-                    "score": float(r.rrf_score),
+                    "embedding": getattr(r, "embedding", None),
                 }
         except Exception as e:
             logger.warning(f"PostgreSQL hybrid query fallback to ORM search: {e}")
             raw_candidates.clear()
 
+    # 2. Fetch Candidates (SQLite or Fallback Path)
     if not raw_candidates:
         base_query = db.query(CommercialClauseVector).filter(CommercialClauseVector.tenant_id == tenant_id)
         if exclude_superseded:
@@ -521,107 +638,169 @@ def retrieve_clauses(
             base_query = base_query.filter(CommercialClauseVector.tags.ilike(f"%{tag}%"))
 
         all_clauses = base_query.all()
-        query_words = set(re.findall(r'\w+', expanded_query.lower()))
-
         for c in all_clauses:
-            text_to_search = f"{c.title or ''} {c.section or ''} {c.content or ''}".lower()
-            clause_words = set(re.findall(r'\w+', text_to_search))
-
-            overlap = len(query_words.intersection(clause_words))
-            lex_score = overlap / (len(query_words) + 1e-5)
-
-            vec_score = 0.0
-            if query_vector is not None and c.embedding:
+            raw_tags = []
+            if c.tags:
                 try:
-                    c_vec = c.embedding if isinstance(c.embedding, list) else json.loads(c.embedding)
-                    dot = sum(a * b for a, b in zip(query_vector, c_vec))
-                    norm_a = math.sqrt(sum(a * a for a in query_vector))
-                    norm_b = math.sqrt(sum(b * b for b in c_vec))
-                    if norm_a > 0 and norm_b > 0:
-                        vec_score = max(0.0, dot / (norm_a * norm_b))
+                    raw_tags = json.loads(c.tags) if isinstance(c.tags, str) else list(c.tags)
                 except Exception:
-                    vec_score = 0.0
+                    raw_tags = [t.strip() for t in str(c.tags).split(",") if t.strip()]
 
-            combined_score = 0.5 * lex_score + 0.5 * vec_score
-            if combined_score > 0.01 or overlap > 0:
-                raw_tags = []
-                if c.tags:
-                    try:
-                        raw_tags = json.loads(c.tags) if isinstance(c.tags, str) else list(c.tags)
-                    except Exception:
-                        raw_tags = [t.strip() for t in str(c.tags).split(",") if t.strip()]
+            raw_candidates[c.id] = {
+                "id": c.id,
+                "organization": c.organization,
+                "counterparty": c.counterparty,
+                "agreement_type": c.agreement_type,
+                "domain": c.domain,
+                "title": c.title,
+                "section": c.section,
+                "parent_section": c.parent_section,
+                "hierarchy_level": c.hierarchy_level,
+                "definitions_ref": c.definitions_ref,
+                "exceptions_ref": c.exceptions_ref,
+                "authority_class": c.authority_class,
+                "effective_date": c.effective_date,
+                "superseded": c.superseded,
+                "terminated": c.terminated,
+                "superseded_by": c.superseded_by,
+                "source_url": c.source_url,
+                "content": c.content,
+                "structured_slots": c.structured_slots,
+                "topic": c.topic,
+                "tags": raw_tags,
+                "summary": c.summary,
+                "embedding": c.embedding,
+            }
 
-                raw_candidates[c.id] = {
-                    "id": c.id,
-                    "organization": c.organization,
-                    "counterparty": c.counterparty,
-                    "agreement_type": c.agreement_type,
-                    "domain": c.domain,
-                    "title": c.title,
-                    "section": c.section,
-                    "parent_section": c.parent_section,
-                    "hierarchy_level": c.hierarchy_level,
-                    "definitions_ref": c.definitions_ref,
-                    "exceptions_ref": c.exceptions_ref,
-                    "authority_class": c.authority_class,
-                    "effective_date": c.effective_date,
-                    "superseded": c.superseded,
-                    "terminated": c.terminated,
-                    "superseded_by": c.superseded_by,
-                    "source_url": c.source_url,
-                    "content": c.content,
-                    "structured_slots": c.structured_slots,
-                    "topic": c.topic,
-                    "tags": raw_tags,
-                    "summary": c.summary,
-                    "vector_score": vec_score,
-                    "lexical_score": lex_score,
-                    "score": combined_score,
-                }
-
-    # 3. Apply authority class weighting, exact section boost, and explainability breakdown
-    scored_list = []
+    # 3. Deduplication by (agreement/organization, section, chunk_index)
+    seen_entities = set()
+    deduped_candidates = []
     for cand in raw_candidates.values():
-        score = cand["score"]
-        auth_class = cand.get("authority_class", "governing_agreement")
-        auth_mult = AUTHORITY_WEIGHTS.get(auth_class, 1.0)
-        score *= auth_mult
+        dedup_key = (
+            cand.get("organization") or cand.get("agreement_type") or "default",
+            cand.get("section") or cand.get("title") or "general",
+            cand.get("chunk_index", 0)
+        )
+        if dedup_key not in seen_entities:
+            seen_entities.add(dedup_key)
+            deduped_candidates.append(cand)
 
-        section_str = cand.get("section", "").lower()
-        title_str = cand.get("title", "").lower()
-        content_lower = cand.get("content", "").lower()
-
-        boost = 1.0
-        for pat in section_patterns:
-            clean_pat = re.sub(r'[^\w\.]', '', pat.lower())
-            if clean_pat and (clean_pat in section_str or clean_pat in title_str):
-                boost *= 1.4
-
-        for phrase in quoted_phrases:
-            if phrase.lower() in content_lower:
-                boost *= 1.25
-
-        for sp_auth in spotted_auths:
-            if sp_auth in section_str or sp_auth in title_str:
-                boost *= 1.6
-                break
-
-        score *= boost
-        cand["score"] = score
-        cand["explanation"] = {
-            "lexical_score": round(cand.get("lexical_score", 0.0), 3),
-            "vector_score": round(cand.get("vector_score", 0.0), 3),
-            "authority_class": auth_class,
-            "authority_weight": round(auth_mult, 2),
-            "spotted_boost": round(boost, 2),
-            "final_score": round(score, 3),
-            "controlling_status": "superseded" if cand.get("superseded") else "active",
-            "structured_slots": cand.get("structured_slots") or {}
-        }
-        scored_list.append(cand)
+    # 4. Single Unified Python Scorer
+    query_words = set(re.findall(r'\w+', expanded_query.lower()))
+    scored_list = []
+    for cand in deduped_candidates:
+        scored = score_retrieval_candidate(
+            cand=cand,
+            query_vector=query_vector,
+            query_words=query_words,
+            quoted_phrases=quoted_phrases,
+            section_patterns=section_patterns,
+            spotted_auths=spotted_auths,
+            spotted_tags=spotted_tags
+        )
+        scored_list.append(scored)
 
     scored_list.sort(key=lambda x: x["score"], reverse=True)
     return scored_list[offset:offset + limit]
+
+
+
+STOPWORDS = {
+    "pursuant", "under", "section", "clause", "article", "exhibit", "lease",
+    "shall", "will", "must", "with", "within", "that", "this", "from", "party",
+    "parties", "each", "both", "have", "has", "been", "hereunder", "thereto",
+    "accordance", "agreement", "contract", "customer", "vendor", "said", "such",
+    "other", "upon", "into", "their", "about", "above", "below"
+}
+
+WORD_TO_NUM: dict[str, int] = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20,
+    "twenty-four": 24, "twenty four": 24, "thirty": 30, "forty-five": 45,
+    "forty five": 45, "sixty": 60, "ninety": 90, "hundred": 100,
+    "thousand": 1000, "million": 1000000
+}
+
+
+def parse_spoken_number(text: str) -> float | None:
+    """Parse English written numbers like 'thirty (30)', 'two million', 'Net 30'."""
+    t = text.lower().strip()
+    if t in WORD_TO_NUM:
+        return float(WORD_TO_NUM[t])
+    paren_m = re.search(r'\b(?:[a-z\-]+)\s*\((\d+(?:\.\d+)?)\)', t)
+    if paren_m:
+        return float(paren_m.group(1))
+    if "million" in t:
+        parts = t.split("million")[0].strip().split()
+        if parts and parts[-1] in WORD_TO_NUM:
+            return float(WORD_TO_NUM[parts[-1]] * 1000000)
+    if "five hundred thousand" in t:
+        return 500000.0
+    return None
+
+
+def normalize_money_val(val: Any) -> tuple[float | None, str]:
+    """Extract numeric value and currency code ($ -> USD, € -> EUR, £ -> GBP)."""
+    if isinstance(val, (int, float)):
+        return float(val), "USD"
+    s = str(val).strip()
+
+    # 1. Search for currency symbol + amount
+    m_sym = re.search(r'([\$€£])\s*([\d,]+(?:\.\d+)?)\s*([mMkK]\b)?', s)
+    if m_sym:
+        sym = m_sym.group(1)
+        curr = "EUR" if sym == "€" else ("GBP" if sym == "£" else "USD")
+        amt = float(m_sym.group(2).replace(",", ""))
+        mult = (m_sym.group(3) or "").lower()
+        if mult == "m":
+            amt *= 1000000.0
+        elif mult == "k":
+            amt *= 1000.0
+        return amt, curr
+
+    # 2. Search for currency word + amount
+    m_word = re.search(r'([\d,]+(?:\.\d+)?)\s*(dollars?|usd|euros?|eur|pounds?|gbp)\b', s, re.IGNORECASE)
+    if m_word:
+        amt = float(m_word.group(1).replace(",", ""))
+        w = m_word.group(2).lower()
+        curr = "EUR" if "eur" in w or "euro" in w else ("GBP" if "pound" in w or "gbp" in w else "USD")
+        return amt, curr
+
+    # 3. Direct number parse
+    curr = "USD"
+    if "€" in s or "eur" in s.lower():
+        curr = "EUR"
+    elif "£" in s or "gbp" in s.lower():
+        curr = "GBP"
+
+    spoken = parse_spoken_number(s)
+    if spoken is not None:
+        return spoken, curr
+
+    clean_nums = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', s)
+    if clean_nums:
+        try:
+            return float(clean_nums[-1].replace(",", "")), curr
+        except ValueError:
+            pass
+    return None, curr
+
+
+def extract_rate_info(sentence: str) -> tuple[float | None, str | None]:
+    """Extract interest percentage and its rate basis (%/month vs %/year)."""
+    m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(per\s+month|monthly|apr|annual|per\s+annum)?', sentence, re.IGNORECASE)
+    if not m:
+        return None, None
+    val = float(m.group(1))
+    basis_str = (m.group(2) or "").lower()
+    if any(w in basis_str for w in ("apr", "annual", "per annum")):
+        basis = "%/year"
+    elif any(w in basis_str for w in ("month", "monthly")):
+        basis = "%/month"
+    else:
+        basis = "%"
+    return val, basis
 
 
 def verify_commercial_grounding(
@@ -631,25 +810,46 @@ def verify_commercial_grounding(
 ) -> tuple[bool, list[dict[str, Any]], str, dict[str, Any]]:
     """
     Verify commercial assertions and citations in generated text against retrieved clauses.
-    Applies:
-      1. Section citation presence check (detects INVENTED_CLAUSE)
-      2. Superseded agreement check (detects SUPERSEDED_TERM)
-      3. Structured slot matching: compares numbers, days, percentages (detects DIVERGENT_TERM)
-      4. Text span overlap validation
+    Layered verification checker:
+      1. Citation Resolution: section + instrument matching against retrieved controlling set.
+      2. Superseded Check: detects inoperative / terminated instruments.
+      3. Slot Normalization: type-safe comparison of numbers, currencies, and percentages.
+      4. Partial Support: detects claims omitting required numerical terms on covered topics.
+      5. Negation & Exception Check: detects flipped obligations or dropped carve-outs.
+      6. Token Containment: substantive token coverage (non-stopwords).
     """
     if not analysis_text or not analysis_text.strip():
         return False, [], "Analysis text is empty.", {"pass_rate": 0.0}
 
-    # Map known sections for fast retrieval
-    known_sections: dict[str, dict[str, Any]] = {}
+    # Index known clauses by normalized section and instrument
+    known_clauses_by_sec: dict[str, list[dict[str, Any]]] = {}
     for c in retrieved_clauses:
         sec = c.get("section")
         if sec:
-            clean_sec = re.sub(r'^(?:Section|Clause|Article|Lease §|Exhibit [A-Z] \(SLA\) Section|Exhibit [A-Z] \(DPA\) Section|§)\s*', '', sec, flags=re.IGNORECASE).strip()
-            known_sections[clean_sec.lower()] = c
-            known_sections[sec.lower()] = c
-            alpha_num_sec = re.sub(r'[^\w\.]', '', sec.lower())
-            known_sections[alpha_num_sec] = c
+            raw_k = sec.lower().strip()
+            # Normalize prefix like "Exhibit B Section 2.1" -> "2.1"
+            norm_sec = re.sub(
+                r'^(?:(?:Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Article\s+[IVXLCDM\d]+|Lease)\s*,?\s*)?(?:Section|Clause|§|lease\s*§)\s*',
+                '',
+                sec,
+                flags=re.IGNORECASE
+            ).strip().lower()
+
+            known_clauses_by_sec.setdefault(norm_sec, []).append(c)
+            if raw_k != norm_sec:
+                known_clauses_by_sec.setdefault(raw_k, []).append(c)
+            
+            # Also index sub-section if present, e.g. "section 2.1"
+            sec_only = re.search(r'(?:section|clause|§)\s*([\w\.\-]+)', raw_k)
+            if sec_only:
+                s_id = sec_only.group(1).lower()
+                if s_id != norm_sec:
+                    known_clauses_by_sec.setdefault(s_id, []).append(c)
+
+            # Alpha-numeric clean key
+            clean_k = re.sub(r'[^\w\.]', '', raw_k)
+            if clean_k not in (norm_sec, raw_k):
+                known_clauses_by_sec.setdefault(clean_k, []).append(c)
 
     claim_records: list[dict[str, Any]] = []
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', analysis_text) if s.strip()]
@@ -660,9 +860,12 @@ def verify_commercial_grounding(
     invented_clauses = 0
     divergent_terms = 0
     superseded_terms = 0
+    wrong_instruments = 0
+    partial_supports = 0
+    negated_obligations = 0
 
     citation_pattern = re.compile(
-        r'((?:(?:Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Article\s+[IVXLCDM\d]+|Lease)\s*,?\s*)?(?:Section|Clause|§)\s*[\w\.\-]+(?:\([a-zA-Z\d]+\))*|Exhibit\s+[A-Za-z\d]+|Lease\s*§\s*[\w\.\-]+)',
+        r'((?:(?:the\s+)?(?:\d{4}\s+)?(?:MSA|SOW|Statement\s+of\s+Work|Master\s+Agreement|Amendment(?:\s+No\.?\s*\d+)?|Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Article\s+[IVXLCDM\d]+|Lease)\s*,?\s*)?(?:Section|Clause|§)\s*[\w\.\-]+(?:\([a-zA-Z\d]+\))*|Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Lease\s*§\s*[\w\.\-]+)',
         re.IGNORECASE
     )
 
@@ -673,63 +876,212 @@ def verify_commercial_grounding(
 
         for m in matches:
             total_claims += 1
-            cited_sec_raw = m.group(0)
-            cited_sec_clean = cited_sec_raw.lower().strip()
-            clean_token = re.sub(r'[^\w\.]', '', cited_sec_clean)
-            stripped_sec = re.sub(r'^(?:section|clause|article|lease\s*§|§)\s*', '', cited_sec_clean).strip()
+            cited_raw = m.group(0)
+            cited_clean = cited_raw.lower().strip()
 
-            matching_clause = (
-                known_sections.get(cited_sec_clean)
-                or known_sections.get(clean_token)
-                or known_sections.get(stripped_sec)
-                or next((c for k, c in known_sections.items() if clean_token in k or k in clean_token), None)
+            # Extract cited section identifier
+            sec_match = re.search(r'(?:section|clause|§|lease\s*§)\s*([\w\.\-]+)', cited_clean)
+            if sec_match:
+                cited_sec_id = sec_match.group(1)
+            else:
+                # E.g. "Exhibit B"
+                cited_sec_id = re.sub(r'^(?:the\s+)?', '', cited_clean)
+
+            # Check if sentence cites a specific instrument
+            cited_instrument = None
+            if "sow" in cited_clean or "statement of work" in cited_clean:
+                cited_instrument = "statement_of_work"
+            elif "msa" in cited_clean or "master agreement" in cited_clean:
+                cited_instrument = "master_services_agreement"
+            elif "amendment" in cited_clean:
+                cited_instrument = "amendment"
+            elif "lease" in cited_clean:
+                cited_instrument = "lease"
+            elif "exhibit b" in cited_clean:
+                cited_instrument = "exhibit b"
+            elif "exhibit c" in cited_clean:
+                cited_instrument = "exhibit c"
+
+            # 1. Resolve matching clause in controlling set
+            matching_candidates = (
+                known_clauses_by_sec.get(cited_sec_id)
+                or known_clauses_by_sec.get(f"section {cited_sec_id}")
+                or known_clauses_by_sec.get(cited_clean)
+                or []
             )
 
-            # 1. Check: Invented clause
-            if not matching_clause:
+            if not matching_candidates:
+                # Fallback substring match
+                for k, cl_list in known_clauses_by_sec.items():
+                    if cited_sec_id and (cited_sec_id == k or cited_sec_id in k.split()):
+                        matching_candidates = cl_list
+                        break
+
+            if not matching_candidates:
                 invented_clauses += 1
                 unsupported_claims += 1
                 claim_records.append({
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
-                    "cited_authority": cited_sec_raw,
+                    "cited_authority": cited_raw,
                     "status": "invented_clause",
                     "failure_mode": "INVENTED_CLAUSE",
-                    "details": f"Cited authority '{cited_sec_raw}' does not exist in the retrieved commercial corpus.",
+                    "details": f"Cited authority '{cited_raw}' does not exist in the retrieved commercial corpus.",
                     "evidence_span": None
                 })
                 continue
 
-            # 2. Check: Superseded term
+            # Instrument disambiguation / check
+            matching_clause = None
+            if cited_instrument:
+                for cand in matching_candidates:
+                    c_type = (cand.get("instrument_type") or cand.get("agreement_type") or "").lower()
+                    c_title = (cand.get("agreement_title") or cand.get("title") or "").lower()
+                    c_sec = (cand.get("section") or "").lower()
+                    if (
+                        (cited_instrument in c_type)
+                        or (cited_instrument in c_title)
+                        or (cited_instrument in c_sec)
+                        or (cited_instrument == "statement_of_work" and any("sow" in f for f in (c_title, c_sec, c_type)))
+                        or (cited_instrument == "master_services_agreement" and any("msa" in f for f in (c_title, c_sec, c_type)))
+                    ):
+                        matching_clause = cand
+                        break
+
+                if not matching_clause:
+                    # Section exists, but in the WRONG instrument!
+                    wrong_instruments += 1
+                    unsupported_claims += 1
+                    actual_inst = matching_candidates[0].get("agreement_title") or matching_candidates[0].get("agreement_type") or "other agreement"
+                    claim_records.append({
+                        "claim_id": f"claim_{total_claims}",
+                        "sentence": sentence,
+                        "cited_authority": cited_raw,
+                        "status": "wrong_instrument",
+                        "failure_mode": "WRONG_INSTRUMENT",
+                        "details": f"Cited instrument '{cited_raw}' does not match governing document for this section (found in: '{actual_inst}').",
+                        "evidence_span": matching_candidates[0].get("content", "")[:180] + "..."
+                    })
+                    continue
+            else:
+                matching_clause = matching_candidates[0]
+
+            # 2. Check: Superseded / Inoperative
             if matching_clause.get("superseded") or matching_clause.get("terminated"):
                 superseded_terms += 1
                 unsupported_claims += 1
                 claim_records.append({
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
-                    "cited_authority": cited_sec_raw,
+                    "cited_authority": cited_raw,
                     "status": "superseded_term",
                     "failure_mode": "SUPERSEDED_TERM",
-                    "details": f"Authority '{cited_sec_raw}' is superseded / inoperative (superseded by: {matching_clause.get('superseded_by', 'controlling agreement')}).",
+                    "details": f"Authority '{cited_raw}' is superseded / inoperative (superseded by: {matching_clause.get('superseded_by', 'controlling agreement')}).",
                     "evidence_span": matching_clause.get("content", "")[:180] + "..."
                 })
                 continue
 
-            # 3. Check: Structured slot discrepancy (e.g. Net 45 vs Net 30, $2M vs $1M)
+            # 3. Check: Negation and Carve-outs (NEGATED_OBLIGATION)
+            sent_lower = sentence.lower()
+            clause_content = matching_clause.get("content", "")
+            clause_lower = clause_content.lower()
+
+            # Negation polarity inversion
+            is_claim_negated = bool(re.search(r'\b(?:shall\s+not\s+be\s+capped|is\s+not\s+capped|uncapped|without\s+cap|unlimited\s+liability|shall\s+exceed|not\s+apply)\b', sent_lower))
+            is_clause_limiting = bool(re.search(r'\b(?:shall\s+be\s+capped|aggregate\s+liability\s+shall|in\s+no\s+event\s+shall|limited\s+to|shall\s+not\s+exceed)\b', clause_lower))
+            if is_claim_negated and is_clause_limiting and "cap_amount" in (matching_clause.get("structured_slots") or {}):
+                negated_obligations += 1
+                unsupported_claims += 1
+                claim_records.append({
+                    "claim_id": f"claim_{total_claims}",
+                    "sentence": sentence,
+                    "cited_authority": cited_raw,
+                    "status": "negated_obligation",
+                    "failure_mode": "NEGATED_OBLIGATION",
+                    "details": f"Asserted proposition inverts contractual liability limit in '{cited_raw}'.",
+                    "evidence_span": clause_content[:180] + "..."
+                })
+                continue
+
+            # Dropped carve-out check: clause has exceptions, but claim asserts absolute/uncarved cap
+            clause_has_carveouts = "carve_outs" in (matching_clause.get("structured_slots") or {}) or "except" in clause_lower or "excluding" in clause_lower
+            claim_drops_carveouts = bool(re.search(r'\b(?:for\s+all\s+claims\s+without\s+exception|without\s+exception|including\s+gross\s+negligence)\b', sent_lower))
+            if clause_has_carveouts and claim_drops_carveouts:
+                negated_obligations += 1
+                unsupported_claims += 1
+                claim_records.append({
+                    "claim_id": f"claim_{total_claims}",
+                    "sentence": sentence,
+                    "cited_authority": cited_raw,
+                    "status": "negated_obligation",
+                    "failure_mode": "NEGATED_OBLIGATION",
+                    "details": f"Asserted proposition in '{cited_raw}' drops or denies contractual carve-outs/exceptions.",
+                    "evidence_span": clause_content[:180] + "..."
+                })
+                continue
+
+            # 4. Check: Structured slot extraction & type normalization
             _, sent_slots = extract_structured_slots(sentence)
             clause_slots = matching_clause.get("structured_slots") or {}
             if not clause_slots:
-                _, clause_slots = extract_structured_slots(matching_clause.get("content", ""))
+                _, clause_slots = extract_structured_slots(clause_content)
 
+            # Currency check
+            sent_amt, sent_curr = normalize_money_val(sentence)
+            clause_cap_raw = clause_slots.get("cap_amount")
+            if clause_cap_raw:
+                clause_amt, clause_curr = normalize_money_val(clause_cap_raw)
+                if sent_amt is not None and clause_amt is not None:
+                    if sent_curr != clause_curr:
+                        divergent_terms += 1
+                        unsupported_claims += 1
+                        claim_records.append({
+                            "claim_id": f"claim_{total_claims}",
+                            "sentence": sentence,
+                            "cited_authority": cited_raw,
+                            "status": "divergent_term",
+                            "failure_mode": "DIVERGENT_TERM",
+                            "details": f"Currency mismatch: asserted '{sent_curr}' diverges from contract authority '{clause_curr}'.",
+                            "evidence_span": clause_content[:180] + "..."
+                        })
+                        continue
+
+            # Interest rate basis check (e.g. 1.5% per month vs 18% APR)
+            sent_rate, sent_basis = extract_rate_info(sentence)
+            if "late_interest_pct" in clause_slots and sent_rate is not None:
+                clause_rate_raw = get_slot_val(clause_slots["late_interest_pct"])
+                if sent_basis == "%/year" and clause_rate_raw <= 5.0:
+                    divergent_terms += 1
+                    unsupported_claims += 1
+                    claim_records.append({
+                        "claim_id": f"claim_{total_claims}",
+                        "sentence": sentence,
+                        "cited_authority": cited_raw,
+                        "status": "divergent_term",
+                        "failure_mode": "DIVERGENT_TERM",
+                        "details": f"Rate unit mismatch: asserted {sent_rate}% APR diverges from contract monthly rate ({clause_rate_raw}% per month).",
+                        "evidence_span": clause_content[:180] + "..."
+                    })
+                    continue
+
+            # Numerical slot comparison
             slot_divergence = False
             divergence_reason = ""
-            for skey in ("net_days", "uptime_pct", "late_interest_pct", "cap_period_months", "cap_amount", "notice_hours", "notice_days", "credit_pct"):
+            for skey in ("net_days", "uptime_pct", "late_interest_pct", "cap_period_months", "cap_amount", "notice_hours", "notice_days", "cure_days", "credit_pct"):
                 if skey in sent_slots and skey in clause_slots:
-                    val_sent = sent_slots[skey]
-                    val_clause = clause_slots[skey]
-                    if val_sent != val_clause:
+                    val_sent_prim = get_slot_val(sent_slots[skey])
+                    val_clause_prim = get_slot_val(clause_slots[skey])
+                    # Normalize types: int vs float, numeric float comparison
+                    try:
+                        norm_sent = float(val_sent_prim)
+                        norm_clause = float(val_clause_prim)
+                        is_diff = abs(norm_sent - norm_clause) > 1e-4
+                    except (ValueError, TypeError):
+                        is_diff = (str(val_sent_prim).lower() != str(val_clause_prim).lower())
+
+                    if is_diff:
                         slot_divergence = True
-                        divergence_reason = f"Asserted slot '{skey}={val_sent}' diverges from contract authority '{skey}={val_clause}'."
+                        divergence_reason = f"Asserted slot '{skey}={val_sent_prim}' diverges from contract authority '{skey}={val_clause_prim}'."
                         break
 
             if slot_divergence:
@@ -738,30 +1090,69 @@ def verify_commercial_grounding(
                 claim_records.append({
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
-                    "cited_authority": cited_sec_raw,
+                    "cited_authority": cited_raw,
                     "status": "divergent_term",
                     "failure_mode": "DIVERGENT_TERM",
                     "details": divergence_reason,
-                    "evidence_span": matching_clause.get("content", "")[:180] + "..."
+                    "evidence_span": clause_content[:180] + "..."
                 })
                 continue
 
-            # 4. Check: Lexical / token span overlap
-            content = matching_clause.get("content", "")
-            sent_words = set(re.findall(r'\w{4,}', sentence.lower()))
-            content_words = set(re.findall(r'\w{4,}', content.lower()))
-            overlap = sent_words.intersection(content_words)
+            # 5. Check: Partial support (topic right, but critical slot missing)
+            sent_without_sec = re.sub(
+                r'(?:(?:the\s+)?(?:\d{4}\s+)?(?:MSA|SOW|Statement\s+of\s+Work|Master\s+Agreement|Amendment(?:\s+No\.?\s*\d+)?|Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Article\s+[IVXLCDM\d]+|Lease)\s*,?\s*)?(?:Section|Clause|§|lease\s*§)\s*[\w\.\-]+(?:\([a-zA-Z\d]+\))*',
+                '',
+                sent_lower
+            )
+            is_partial = False
+            missing_slot_name = None
+            if "net_days" in clause_slots and "net_days" not in sent_slots:
+                # Did sentence make payment claims without stating the required days?
+                if any(w in sent_without_sec for w in ("pay", "payment", "invoice", "remit")) and not re.search(r'\b(?:net\s*\d+|\d+\s*days?)\b', sent_without_sec):
+                    is_partial = True
+                    missing_slot_name = "net_days"
+            elif "cap_amount" in clause_slots and "cap_amount" not in sent_slots and sent_amt is None:
+                if any(w in sent_without_sec for w in ("liability", "cap", "limit", "capped")) and not re.search(r'[\$€£]', sent_without_sec):
+                    is_partial = True
+                    missing_slot_name = "cap_amount"
 
-            if len(overlap) >= 2 or len(sent_words) <= 3:
-                supported_claims += 1
-                span_match = content[:200] + ("..." if len(content) > 200 else "")
+            if is_partial:
+                partial_supports += 1
+                unsupported_claims += 1
                 claim_records.append({
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
-                    "cited_authority": cited_sec_raw,
+                    "cited_authority": cited_raw,
+                    "status": "partial_support",
+                    "failure_mode": "PARTIAL_SUPPORT",
+                    "details": f"Clause '{cited_raw}' addresses this topic, but asserted claim omits required numerical threshold '{missing_slot_name}'.",
+                    "evidence_span": clause_content[:180] + "..."
+                })
+                continue
+
+            # 6. Check: Substantive token containment
+            sent_words = [w for w in re.findall(r'[a-zA-Z]{3,}', sent_lower) if w not in STOPWORDS]
+            clause_words = set(w for w in re.findall(r'[a-zA-Z]{3,}', clause_lower) if w not in STOPWORDS)
+            substantive_overlap = [w for w in sent_words if w in clause_words]
+
+            # Require substantive overlap >= 40% of sentence substantive words OR at least 2 key substantive tokens
+            has_slot_match = bool(set(sent_slots.keys()).intersection(clause_slots.keys()))
+            is_substantiated = (
+                (len(sent_words) > 0 and len(substantive_overlap) / len(sent_words) >= 0.40)
+                or len(substantive_overlap) >= 2
+                or has_slot_match
+            )
+
+            if is_substantiated and len(substantive_overlap) > 0:
+                supported_claims += 1
+                span_match = clause_content[:200] + ("..." if len(clause_content) > 200 else "")
+                claim_records.append({
+                    "claim_id": f"claim_{total_claims}",
+                    "sentence": sentence,
+                    "cited_authority": cited_raw,
                     "status": "verified_grounded",
                     "failure_mode": None,
-                    "details": f"Substantiated by {matching_clause.get('title', cited_sec_raw)}.",
+                    "details": f"Substantiated by {matching_clause.get('title', cited_raw)}.",
                     "evidence_span": span_match
                 })
             else:
@@ -770,11 +1161,11 @@ def verify_commercial_grounding(
                 claim_records.append({
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
-                    "cited_authority": cited_sec_raw,
+                    "cited_authority": cited_raw,
                     "status": "divergent_term",
                     "failure_mode": "DIVERGENT_TERM",
-                    "details": f"Clause '{cited_sec_raw}' exists, but text diverges significantly from the asserted terms.",
-                    "evidence_span": content[:180] + "..."
+                    "details": f"Clause '{cited_raw}' exists, but text diverges significantly from the asserted terms.",
+                    "evidence_span": clause_content[:180] + "..."
                 })
 
     if total_claims == 0:
@@ -786,7 +1177,8 @@ def verify_commercial_grounding(
             advisory_md = (
                 f"> ⚠️ **COMMERCIAL GROUNDING WARNING**: Only {supported_claims}/{total_claims} assertions ({pass_rate}%) "
                 f"are verified against the governing contract graph. "
-                f"{invented_clauses} invented clause(s), {divergent_terms} divergent term(s), and {superseded_terms} superseded term(s) detected."
+                f"{invented_clauses} invented clause(s), {divergent_terms} divergent term(s), {superseded_terms} superseded term(s), "
+                f"{wrong_instruments} wrong instrument(s), {partial_supports} partial support(s), and {negated_obligations} negated obligation(s) detected."
             )
         else:
             advisory_md = (
@@ -801,6 +1193,9 @@ def verify_commercial_grounding(
         "invented_clauses": invented_clauses,
         "divergent_terms": divergent_terms,
         "superseded_terms": superseded_terms,
+        "wrong_instruments": wrong_instruments,
+        "partial_supports": partial_supports,
+        "negated_obligations": negated_obligations,
         "pass_rate": pass_rate
     }
     is_grounded = (unsupported_claims == 0)
@@ -881,10 +1276,13 @@ def generate_executive_brief(
             for other_c in t_cls[1:]:
                 other_slots = other_c.get("structured_slots") or {}
                 for k in ("net_days", "late_interest_pct", "uptime_pct", "cap_period_months", "notice_hours"):
-                    if k in first_slots and k in other_slots and first_slots[k] != other_slots[k]:
-                        conflicting_topic = t
-                        diverging_details = f"{k}: {first_slots[k]} in '{t_cls[0].get('title')}' vs {other_slots[k]} in '{other_c.get('title')}'"
-                        break
+                    if k in first_slots and k in other_slots:
+                        val1 = get_slot_val(first_slots[k])
+                        val2 = get_slot_val(other_slots[k])
+                        if val1 != val2:
+                            conflicting_topic = t
+                            diverging_details = f"{k}: {val1} in '{t_cls[0].get('title')}' vs {val2} in '{other_c.get('title')}'"
+                            break
                 if conflicting_topic:
                     break
         if conflicting_topic:

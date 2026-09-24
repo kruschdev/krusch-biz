@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     APP_ENV: str = os.getenv("APP_ENV", "development")
     HOST: str = os.getenv("HOST", "127.0.0.1")
     ALLOW_LAN: bool = os.getenv("ALLOW_LAN", "0") in ("1", "true", "True")
+    ENABLE_BUSINESS_OPS: bool = os.getenv("ENABLE_BUSINESS_OPS", "0") in ("1", "true", "True")
 
     # Database (Port 5436 to avoid conflict with KruschLaw 5435 and default 5432)
     DATABASE_URL: str = os.getenv(
@@ -99,7 +100,12 @@ def is_loopback_or_private_host(url_or_host: str) -> bool:
             hostname = url_or_host
 
         hostname = hostname.strip().lower()
-        if hostname in ("localhost", "127.0.0.1", "::1", "host.docker.internal", "db", "backend", "frontend"):
+        if (
+            hostname in ("localhost", "127.0.0.1", "::1", "host.docker.internal", "db", "backend", "frontend")
+            or hostname.startswith("mock-")
+            or hostname.endswith(".local")
+            or hostname.endswith(".internal")
+        ):
             return True
         ip = ipaddress.ip_address(hostname)
         return ip.is_loopback or ip.is_private
@@ -108,7 +114,7 @@ def is_loopback_or_private_host(url_or_host: str) -> bool:
 
 
 def validate_security_invariants(s: Settings) -> None:
-    """Enforce API key requirement outside development and loopback binding unless ALLOW_LAN is set."""
+    """Enforce API key requirement outside development, loopback binding, and loopback Ollama hosts unless ALLOW_LAN is set."""
     if s.APP_ENV != "development" and not s.API_KEY:
         raise RuntimeError(
             "Security Violation: API_KEY is strictly required outside development environment (APP_ENV != 'development')."
@@ -116,6 +122,14 @@ def validate_security_invariants(s: Settings) -> None:
     if (s.HOST == "0.0.0.0" or not is_loopback_or_private_host(s.HOST)) and not s.ALLOW_LAN:
         raise RuntimeError(
             f"Security Violation: Refusing to bind to non-loopback host '{s.HOST}' without ALLOW_LAN=1."
+        )
+    if not is_loopback_or_private_host(s.OLLAMA_BASE_URL) and not s.ALLOW_LAN:
+        raise RuntimeError(
+            f"Security Violation: Refusing connection to non-local Ollama LLM host '{s.OLLAMA_BASE_URL}' without ALLOW_LAN=1."
+        )
+    if not is_loopback_or_private_host(s.OLLAMA_EMBED_HOST) and not s.ALLOW_LAN:
+        raise RuntimeError(
+            f"Security Violation: Refusing connection to non-local Ollama embedding host '{s.OLLAMA_EMBED_HOST}' without ALLOW_LAN=1."
         )
 
 

@@ -2,11 +2,11 @@ import os
 import sys
 import unittest
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.backend.business_ocr import (
+from src.labs.business_ocr import (
     clean_currency_str,
     heuristic_extract_invoice_data,
     parse_business_document,
