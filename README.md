@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 77 Passing](https://img.shields.io/badge/Tests-77%20Passing-brightgreen.svg)](tests/)
+[![Tests: 94 Passing](https://img.shields.io/badge/Tests-94%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: Passing](https://img.shields.io/badge/CI%20Gates-3%2F3%20Passing-brightgreen.svg)](.github/workflows/ci.yml)
 
 ---
@@ -68,11 +68,16 @@ Enterprise legal departments, corporate procurement teams, and M&A executives fa
   * Max chunk DOS guardrail (`MAX_INGEST_CHUNKS_PER_DOC = 500`).
   * Transactional `IngestJob` state machine (`queued → parsing → extracting_slots → embedding → indexed | failed`).
 * 🏢 **Multi-Tenant Isolation**: Enforces `tenant_id` across all queries, agreements, clauses, deal matters, evidence, and audit logs.
+* 🏢 **Commercial Operations & Accounts Receivable Engine**:
+  * **Contract Portfolio & Expiration Tracking**: Tracks vendor master agreements, SOWs, renewal terms, auto-renew flags, and configurable expiration warning horizons (30/60/90 days).
+  * **Invoicing & Accounts Receivable (AR)**: Complete invoicing workflow with structured JSON line items, automated subtotal/tax/total computation, status lifecycle (`draft`, `sent`, `paid`, `overdue`, `cancelled`), and real-time aging bucket breakdown (Current, 1–30d, 31–60d, 61–90d, 90d+).
+  * **Document & Invoice OCR Parser**: Heuristic regex parser with currency (`clean_currency_str`) and date normalizers, 20MB file upload guardrail, path traversal protection, and extraction confidence scoring.
+  * **DraftPro Commercial Document Generator**: Schema-driven templates for NDAs, Master Services Agreements (MSAs), Statements of Work (SOWs), Independent Contractor Agreements, and Commercial Demand Letters with automated balance calculations and legal revision workflow.
 * 🏷️ **Commercial Ensemble Chunk Tagging & Micro-Digests**: Integrated commercial chunk tagger (`src.backend.tagger`) performing an ensemble merge of deterministic contractual slot tags (`net-30`, `uptime-99.9pct`, `cap-12mo`, `sec-12`) with local Ollama (`qwen2.5-coder:7b`) extracting 3–5 lowercase domain tags and 1-sentence micro-digests. Provides automatic deterministic fallback on timeout.
 * 🔍 **Dual-Path Commercial Retrieval & Faceted Deal Explorer**: Combines dense vector similarity (`bge-large` 1024-dim) with lexical cover-density RRF, applying an exact tag boost (+20%) and canonical topic filtering (`PAYMENT_TERMS`, `LIABILITY_CAP`, `SLA_UPTIME`, etc.). Features a dedicated faceted evidence explorer in Streamlit (Tab 1) and REST endpoints (`GET /api/deals/{deal_id}/evidence`, `/evidence/tags`, `GET /api/clauses?topic=...&tag=...`).
 * 🗑️ **Hard Delete & Regulatory Audit Trail**:
   * `DELETE /api/deals/{deal_id}/hard-delete` permanently purges deals, exhibits, and grounding reports while logging an immutable regulatory audit entry.
-* 🔌 **Model Context Protocol (MCP) Server**: Exposes 9 tools over stdio JSON-RPC for Claude Desktop, Antigravity, and autonomous agent workflows.
+* 🔌 **Model Context Protocol (MCP) Server**: Exposes 15 tools over stdio JSON-RPC for Claude Desktop, Antigravity, and autonomous agent workflows.
 
 ---
 
@@ -132,10 +137,32 @@ When retrieving deal exhibits or searching operative agreements (`src/backend/ra
 ### 4. Faceted Exploration UI & REST Endpoints
 * **Streamlit Tab 1 (Deal Evidence Explorer)**: Interactive evidence card gallery with tag filters, topic chips, and 1-sentence micro-digests.
 * **Streamlit Tab 3 (Agreements & Clauses)**: Displays clause-level tags and summary badges alongside relational graph metadata.
-* **REST API**:
+* **Streamlit Tab 7 (Commercial Ops & DraftPro)**:
+  - **Contract Portfolio**: Active vendor contracts, renewal countdown badges, and contract registration.
+  - **Invoices & Receivables**: KPI summary (Total Receivables, Paid, Overdue), aging distribution, and invoice generation.
+  - **OCR Document Extractor**: Upload invoice/contract scans for instant line-item and counterparty extraction.
+  - **DraftPro Generator**: Rapid template-based commercial agreement generation with live markdown preview and export.
+* **Core REST API**:
   - `GET /api/deals/{deal_id}/evidence`: Enriched deal exhibits with tags, summary, and topic.
   - `GET /api/deals/{deal_id}/evidence/tags`: Aggregate unique tag distribution with occurrence counts for faceted UI filtering.
   - `GET /api/clauses?topic=...&tag=...`: Clause search with topic and tag filtering.
+
+### 5. Commercial Operations & DraftPro REST API (`/api/business`)
+* `POST /api/business/contracts`: Register a vendor contract with renewal horizons and alert thresholds.
+* `GET /api/business/contracts`: List all active vendor contracts.
+* `GET /api/business/contracts/expiring`: Query contracts expiring within `days_ahead` (default 60).
+* `GET /api/business/contracts/{id}`: Detailed vendor contract metadata.
+* `PATCH /api/business/contracts/{id}`: Update terms, expiration dates, or status.
+* `DELETE /api/business/contracts/{id}`: Delete contract record.
+* `POST /api/business/invoices`: Issue a client invoice with calculated line items.
+* `GET /api/business/invoices`: Enumerate invoices filtered by client or status.
+* `GET /api/business/invoices/outstanding`: Real-time receivables total and aging breakdown.
+* `PATCH /api/business/invoices/{id}/status`: Transition invoice status (`sent`, `paid`, `overdue`).
+* `POST /api/business/ocr/parse`: Multipart file upload for heuristic document parsing.
+* `GET /api/business/templates`: Enumerate available DraftPro commercial templates.
+* `GET /api/business/templates/{template_id}/schema`: Query required/optional template fields.
+* `POST /api/business/templates/generate`: Render formatted commercial contract.
+* `POST /api/business/templates/revise`: Apply instruction-based revisions to commercial drafts.
 
 ---
 
@@ -226,14 +253,23 @@ KruschBiz provides a native stdio JSON-RPC MCP server (`src/mcp/server.py`) expo
 | `draft_deal_brief` | `deal_id`, `context_facts`, `title`, `counterparty`, `deal_code`, `limit` | Stage 4-part executive brief with assertion grounding; **refuses if authorities absent or superseded** |
 | `get_grounding_audit` | `deal_id` | Retrieve stored assertion grounding audit for a specific deal |
 | `ingest_business_document` | `file_path`, `deal_id`, `doc_type`, `organization` | Ingest enterprise contract or exhibit via citation spine |
+| `register_vendor_contract` | `vendor_name`, `title`, `start_date`, `end_date`, `contract_value`, `renewal_terms`, `auto_renew`, `alert_days_before` | Register a vendor contract into the portfolio for expiration monitoring |
+| `list_expiring_contracts` | `days_ahead` | Find active vendor contracts approaching renewal or expiration horizons |
+| `create_business_invoice` | `client_name`, `issue_date`, `due_date`, `line_items`, `tax_rate`, `notes` | Issue a client invoice with calculated line items, subtotal, and tax |
+| `list_business_invoices` | `status`, `client_name` | Query business invoices and outstanding receivables by status or client |
+| `generate_commercial_document` | `template_id`, `data` | Generate drafted commercial documents (NDA, MSA, SOW, ICA, Demand Letter) |
+| `parse_business_document_ocr` | `file_path` | Heuristically extract amounts, vendors, line items, and terms from document scans |
 
 ---
 
 ## 🧪 Automated Testing & CI Gates
 
 ```bash
-# Run full unit, integration, tagger, resolver, and security test suite (77 tests)
+# Run full unit, integration, tagger, business ops, OCR, template, and security test suite (94 tests)
 pytest tests
+
+# Run commercial operations, OCR, and DraftPro test suites
+pytest tests/test_business_ops.py tests/test_business_ocr.py tests/test_business_templates.py
 
 # Run commercial tagger and deal evidence tests
 pytest tests/test_commercial_tagger.py tests/test_deal_evidence.py

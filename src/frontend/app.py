@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import streamlit as st
 import httpx
 
@@ -286,13 +287,14 @@ with st.sidebar:
     st.caption("KruschBiz v0.1.0 • Sovereign Architecture")
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Deal Room & Executive Audit",
     "⚖️ Controlling Document Resolver",
     "🔍 Contract & Policy Explorer",
     "📁 Document Ingestion & Spine",
     "💼 Deal Matters",
-    "🛡️ Audit & Evaluation Scorecards"
+    "🛡️ Audit & Evaluation Scorecards",
+    "🏢 Commercial Ops & DraftPro"
 ])
 
 # ---------------------------------------------------------------------------
@@ -966,3 +968,360 @@ with tab6:
     cm3.metric("DIVERGENT_TERM", "63.6%", "7 / 11")
     cm4.metric("SUPERSEDED_TERM", "100.0%", "1 / 1")
     st.caption("Overall Calibration Accuracy: **88.89%**")
+
+
+# ---------------------------------------------------------------------------
+# TAB 7: Commercial Operations & DraftPro
+# ---------------------------------------------------------------------------
+with tab7:
+    st.subheader("🏢 Commercial Operations, Invoicing & DraftPro")
+    st.markdown("""
+        <div class="disclaimer-card">
+            Manage operational vendor contract portfolios, accounts receivable lifecycle, and rapidly draft
+            air-gapped commercial legal agreements using verified KruschBiz templates with automated validation.
+        </div>
+    """, unsafe_allow_html=True)
+
+    ops_sub1, ops_sub2, ops_sub3, ops_sub4 = st.tabs([
+        "📜 Contract Portfolio & Expirations",
+        "💵 Invoices & Receivables",
+        "🔍 OCR Document Extractor",
+        "✍️ DraftPro Generator"
+    ])
+
+    # -----------------------------------------------------------------------
+    # SUBTAB 1: Contract Portfolio & Expirations
+    # -----------------------------------------------------------------------
+    with ops_sub1:
+        st.markdown("### 📜 Vendor Contract Portfolio & Renewal Lifecycle")
+
+        # Fetch contracts
+        contracts = []
+        try:
+            r = httpx.get(f"{BACKEND_URL}/api/business/contracts", headers=get_auth_headers(), timeout=5.0)
+            if r.status_code == 200:
+                contracts = r.json()
+        except Exception as e:
+            st.error(f"Failed to connect to business API: {e}")
+
+        # Summary KPIs
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        total_val = sum((c.get("value") or 0.0) for c in contracts)
+        expiring_soon = [c for c in contracts if c.get("days_until_expiration") is not None and 0 <= c["days_until_expiration"] <= 60]
+        expired = [c for c in contracts if c.get("days_until_expiration") is not None and c["days_until_expiration"] < 0]
+
+        kpi1.metric("Total Contracts", len(contracts))
+        kpi2.metric("Portfolio Value", f"${total_val:,.2f}")
+        kpi3.metric("Expiring ≤ 60 Days", len(expiring_soon), delta=f"-{len(expiring_soon)}" if expiring_soon else None, delta_color="inverse")
+        kpi4.metric("Expired", len(expired), delta=f"-{len(expired)}" if expired else None, delta_color="inverse")
+
+        # Registration Expander
+        with st.expander("➕ Register Vendor Contract in Portfolio", expanded=False):
+            with st.form("register_contract_form"):
+                rc_col1, rc_col2 = st.columns(2)
+                with rc_col1:
+                    c_name = st.text_input("Contract Name", placeholder="Master Cloud Infrastructure Agreement")
+                    c_vendor = st.text_input("Vendor / Counterparty", placeholder="Equinix Data Services")
+                    c_type = st.selectbox("Contract Type", ["Vendor MSA", "SaaS License", "Consulting", "Commercial Lease", "Data Processing", "Other"])
+                with rc_col2:
+                    c_val = st.number_input("Contract Value ($)", min_value=0.0, value=25000.0, step=1000.0)
+                    c_exp = st.date_input("Expiration Date")
+                    c_auto = st.checkbox("Auto-Renewing Contract", value=False)
+
+                c_notes = st.text_area("Operational Notes / Controlling Terms", placeholder="Net 30 payment terms, 99.9% uptime SLA with service credit remedies.")
+                submit_c = st.form_submit_button("Register Contract", use_container_width=True)
+
+                if submit_c:
+                    if not c_name or not c_vendor:
+                        st.warning("Please specify both contract name and vendor.")
+                    else:
+                        payload = {
+                            "contract_name": c_name,
+                            "vendor": c_vendor,
+                            "contract_type": c_type,
+                            "value": c_val,
+                            "expiration_date": c_exp.strftime("%Y-%m-%d"),
+                            "auto_renew": c_auto,
+                            "notes": c_notes,
+                            "tenant_id": st.session_state.get("tenant_id", "org_default")
+                        }
+                        try:
+                            res = httpx.post(f"{BACKEND_URL}/api/business/contracts", json=payload, headers=get_auth_headers(), timeout=5.0)
+                            if res.status_code == 201:
+                                st.success(f"Registered contract '{c_name}' successfully!")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to register contract: {res.text}")
+                        except Exception as ex:
+                            st.error(f"Connection error: {ex}")
+
+        # Contracts Table
+        if contracts:
+            st.markdown("#### Active Portfolio Agreements")
+            for c in contracts:
+                days_left = c.get("days_until_expiration")
+                status_color = "#38bdf8"
+                status_label = "ACTIVE"
+                if days_left is not None:
+                    if days_left < 0:
+                        status_color = "#ef4444"
+                        status_label = f"EXPIRED ({abs(days_left)}d ago)"
+                    elif days_left <= 30:
+                        status_color = "#f59e0b"
+                        status_label = f"EXPIRING SOON ({days_left}d left)"
+                    else:
+                        status_label = f"ACTIVE ({days_left}d left)"
+
+                val_str = f"${c.get('value'):,.2f}" if c.get("value") else "N/A"
+                st.markdown(f"""
+                    <div class="clause-card" style="border-left-color: {status_color};">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span class="clause-header">{c.get('contract_name')}</span>
+                            <span class="slot-pill" style="color:{status_color}; border-color:{status_color}; font-weight:700;">{status_label}</span>
+                        </div>
+                        <div class="clause-meta">
+                            <strong>Vendor:</strong> {c.get('vendor')} • <strong>Type:</strong> {c.get('contract_type')} •
+                            <strong>Value:</strong> {val_str} • <strong>Auto-Renew:</strong> {'Yes' if c.get('auto_renew') else 'No'}
+                        </div>
+                        <div class="clause-body">{c.get('notes') or 'No operational notes recorded.'}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No vendor contracts currently registered in portfolio.")
+
+    # -----------------------------------------------------------------------
+    # SUBTAB 2: Invoices & Receivables
+    # -----------------------------------------------------------------------
+    with ops_sub2:
+        st.markdown("### 💵 Commercial Invoicing & Accounts Receivable (AR)")
+
+        ar_metrics = {}
+        try:
+            r_ar = httpx.get(f"{BACKEND_URL}/api/business/invoices/outstanding", headers=get_auth_headers(), timeout=5.0)
+            if r_ar.status_code == 200:
+                ar_metrics = r_ar.json()
+        except Exception:
+            pass
+
+        metrics = ar_metrics.get("metrics", {})
+        aging = ar_metrics.get("aging_buckets", {})
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Invoiced", f"${metrics.get('total_invoiced', 0.0):,.2f}")
+        m2.metric("Total Collected", f"${metrics.get('total_paid', 0.0):,.2f}", f"{metrics.get('collection_rate_pct', 0.0)}% Collected")
+        m3.metric("Outstanding AR", f"${metrics.get('total_outstanding', 0.0):,.2f}")
+        m4.metric("Overdue AR", f"${metrics.get('total_overdue', 0.0):,.2f}", delta=f"-${metrics.get('total_overdue', 0.0):,.2f}" if metrics.get('total_overdue', 0) > 0 else None, delta_color="inverse")
+
+        # Aging breakdown
+        st.markdown("#### Aging Breakdown")
+        a1, a2, a3 = st.columns(3)
+        a1.info(f"**0–30 Days (Current)**: ${aging.get('current_and_0_30_days', 0.0):,.2f}")
+        a2.warning(f"**31–60 Days (Past Due)**: ${aging.get('past_due_31_60_days', 0.0):,.2f}")
+        a3.error(f"**60+ Days (Delinquent)**: ${aging.get('past_due_60_plus_days', 0.0):,.2f}")
+
+        # Invoice Creation
+        with st.expander("➕ Generate Commercial Invoice", expanded=False):
+            with st.form("new_invoice_form"):
+                i_c1, i_c2 = st.columns(2)
+                with i_c1:
+                    inv_num = st.text_input("Invoice Number", placeholder="INV-2026-001")
+                    client_name = st.text_input("Client Corporate Name", placeholder="Acme Global Inc.")
+                    client_email = st.text_input("Client Billing Email", placeholder="ap@acme.com")
+                with i_c2:
+                    due_d = st.date_input("Due Date")
+                    tax_r = st.number_input("Sales Tax Rate (%)", min_value=0.0, max_value=25.0, value=8.25, step=0.25) / 100.0
+
+                st.markdown("**Line Items**")
+                item_desc = st.text_input("Item Description", value="Dedicated Corporate Legal RAG Sprint")
+                l_col1, l_col2 = st.columns(2)
+                with l_col1:
+                    item_qty = st.number_input("Quantity", min_value=1.0, value=1.0, step=1.0)
+                with l_col2:
+                    item_rate = st.number_input("Unit Rate ($)", min_value=0.0, value=12500.0, step=500.0)
+
+                inv_notes = st.text_area("Payment Instructions & Wire Notes", placeholder="Remit to JPMorgan Chase Wire: ABA #021000021, Account #884920194.")
+                submit_inv = st.form_submit_button("Create Invoice", use_container_width=True)
+
+                if submit_inv:
+                    if not inv_num or not client_name:
+                        st.warning("Please specify both invoice number and client name.")
+                    else:
+                        payload = {
+                            "invoice_number": inv_num,
+                            "client_name": client_name,
+                            "client_email": client_email,
+                            "tax_rate": tax_r,
+                            "due_date": due_d.strftime("%Y-%m-%d"),
+                            "line_items": [
+                                {"description": item_desc, "quantity": item_qty, "rate": item_rate}
+                            ],
+                            "notes": inv_notes,
+                            "tenant_id": st.session_state.get("tenant_id", "org_default")
+                        }
+                        try:
+                            res = httpx.post(f"{BACKEND_URL}/api/business/invoices", json=payload, headers=get_auth_headers(), timeout=5.0)
+                            if res.status_code == 201:
+                                st.success(f"Invoice {inv_num} created successfully!")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to create invoice: {res.text}")
+                        except Exception as ex:
+                            st.error(f"Connection error: {ex}")
+
+        # Invoices Table
+        invoices = []
+        try:
+            r_inv = httpx.get(f"{BACKEND_URL}/api/business/invoices", headers=get_auth_headers(), timeout=5.0)
+            if r_inv.status_code == 200:
+                invoices = r_inv.json()
+        except Exception:
+            pass
+
+        if invoices:
+            st.markdown("#### Invoice Ledger")
+            for inv in invoices:
+                status_color = "#10b981" if inv["status"] == "paid" else ("#ef4444" if inv.get("is_overdue") else "#f59e0b")
+                status_text = "PAID" if inv["status"] == "paid" else ("OVERDUE" if inv.get("is_overdue") else inv["status"].upper())
+
+                st.markdown(f"""
+                    <div class="clause-card" style="border-left-color: {status_color};">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span class="clause-header">Invoice #{inv['invoice_number']} — {inv['client_name']}</span>
+                            <span class="slot-pill" style="color:{status_color}; border-color:{status_color}; font-weight:700;">{status_text}</span>
+                        </div>
+                        <div class="clause-meta">
+                            <strong>Total:</strong> ${inv['total']:,.2f} (Subtotal: ${inv['subtotal']:,.2f}, Tax: ${inv['tax_amount']:,.2f}) •
+                            <strong>Due:</strong> {inv.get('due_date', 'N/A')[:10] if inv.get('due_date') else 'N/A'}
+                        </div>
+                        <div class="clause-body">{inv.get('notes') or 'No payment instructions.'}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+    # -----------------------------------------------------------------------
+    # SUBTAB 3: OCR Document Extractor
+    # -----------------------------------------------------------------------
+    with ops_sub3:
+        st.markdown("### 🔍 OCR & Structured Document Extractor")
+        st.write("Upload scanned invoices, digital bills, receipts, or contracts to extract structured data with confidence scoring.")
+
+        ocr_file = st.file_uploader("Upload Commercial Document (PDF, PNG, JPG, TXT)", type=["pdf", "png", "jpg", "jpeg", "webp", "txt"])
+        doc_type_hint = st.selectbox("Document Classification Hint", ["auto", "invoice", "receipt", "contract"])
+
+        if ocr_file is not None:
+            if st.button("Extract Structured Metadata", use_container_width=True):
+                with st.spinner("Analyzing document with air-gapped OCR heuristics..."):
+                    try:
+                        files = {"file": (ocr_file.name, ocr_file.getvalue(), ocr_file.type)}
+                        r_ocr = httpx.post(
+                            f"{BACKEND_URL}/api/business/ocr/parse?doc_type_hint={doc_type_hint}",
+                            files=files,
+                            headers={"X-Tenant-ID": st.session_state.get("tenant_id", "org_default")},
+                            timeout=15.0
+                        )
+                        if r_ocr.status_code == 200:
+                            extracted = r_ocr.json()["data"]
+                            st.success(f"Successfully extracted metadata from '{ocr_file.name}'!")
+
+                            # Metrics Summary
+                            oc1, oc2, oc3, oc4 = st.columns(4)
+                            conf = extracted.get("confidence", {})
+                            oc1.metric("Document Type", extracted.get("doc_type", "").upper())
+                            oc2.metric("Total Amount", f"${extracted.get('total', 0.0):,.2f}")
+                            oc3.metric("Vendor", extracted.get("vendor", "N/A"))
+                            oc4.metric("Confidence Score", f"{conf.get('overall', 0.0) * 100:.0f}%")
+
+                            # Detailed JSON
+                            st.markdown("#### Extracted Entity Structure")
+                            st.json(extracted)
+                        else:
+                            st.error(f"Extraction failed ({r_ocr.status_code}): {r_ocr.text}")
+                    except Exception as ex:
+                        st.error(f"OCR service error: {ex}")
+
+    # -----------------------------------------------------------------------
+    # SUBTAB 4: DraftPro Generator
+    # -----------------------------------------------------------------------
+    with ops_sub4:
+        st.markdown("### ✍️ DraftPro Commercial Legal Document Generator")
+        st.write("Instantly assemble authoritative commercial agreements, NDAs, SOWs, and demand letters with automated validation.")
+
+        # Fetch templates
+        templates = []
+        try:
+            r_tmpl = httpx.get(f"{BACKEND_URL}/api/business/templates", headers=get_auth_headers(), timeout=5.0)
+            if r_tmpl.status_code == 200:
+                templates = r_tmpl.json()
+        except Exception:
+            pass
+
+        if templates:
+            t_options = {t["id"]: f"{t['name']} ({t['category']})" for t in templates}
+            selected_t_id = st.selectbox("Select Commercial Agreement Template", list(t_options.keys()), format_func=lambda x: t_options[x])
+
+            # Fetch detailed template fields
+            r_detail = httpx.get(f"{BACKEND_URL}/api/business/templates/{selected_t_id}", headers=get_auth_headers(), timeout=5.0)
+            if r_detail.status_code == 200:
+                tmpl_data = r_detail.json()
+                st.caption(tmpl_data.get("description", ""))
+
+                with st.form("draftpro_form"):
+                    form_inputs = {}
+                    fields = tmpl_data.get("fields", [])
+                    # Render fields in 2 columns
+                    for i in range(0, len(fields), 2):
+                        col_a, col_b = st.columns(2)
+                        f_a = fields[i]
+                        with col_a:
+                            if f_a["type"] == "integer":
+                                form_inputs[f_a["key"]] = st.number_input(f_a["label"], value=int(f_a.get("default", 1)), step=1)
+                            elif f_a["type"] == "float":
+                                form_inputs[f_a["key"]] = st.number_input(f_a["label"], value=float(f_a.get("default", 0.0)), step=100.0)
+                            else:
+                                form_inputs[f_a["key"]] = st.text_input(f_a["label"], value=str(f_a.get("default", "")))
+
+                        if i + 1 < len(fields):
+                            f_b = fields[i + 1]
+                            with col_b:
+                                if f_b["type"] == "integer":
+                                    form_inputs[f_b["key"]] = st.number_input(f_b["label"], value=int(f_b.get("default", 1)), step=1)
+                                elif f_b["type"] == "float":
+                                    form_inputs[f_b["key"]] = st.number_input(f_b["label"], value=float(f_b.get("default", 0.0)), step=100.0)
+                                else:
+                                    form_inputs[f_b["key"]] = st.text_input(f_b["label"], value=str(f_b.get("default", "")))
+
+                    generate_btn = st.form_submit_button("Generate Completed Commercial Draft", use_container_width=True)
+
+                if generate_btn:
+                    with st.spinner("Assembling contract draft..."):
+                        try:
+                            gen_res = httpx.post(
+                                f"{BACKEND_URL}/api/business/templates/{selected_t_id}/generate",
+                                json={"field_data": form_inputs},
+                                headers=get_auth_headers(),
+                                timeout=10.0
+                            )
+                            if gen_res.status_code == 200:
+                                doc_result = gen_res.json()
+                                st.session_state["draftpro_content"] = doc_result["document_content"]
+                                st.session_state["draftpro_name"] = tmpl_data["name"]
+                                st.success(f"Generated {tmpl_data['name']} ({doc_result['word_count']} words)!")
+                            else:
+                                st.error(f"Generation failed: {gen_res.text}")
+                        except Exception as ex:
+                            st.error(f"DraftPro error: {ex}")
+
+                # Display generated draft if present
+                if "draftpro_content" in st.session_state:
+                    st.markdown("---")
+                    st.markdown(f"#### 📄 Generated Draft: {st.session_state.get('draftpro_name')}")
+                    st.text_area("Markdown Text", st.session_state["draftpro_content"], height=350)
+                    st.download_button(
+                        label="⬇️ Download Document (.md)",
+                        data=st.session_state["draftpro_content"],
+                        file_name=f"{selected_t_id}_{datetime.now().strftime('%Y%m%d')}.md",
+                        mime="text/markdown",
+                        use_container_width=True
+                    )
+        else:
+            st.info("No commercial templates available.")
+

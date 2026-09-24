@@ -7,10 +7,21 @@ and staged executive memorandum drafting to IDE agents via stdio JSON-RPC.
 
 import json
 import logging
+import os
 import sys
+from datetime import datetime, timedelta
 from typing import Any
 
-from ..backend.db import CommercialClauseVector, CommercialGroundingReport, DealMatter, SessionLocal
+from ..backend.business_ocr import parse_business_document
+from ..backend.business_templates import generate_commercial_document
+from ..backend.db import (
+    CommercialClauseVector,
+    CommercialGroundingReport,
+    ContractPortfolio,
+    DealMatter,
+    Invoice,
+    SessionLocal,
+)
 from ..backend.ingest import ingest_business_document
 from ..backend.rag import (
     generate_executive_brief,
@@ -272,6 +283,109 @@ TOOLS_CATALOG = [
                 }
             },
             "required": ["agreement_a_id", "agreement_b_id"]
+        }
+    },
+    {
+        "name": "register_vendor_contract",
+        "description": "Register a commercial vendor contract in the corporate portfolio to track value, expiration dates, and auto-renewal alerts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "contract_name": {"type": "string", "description": "Name or title of the vendor agreement"},
+                "vendor": {"type": "string", "description": "Vendor or counterparty corporate entity"},
+                "contract_type": {"type": "string", "description": "Contract type (e.g. 'Vendor MSA', 'SaaS License', 'Consulting', 'Commercial Lease')", "default": "Vendor MSA"},
+                "expiration_date": {"type": "string", "description": "Expiration date in ISO format (YYYY-MM-DD)"},
+                "value": {"type": "number", "description": "Total or annual contract monetary value"},
+                "auto_renew": {"type": "boolean", "description": "Whether the contract automatically renews", "default": False},
+                "reminder_days": {"type": "string", "description": "Comma-separated alert thresholds in days (default: '30,60,90')", "default": "30,60,90"},
+                "notes": {"type": "string", "description": "Operational notes or key terms"},
+                "tenant_id": {"type": "string", "default": "org_default"}
+            },
+            "required": ["contract_name", "vendor"]
+        }
+    },
+    {
+        "name": "list_expiring_contracts",
+        "description": "Enumerate vendor contracts in the portfolio that are expiring within a specified number of days.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "within_days": {"type": "integer", "description": "Lookahead window in days (default: 60)", "default": 60},
+                "tenant_id": {"type": "string", "default": "org_default"}
+            }
+        }
+    },
+    {
+        "name": "create_business_invoice",
+        "description": "Generate a commercial client invoice with itemized line items, automated subtotal, tax rate calculation, and status tracking.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "invoice_number": {"type": "string", "description": "Unique invoice tracking identifier (e.g. 'INV-2026-101')"},
+                "client_name": {"type": "string", "description": "Client or customer corporate name"},
+                "client_email": {"type": "string", "description": "Client contact billing email"},
+                "line_items": {
+                    "type": "array",
+                    "description": "List of line items with description, quantity, and rate",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {"type": "string"},
+                            "quantity": {"type": "number", "default": 1.0},
+                            "rate": {"type": "number"}
+                        },
+                        "required": ["description", "rate"]
+                    }
+                },
+                "tax_rate": {"type": "number", "description": "Sales tax rate (e.g. 0.0825 for 8.25%)", "default": 0.0},
+                "due_date": {"type": "string", "description": "Payment due date (YYYY-MM-DD)"},
+                "notes": {"type": "string", "description": "Invoice payment instructions or wire details"},
+                "tenant_id": {"type": "string", "default": "org_default"}
+            },
+            "required": ["invoice_number", "client_name"]
+        }
+    },
+    {
+        "name": "list_business_invoices",
+        "description": "List commercial invoices or retrieve accounts receivable aging breakdown and overdue metrics.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status_filter": {"type": "string", "description": "Filter by status: 'draft', 'sent', 'paid', 'overdue', 'cancelled'"},
+                "include_receivables_summary": {"type": "boolean", "description": "Include AR aging buckets and total overdue metrics", "default": True},
+                "tenant_id": {"type": "string", "default": "org_default"}
+            }
+        }
+    },
+    {
+        "name": "generate_commercial_document",
+        "description": "Draft standard commercial legal agreements (Mutual NDA, B2B MSA, Statement of Work, Independent Contractor Agreement, Demand for Payment) using verified KruschBiz templates.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "template_id": {
+                    "type": "string",
+                    "enum": ["commercial_nda", "master_services_agreement", "statement_of_work", "independent_contractor", "commercial_demand_letter"],
+                    "description": "Commercial template identifier"
+                },
+                "field_data": {
+                    "type": "object",
+                    "description": "Key-value dictionary of template variables"
+                }
+            },
+            "required": ["template_id"]
+        }
+    },
+    {
+        "name": "parse_business_document_ocr",
+        "description": "Parse an invoice, receipt, or contract file using structured OCR heuristics to extract vendor, line items, amounts, and dates.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to document file on disk (PDF, PNG, JPG, TXT)"},
+                "doc_type_hint": {"type": "string", "enum": ["invoice", "receipt", "contract", "auto"], "default": "auto"}
+            },
+            "required": ["file_path"]
         }
     }
 ]
@@ -603,6 +717,244 @@ def handle_diff_instruments(args: dict[str, Any]) -> dict[str, Any]:
         db.close()
 
 
+def handle_register_contract(args: dict[str, Any]) -> dict[str, Any]:
+    c_name = args.get("contract_name", "").strip()
+    vendor = args.get("vendor", "").strip()
+    c_type = args.get("contract_type", "Vendor MSA")
+    exp_date = args.get("expiration_date")
+    val = args.get("value")
+    auto_ren = args.get("auto_renew", False)
+    rem_days = args.get("reminder_days", "30,60,90")
+    notes = args.get("notes")
+    tenant_id = args.get("tenant_id", "org_default")
+
+    if not c_name or not vendor:
+        return {"error": "Both 'contract_name' and 'vendor' are required."}
+
+    exp_dt = None
+    if exp_date:
+        try:
+            exp_dt = datetime.fromisoformat(exp_date)
+        except ValueError:
+            return {"error": "Invalid expiration_date format. Use YYYY-MM-DD."}
+
+    db = SessionLocal()
+    try:
+        contract = ContractPortfolio(
+            tenant_id=tenant_id,
+            contract_name=c_name,
+            vendor=vendor,
+            contract_type=c_type,
+            expiration_date=exp_dt,
+            value=val,
+            auto_renew=auto_ren,
+            reminder_days=rem_days,
+            notes=notes,
+            status="active"
+        )
+        db.add(contract)
+        db.commit()
+        db.refresh(contract)
+        return {
+            "status": "success",
+            "contract_id": contract.id,
+            "contract_name": contract.contract_name,
+            "vendor": contract.vendor,
+            "expiration_date": contract.expiration_date.isoformat() if contract.expiration_date else None,
+            "value": contract.value
+        }
+    finally:
+        db.close()
+
+
+def handle_list_expiring_contracts(args: dict[str, Any]) -> dict[str, Any]:
+    within_days = int(args.get("within_days", 60))
+    tenant_id = args.get("tenant_id", "org_default")
+
+    db = SessionLocal()
+    try:
+        now = datetime.now()
+        threshold = now + timedelta(days=within_days)
+        contracts = db.query(ContractPortfolio).filter(
+            ContractPortfolio.tenant_id == tenant_id,
+            ContractPortfolio.status.in_(["active", "expiring_soon"]),
+            ContractPortfolio.expiration_date.isnot(None),
+            ContractPortfolio.expiration_date <= threshold
+        ).order_by(ContractPortfolio.expiration_date.asc()).all()
+
+        results = []
+        for c in contracts:
+            days_left = (c.expiration_date.replace(tzinfo=None) - now).days
+            results.append({
+                "id": c.id,
+                "contract_name": c.contract_name,
+                "vendor": c.vendor,
+                "expiration_date": c.expiration_date.strftime("%Y-%m-%d"),
+                "days_left": days_left,
+                "value": c.value,
+                "auto_renew": c.auto_renew
+            })
+        return {
+            "within_days": within_days,
+            "total_expiring": len(results),
+            "contracts": results
+        }
+    finally:
+        db.close()
+
+
+def handle_create_invoice(args: dict[str, Any]) -> dict[str, Any]:
+    inv_num = args.get("invoice_number", "").strip()
+    client_name = args.get("client_name", "").strip()
+    client_email = args.get("client_email")
+    line_items = args.get("line_items", [])
+    tax_rate = float(args.get("tax_rate", 0.0))
+    due_date_str = args.get("due_date")
+    notes = args.get("notes")
+    tenant_id = args.get("tenant_id", "org_default")
+
+    if not inv_num or not client_name:
+        return {"error": "Both 'invoice_number' and 'client_name' are required."}
+
+    subtotal = 0.0
+    items_dicts = []
+    for itm in line_items:
+        qty = float(itm.get("quantity", 1.0))
+        rate = float(itm.get("rate", 0.0))
+        amt = round(qty * rate, 2)
+        items_dicts.append({
+            "description": itm.get("description", "Item"),
+            "quantity": qty,
+            "rate": rate,
+            "amount": amt
+        })
+        subtotal += amt
+
+    subtotal = round(subtotal, 2)
+    tax_amt = round(subtotal * tax_rate, 2)
+    total = round(subtotal + tax_amt, 2)
+
+    due_dt = None
+    if due_date_str:
+        try:
+            due_dt = datetime.fromisoformat(due_date_str)
+        except ValueError:
+            return {"error": "Invalid due_date format. Use YYYY-MM-DD."}
+
+    db = SessionLocal()
+    try:
+        inv = Invoice(
+            tenant_id=tenant_id,
+            invoice_number=inv_num,
+            client_name=client_name,
+            client_email=client_email,
+            line_items=items_dicts,
+            subtotal=subtotal,
+            tax_rate=tax_rate,
+            tax_amount=tax_amt,
+            total=total,
+            status="draft",
+            invoice_date=datetime.now(),
+            due_date=due_dt,
+            notes=notes
+        )
+        db.add(inv)
+        db.commit()
+        db.refresh(inv)
+        return {
+            "status": "success",
+            "invoice_id": inv.id,
+            "invoice_number": inv.invoice_number,
+            "client_name": inv.client_name,
+            "total": inv.total,
+            "subtotal": inv.subtotal,
+            "tax_amount": inv.tax_amount,
+            "status_code": inv.status
+        }
+    finally:
+        db.close()
+
+
+def handle_list_invoices(args: dict[str, Any]) -> dict[str, Any]:
+    status_filter = args.get("status_filter")
+    include_summary = args.get("include_receivables_summary", True)
+    tenant_id = args.get("tenant_id", "org_default")
+
+    db = SessionLocal()
+    try:
+        q = db.query(Invoice).filter(Invoice.tenant_id == tenant_id)
+        if status_filter:
+            q = q.filter(Invoice.status == status_filter)
+        invoices = q.order_by(Invoice.invoice_date.desc().nullslast()).all()
+
+        inv_list = []
+        total_outstanding = 0.0
+        total_overdue = 0.0
+        now = datetime.now()
+
+        for inv in invoices:
+            is_od = False
+            if inv.due_date and inv.due_date.replace(tzinfo=None) < now and inv.status in ["draft", "sent"]:
+                is_od = True
+            elif inv.status == "overdue":
+                is_od = True
+
+            if inv.status in ["draft", "sent", "overdue"]:
+                total_outstanding += inv.total
+                if is_od:
+                    total_overdue += inv.total
+
+            inv_list.append({
+                "id": inv.id,
+                "invoice_number": inv.invoice_number,
+                "client_name": inv.client_name,
+                "total": inv.total,
+                "status": "overdue" if is_od else inv.status,
+                "due_date": inv.due_date.strftime("%Y-%m-%d") if inv.due_date else None,
+                "is_overdue": is_od
+            })
+
+        resp = {
+            "total_invoices": len(inv_list),
+            "invoices": inv_list
+        }
+        if include_summary:
+            resp["receivables_summary"] = {
+                "total_outstanding": round(total_outstanding, 2),
+                "total_overdue": round(total_overdue, 2)
+            }
+        return resp
+    finally:
+        db.close()
+
+
+def handle_generate_commercial_document(args: dict[str, Any]) -> dict[str, Any]:
+    tmpl_id = args.get("template_id", "").strip()
+    field_data = args.get("field_data", {})
+    if not tmpl_id:
+        return {"error": "'template_id' is required."}
+    try:
+        return generate_commercial_document(tmpl_id, field_data)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_parse_ocr(args: dict[str, Any]) -> dict[str, Any]:
+    file_path = args.get("file_path", "").strip()
+    doc_type_hint = args.get("doc_type_hint", "auto")
+    if not file_path:
+        return {"error": "'file_path' is required."}
+    if not os.path.exists(file_path):
+        return {"error": f"File not found: {file_path}"}
+
+    try:
+        with open(file_path, "rb") as f:
+            content = f.read()
+        return parse_business_document(content, os.path.basename(file_path), doc_type_hint)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 DISPATCHER = {
     "search_contracts_and_policies": handle_search_contracts,
     "get_clause_details": handle_get_clause,
@@ -614,6 +966,12 @@ DISPATCHER = {
     "resolve_controlling_clause": handle_resolve_controlling_clause,
     "detect_contract_conflicts": handle_detect_conflicts,
     "diff_contract_instruments": handle_diff_instruments,
+    "register_vendor_contract": handle_register_contract,
+    "list_expiring_contracts": handle_list_expiring_contracts,
+    "create_business_invoice": handle_create_invoice,
+    "list_business_invoices": handle_list_invoices,
+    "generate_commercial_document": handle_generate_commercial_document,
+    "parse_business_document_ocr": handle_parse_ocr,
 }
 
 

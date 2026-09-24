@@ -126,6 +126,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def get_db():
+    """Dependency yield for FastAPI request database sessions."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # RELATIONAL CONTRACT GRAPH MODELS
 # ---------------------------------------------------------------------------
@@ -328,6 +337,62 @@ class DealEvidence(Base):
     topic = Column(String(100), nullable=True, index=True)            # Canonical commercial topic
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ContractPortfolio(Base):
+    """
+    Vendor agreements and commercial contract lifecycle portfolio.
+    Tracks expiration dates, contract values, auto-renewal terms, and alert thresholds.
+    """
+    __tablename__ = "contracts_portfolio"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
+    agreement_id = Column(Integer, ForeignKey("agreements.id", ondelete="SET NULL"), nullable=True, index=True)
+    contract_name = Column(String(255), nullable=False, index=True)
+    vendor = Column(String(255), nullable=False, index=True)
+    contract_type = Column(String(100), nullable=True)  # e.g. "Vendor MSA", "SaaS License", "Consulting", "Commercial Lease"
+    start_date = Column(DateTime(timezone=True), nullable=True)
+    expiration_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    value = Column(Float, nullable=True)
+    auto_renew = Column(Boolean, default=False, nullable=False)
+    reminder_days = Column(String(50), default="30,60,90", nullable=True)
+    status = Column(String(50), default="active", nullable=False, index=True)  # active, expiring_soon, expired, renewed, terminated
+    document_link = Column(String(500), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    agreement = relationship("Agreement")
+
+
+class Invoice(Base):
+    """
+    Commercial client invoicing, line items, and accounts receivable tracking.
+    """
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
+    deal_id = Column(Integer, ForeignKey("deal_matters.id", ondelete="SET NULL"), nullable=True, index=True)
+    invoice_number = Column(String(100), nullable=False, index=True)
+    client_name = Column(String(255), nullable=False, index=True)
+    client_email = Column(String(255), nullable=True)
+    line_items = Column(JSONType, nullable=True)  # [{"description": str, "quantity": float, "rate": float, "amount": float}]
+    subtotal = Column(Float, default=0.0, nullable=False)
+    tax_rate = Column(Float, default=0.0, nullable=False)
+    tax_amount = Column(Float, default=0.0, nullable=False)
+    total = Column(Float, default=0.0, nullable=False)
+    status = Column(String(50), default="draft", nullable=False, index=True)  # draft, sent, paid, overdue, cancelled
+    invoice_date = Column(DateTime(timezone=True), nullable=True)
+    due_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    sent_date = Column(DateTime(timezone=True), nullable=True)
+    paid_date = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    deal = relationship("DealMatter")
 
 
 class CommercialGroundingReport(Base):

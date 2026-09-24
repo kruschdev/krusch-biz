@@ -35,6 +35,7 @@ from .db import (
     DealEvidence,
     DealMatter,
     SessionLocal,
+    get_db,
     init_db,
 )
 from .export import export_executive_memo_docx, export_executive_memo_markdown
@@ -53,6 +54,8 @@ from .resolver import (
     diff_agreements,
     resolve_controlling_clause,
 )
+
+from .business_router import router as business_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
 logger = logging.getLogger("kruschbiz.api")
@@ -98,13 +101,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Mount Business Operations & Commercial Utilities Router
+app.include_router(
+    business_router,
+    prefix="/api/business",
+    tags=["Business Operations & Commercial Utilities"]
+)
 
 
 def verify_api_key(x_api_key: str | None = Header(None)):

@@ -27,7 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import CommercialClauseVector, CommercialGroundingReport, DealEvidence, SessionLocal
+from .db import CommercialClauseVector, CommercialGroundingReport, DealEvidence
 from .taxonomy import CANONICAL_TOPICS, extract_structured_slots
 
 logger = logging.getLogger("kruschbiz.rag")

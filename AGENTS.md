@@ -27,10 +27,20 @@ KruschBiz is an on-premise, air-gapped corporate intelligence engine and version
    - **Pydantic Serialization**: SQLite/Postgres text columns storing JSON tags must utilize `@field_validator("tags", mode="before")` on Pydantic schemas (e.g., `DealEvidenceItem`) to transparently deserialize raw JSON strings into typed string lists.
    - **Air-Gapped Sovereign Model**: Use local Ollama `qwen2.5-coder:7b` with a 15.0s timeout and immediate deterministic fallback. Zero external network calls.
 
+7. **Commercial Operations & DraftPro Invariants**:
+   - **Contract Portfolio**: Track vendor agreements, expiration dates, renewal terms, and auto-renew flags with proactive alert thresholds (e.g. 30/60/90 days).
+   - **Invoicing & Accounts Receivable**: Dual-storage JSON line items, automated subtotal, tax rate, and total calculation. Support status lifecycle (`draft`, `sent`, `paid`, `overdue`, `cancelled`) with automated aging breakdown (current, 1-30d, 31-60d, 61-90d, 90d+).
+   - **Invoice & Document OCR Parsing**: Safe heuristic regex parser with date and currency sanitization, MIME validation, 20MB file cap, and confidence scoring.
+   - **DraftPro Commercial Templates**: 5 core templates (`commercial_nda`, `master_services_agreement`, `statement_of_work`, `independent_contractor`, `commercial_demand_letter`). Strict field validation, dynamic math computation (e.g. demand letter total due), and legal revision engine.
+   - **Scope Boundaries**: Explicitly excludes personal/fleet expense tracking and mileage calculators (retained only in personal/fleet modules, omitted from KruschBiz per architecture directive).
+
 ## Testing Commands
 ```bash
-# Run full unit, integration, tagger, resolver, and security test suite (77 tests)
+# Run full unit, integration, tagger, business ops, OCR, template, and security test suite (94 tests)
 pytest tests
+
+# Run commercial operations and DraftPro test suites
+pytest tests/test_business_ops.py tests/test_business_ocr.py tests/test_business_templates.py
 
 # Run commercial tagger and deal evidence tests
 pytest tests/test_commercial_tagger.py tests/test_deal_evidence.py
@@ -41,3 +51,4 @@ pytest tests/eval/test_golden_eval_gate.py
 # Linting
 ruff check .
 ```
+
