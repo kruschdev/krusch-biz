@@ -38,7 +38,182 @@ logging.basicConfig(
 logger = logging.getLogger("kruschbiz.mcp")
 
 
-TOOLS_CATALOG = [
+CANONICAL_TOOLS_CATALOG = [
+    {
+        "name": "contract_intelligence",
+        "description": "Unified commercial contract and policy intelligence. Actions: 'search' (hybrid vector+lexical search across enterprise agreements), 'get_clause' (retrieve full clause by section), 'resolve_controlling' (walk amendment/superseding graph for operative clause as of date), 'detect_conflicts' (scan for diverging numeric terms across operative instruments), 'diff_instruments' (side-by-side comparison of two agreements).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["search", "get_clause", "resolve_controlling", "detect_conflicts", "diff_instruments"],
+                    "description": "Action to perform"
+                },
+                "query": {"type": "string", "description": "Search query or commercial terms (for 'search')"},
+                "section": {"type": "string", "description": "Section identifier, e.g. 'Section 10.1' (for 'get_clause')"},
+                "counterparty": {"type": "string", "description": "Counterparty or vendor name (for 'resolve_controlling', 'detect_conflicts')"},
+                "topic": {"type": "string", "description": "Canonical commercial topic, e.g. 'PAYMENT_TERMS', 'LIMITATION_OF_LIABILITY' (for 'resolve_controlling')"},
+                "as_of_date": {"type": "string", "description": "Optional ISO date YYYY-MM-DD (for 'resolve_controlling', 'detect_conflicts')"},
+                "agreement_a_id": {"type": "integer", "description": "Base Agreement ID (for 'diff_instruments')"},
+                "agreement_b_id": {"type": "integer", "description": "Target Agreement ID (for 'diff_instruments')"},
+                "organization": {"type": "string", "description": "Optional organization filter"},
+                "agreement_type": {"type": "string", "description": "Optional agreement type filter"},
+                "domain": {"type": "string", "description": "Optional subject domain"},
+                "limit": {"type": "integer", "description": "Max results to return (default: 5)", "default": 5},
+                "tenant_id": {"type": "string", "default": "org_default"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "manage_deal",
+        "description": "Manage confidential corporate deals, transactions, and due diligence matters. Actions: 'log' (persist and vectorize new deal matter), 'list' (enumerate active deals), 'audit' (retrieve assertion-level proposition grounding audit).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["log", "list", "audit"],
+                    "description": "Action to perform"
+                },
+                "deal_id": {"type": "integer", "description": "Deal matter ID (required for 'audit')"},
+                "title": {"type": "string", "description": "Title of the deal or transaction (for 'log')"},
+                "context_facts": {"type": "string", "description": "Background facts and deal terms (for 'log')"},
+                "deal_code": {"type": "string", "description": "Internal transaction code, e.g. 'DEAL-2026-081' (for 'log')"},
+                "company_name": {"type": "string", "description": "Internal enterprise entity (for 'log')"},
+                "counterparty_name": {"type": "string", "description": "Counterparty corporate entity (for 'log')"},
+                "deal_type": {"type": "string", "description": "Deal classification (for 'log')"},
+                "limit": {"type": "integer", "description": "Max deals to return (for 'list', default: 10)", "default": 10}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "vendor_portfolio",
+        "description": "Track vendor agreements, contract values, expiration dates, renewal terms, and automated renewal alert horizons. Actions: 'register' (add vendor contract with terms & alert thresholds), 'list_expiring' (find contracts approaching renewal/expiration within N days), 'list' (list all contracts in portfolio).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["register", "list_expiring", "list"],
+                    "description": "Action to perform"
+                },
+                "contract_name": {"type": "string", "description": "Contract title (for 'register')"},
+                "vendor": {"type": "string", "description": "Vendor corporate entity (for 'register')"},
+                "contract_type": {"type": "string", "description": "Classification (default: 'Vendor MSA')", "default": "Vendor MSA"},
+                "expiration_date": {"type": "string", "description": "Expiration date in ISO format YYYY-MM-DD (for 'register')"},
+                "value": {"type": "number", "description": "Monetary value (for 'register')"},
+                "auto_renew": {"type": "boolean", "description": "Whether contract auto-renews (for 'register')", "default": False},
+                "reminder_days": {"type": "string", "description": "Alert thresholds in days, e.g. '30,60,90'", "default": "30,60,90"},
+                "within_days": {"type": "integer", "description": "Lookahead window in days (for 'list_expiring', default: 60)", "default": 60},
+                "notes": {"type": "string", "description": "Operational notes or terms"},
+                "tenant_id": {"type": "string", "default": "org_default"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "accounts_receivable",
+        "description": "Commercial client invoicing and receivables ledger. Server calculates line items, subtotals, tax, and totals deterministically. Actions: 'create' (issue invoice with line items), 'list' (query invoices with automated aging breakdown: current, 1-30d, 31-60d, 61-90d, 90d+), 'update_status' (transition invoice status).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "list", "update_status"],
+                    "description": "Action to perform"
+                },
+                "invoice_number": {"type": "string", "description": "Unique tracking ID, e.g. 'INV-2026-101' (for 'create')"},
+                "client_name": {"type": "string", "description": "Client corporate entity (for 'create')"},
+                "client_email": {"type": "string", "description": "Client billing email (for 'create')"},
+                "line_items": {
+                    "type": "array",
+                    "description": "List of line items with description, quantity, rate (for 'create')",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {"type": "string"},
+                            "quantity": {"type": "number", "default": 1.0},
+                            "rate": {"type": "number"}
+                        },
+                        "required": ["description", "rate"]
+                    }
+                },
+                "tax_rate": {"type": "number", "description": "Sales tax rate, e.g. 0.0825 (for 'create')", "default": 0.0},
+                "due_date": {"type": "string", "description": "Payment due date YYYY-MM-DD (for 'create')"},
+                "notes": {"type": "string", "description": "Payment instructions or wire details"},
+                "invoice_id": {"type": "integer", "description": "Invoice ID (for 'update_status')"},
+                "new_status": {
+                    "type": "string",
+                    "enum": ["draft", "sent", "paid", "overdue", "cancelled"],
+                    "description": "New lifecycle status (for 'update_status')"
+                },
+                "status_filter": {"type": "string", "description": "Filter by status (for 'list')"},
+                "include_receivables_summary": {"type": "boolean", "default": True},
+                "tenant_id": {"type": "string", "default": "org_default"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "commercial_drafting",
+        "description": "Draft executive deal briefs with assertion grounding or standard commercial legal contracts using verified templates. Actions: 'executive_brief' (stage grounded 4-part memo; refuses if authorities absent or superseded), 'standard_template' (draft NDA, MSA, SOW, ICA, Demand Letter from verified DraftPro templates).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["executive_brief", "standard_template"],
+                    "description": "Action to perform"
+                },
+                "deal_id": {"type": "integer", "description": "Deal matter ID (for 'executive_brief')"},
+                "context_facts": {"type": "string", "description": "Transaction facts and deal points (for 'executive_brief')"},
+                "title": {"type": "string", "description": "Deal or memorandum title (for 'executive_brief')"},
+                "counterparty": {"type": "string", "description": "Counterparty corporate entity (for 'executive_brief')"},
+                "deal_code": {"type": "string", "description": "Internal transaction code (for 'executive_brief')"},
+                "limit": {"type": "integer", "description": "Max governing clauses to retrieve (for 'executive_brief', default: 5)", "default": 5},
+                "template_id": {
+                    "type": "string",
+                    "enum": ["commercial_nda", "master_services_agreement", "statement_of_work", "independent_contractor", "commercial_demand_letter"],
+                    "description": "Template ID (for 'standard_template')"
+                },
+                "field_data": {
+                    "type": "object",
+                    "description": "Key-value dictionary of template variables (for 'standard_template')"
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "document_pipeline",
+        "description": "Enterprise document processing pipeline. Actions: 'ingest' (ingest PDF, DOCX, TXT into citation spine with slot extraction and embeddings), 'ocr_extract' (heuristic OCR extraction of amounts, vendors, line items, and terms from document scans).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["ingest", "ocr_extract"],
+                    "description": "Action to perform"
+                },
+                "file_path": {"type": "string", "description": "Absolute filesystem path to document"},
+                "doc_type": {"type": "string", "description": "Document classification (for 'ingest', default: 'contract')", "default": "contract"},
+                "organization": {"type": "string", "description": "Corporate entity name (for 'ingest', default: 'Acme Corp')", "default": "Acme Corp"},
+                "deal_id": {"type": "integer", "description": "Optional deal ID for deal room evidence (for 'ingest')"},
+                "doc_type_hint": {"type": "string", "enum": ["invoice", "receipt", "contract", "auto"], "default": "auto", "description": "Hint for OCR parser (for 'ocr_extract')"}
+            },
+            "required": ["action", "file_path"]
+        }
+    }
+]
+
+# Canonical toolset for IDE agents (~950 prompt tokens vs ~3,500 legacy tokens)
+TOOLS_CATALOG = CANONICAL_TOOLS_CATALOG
+
+# Legacy tool catalog retained for reference and complete backwards compatibility
+LEGACY_TOOLS_CATALOG = [
     {
         "name": "search_contracts_and_policies",
         "description": "Perform hybrid full-text and vector semantic search across enterprise contracts, MSAs, SLAs, NDAs, and corporate policies in the air-gapped KruschBiz store.",
@@ -955,7 +1130,145 @@ def handle_parse_ocr(args: dict[str, Any]) -> dict[str, Any]:
         return {"error": str(e)}
 
 
+def handle_contract_intelligence(args: dict[str, Any]) -> dict[str, Any]:
+    action = args.get("action", "search")
+    if action == "search":
+        return handle_search_contracts(args)
+    elif action == "get_clause":
+        return handle_get_clause(args)
+    elif action == "resolve_controlling":
+        return handle_resolve_controlling_clause(args)
+    elif action == "detect_conflicts":
+        return handle_detect_conflicts(args)
+    elif action == "diff_instruments":
+        return handle_diff_instruments(args)
+    return {
+        "error": f"Unknown action '{action}' for contract_intelligence. "
+        "Valid actions: search, get_clause, resolve_controlling, detect_conflicts, diff_instruments."
+    }
+
+
+def handle_manage_deal(args: dict[str, Any]) -> dict[str, Any]:
+    action = args.get("action", "list")
+    if action == "log":
+        return handle_log_deal(args)
+    elif action == "list":
+        return handle_list_deals(args)
+    elif action == "audit":
+        return handle_get_grounding_audit(args)
+    return {
+        "error": f"Unknown action '{action}' for manage_deal. "
+        "Valid actions: log, list, audit."
+    }
+
+
+def handle_vendor_portfolio(args: dict[str, Any]) -> dict[str, Any]:
+    action = args.get("action", "list_expiring")
+    if action == "register":
+        return handle_register_contract(args)
+    elif action in ("list_expiring", "expiring"):
+        return handle_list_expiring_contracts(args)
+    elif action == "list":
+        tenant_id = args.get("tenant_id", "org_default")
+        db = SessionLocal()
+        try:
+            contracts = (
+                db.query(ContractPortfolio)
+                .filter(ContractPortfolio.tenant_id == tenant_id)
+                .order_by(ContractPortfolio.expiration_date.asc())
+                .all()
+            )
+            return {
+                "total_contracts": len(contracts),
+                "contracts": [
+                    {
+                        "id": c.id,
+                        "contract_name": c.contract_name,
+                        "vendor": c.vendor,
+                        "contract_type": c.contract_type,
+                        "contract_value": c.value,
+                        "start_date": c.start_date.strftime("%Y-%m-%d") if c.start_date else None,
+                        "expiration_date": c.expiration_date.strftime("%Y-%m-%d") if c.expiration_date else None,
+                        "auto_renew": c.auto_renew,
+                        "status": c.status,
+                    }
+                    for c in contracts
+                ],
+            }
+        finally:
+            db.close()
+    return {
+        "error": f"Unknown action '{action}' for vendor_portfolio. "
+        "Valid actions: register, list_expiring, list."
+    }
+
+
+def handle_accounts_receivable(args: dict[str, Any]) -> dict[str, Any]:
+    action = args.get("action", "list")
+    if action == "create":
+        return handle_create_invoice(args)
+    elif action == "list":
+        return handle_list_invoices(args)
+    elif action == "update_status":
+        inv_id = args.get("invoice_id")
+        new_status = args.get("new_status")
+        tenant_id = args.get("tenant_id", "org_default")
+        if not inv_id or not new_status:
+            return {"error": "Both 'invoice_id' and 'new_status' are required."}
+        db = SessionLocal()
+        try:
+            inv = (
+                db.query(Invoice)
+                .filter(Invoice.id == int(inv_id), Invoice.tenant_id == tenant_id)
+                .first()
+            )
+            if not inv:
+                return {"error": f"Invoice {inv_id} not found."}
+            inv.status = new_status
+            db.commit()
+            return {"status": "success", "invoice_id": inv.id, "new_status": inv.status}
+        finally:
+            db.close()
+    return {
+        "error": f"Unknown action '{action}' for accounts_receivable. "
+        "Valid actions: create, list, update_status."
+    }
+
+
+def handle_commercial_drafting(args: dict[str, Any]) -> dict[str, Any]:
+    action = args.get("action", "standard_template")
+    if action in ("executive_brief", "brief"):
+        return handle_draft_brief(args)
+    elif action in ("standard_template", "template"):
+        return handle_generate_commercial_document(args)
+    return {
+        "error": f"Unknown action '{action}' for commercial_drafting. "
+        "Valid actions: executive_brief, standard_template."
+    }
+
+
+def handle_document_pipeline(args: dict[str, Any]) -> dict[str, Any]:
+    action = args.get("action", "ocr_extract")
+    if action == "ingest":
+        return handle_ingest_document(args)
+    elif action in ("ocr_extract", "ocr"):
+        return handle_parse_ocr(args)
+    return {
+        "error": f"Unknown action '{action}' for document_pipeline. "
+        "Valid actions: ingest, ocr_extract."
+    }
+
+
 DISPATCHER = {
+    # 6 Canonical Consolidated Tools
+    "contract_intelligence": handle_contract_intelligence,
+    "manage_deal": handle_manage_deal,
+    "vendor_portfolio": handle_vendor_portfolio,
+    "accounts_receivable": handle_accounts_receivable,
+    "commercial_drafting": handle_commercial_drafting,
+    "document_pipeline": handle_document_pipeline,
+
+    # Backwards-Compatible Legacy Handlers
     "search_contracts_and_policies": handle_search_contracts,
     "get_clause_details": handle_get_clause,
     "log_deal_matter": handle_log_deal,

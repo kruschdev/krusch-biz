@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 94 Passing](https://img.shields.io/badge/Tests-94%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100 Passing](https://img.shields.io/badge/Tests-100%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: Passing](https://img.shields.io/badge/CI%20Gates-3%2F3%20Passing-brightgreen.svg)](.github/workflows/ci.yml)
 
 ---
@@ -77,7 +77,7 @@ Enterprise legal departments, corporate procurement teams, and M&A executives fa
 * 🔍 **Dual-Path Commercial Retrieval & Faceted Deal Explorer**: Combines dense vector similarity (`bge-large` 1024-dim) with lexical cover-density RRF, applying an exact tag boost (+20%) and canonical topic filtering (`PAYMENT_TERMS`, `LIABILITY_CAP`, `SLA_UPTIME`, etc.). Features a dedicated faceted evidence explorer in Streamlit (Tab 1) and REST endpoints (`GET /api/deals/{deal_id}/evidence`, `/evidence/tags`, `GET /api/clauses?topic=...&tag=...`).
 * 🗑️ **Hard Delete & Regulatory Audit Trail**:
   * `DELETE /api/deals/{deal_id}/hard-delete` permanently purges deals, exhibits, and grounding reports while logging an immutable regulatory audit entry.
-* 🔌 **Model Context Protocol (MCP) Server**: Exposes 15 tools over stdio JSON-RPC for Claude Desktop, Antigravity, and autonomous agent workflows.
+* 🔌 **Model Context Protocol (MCP) Server**: Exposes 6 high-leverage canonical tools (~950 prompt tokens) over stdio JSON-RPC to protect local 7B/14B models from tool overload, with full backwards-compatible dispatch across all 16 legacy corporate tools.
 
 ---
 
@@ -240,33 +240,33 @@ Verify endpoints:
 
 ## 🔌 Model Context Protocol (MCP) Integration
 
-KruschBiz provides a native stdio JSON-RPC MCP server (`src/mcp/server.py`) exposing air-gapped corporate intelligence tools with mandatory guardrails:
+## 🔌 Model Context Protocol (MCP) Integration
 
-| Tool | Parameters | Description |
+KruschBiz provides a native stdio JSON-RPC MCP server (`src/mcp/server.py`) exposing air-gapped corporate intelligence tools. To prevent prompt token bloat and routing indecision on local 7B/14B models, tools are consolidated into **6 high-leverage canonical tools** (~950 prompt tokens, reduced from ~3,500 tokens):
+
+### Canonical 6-Tool Contract (Active Agent Surface)
+| Canonical Tool | Action Verbs | Description |
 |---|---|---|
-| `search_contracts_and_policies` | `query`, `organization`, `agreement_type`, `domain`, `limit` | Hybrid lexical + vector search across enterprise agreements |
-| `get_clause_details` | `section`, `organization` | Retrieve complete clause body, parent sections, and carve-outs |
-| `resolve_controlling_clause` | `counterparty`, `topic`, `as_of_date` | Walk amendment graph to resolve controlling operative clause |
-| `detect_contract_conflicts` | `counterparty`, `as_of_date` | Scan for conflicting operational terms across live agreements |
-| `log_deal_matter` | `title`, `context_facts`, `deal_code`, `company_name`, `counterparty_name`, `deal_type` | Securely log and vectorize confidential corporate transaction on-premise |
-| `list_deal_matters` | `limit` | Enumerate active deals and transaction codes |
-| `draft_deal_brief` | `deal_id`, `context_facts`, `title`, `counterparty`, `deal_code`, `limit` | Stage 4-part executive brief with assertion grounding; **refuses if authorities absent or superseded** |
-| `get_grounding_audit` | `deal_id` | Retrieve stored assertion grounding audit for a specific deal |
-| `ingest_business_document` | `file_path`, `deal_id`, `doc_type`, `organization` | Ingest enterprise contract or exhibit via citation spine |
-| `register_vendor_contract` | `vendor_name`, `title`, `start_date`, `end_date`, `contract_value`, `renewal_terms`, `auto_renew`, `alert_days_before` | Register a vendor contract into the portfolio for expiration monitoring |
-| `list_expiring_contracts` | `days_ahead` | Find active vendor contracts approaching renewal or expiration horizons |
-| `create_business_invoice` | `client_name`, `issue_date`, `due_date`, `line_items`, `tax_rate`, `notes` | Issue a client invoice with calculated line items, subtotal, and tax |
-| `list_business_invoices` | `status`, `client_name` | Query business invoices and outstanding receivables by status or client |
-| `generate_commercial_document` | `template_id`, `data` | Generate drafted commercial documents (NDA, MSA, SOW, ICA, Demand Letter) |
-| `parse_business_document_ocr` | `file_path` | Heuristically extract amounts, vendors, line items, and terms from document scans |
+| `contract_intelligence` | `search`, `get_clause`, `resolve_controlling`, `detect_conflicts`, `diff_instruments` | Unified query engine for hybrid vector+lexical search, clause inspection, controlling amendment resolution, and contract conflict detection. |
+| `manage_deal` | `log`, `list`, `audit` | Securely log confidential transactions with embeddings, enumerate active deals, and retrieve proposition grounding audits. |
+| `vendor_portfolio` | `register`, `list_expiring`, `list` | Track vendor master agreements, contract values, expiration countdowns, and renewal alert horizons. |
+| `accounts_receivable` | `create`, `list`, `update_status` | Commercial client invoicing with automated server-side math, status lifecycle, and aging bucket breakdown (Current, 1–30d, 31–60d, 61–90d, 90d+). |
+| `commercial_drafting` | `executive_brief`, `standard_template` | Draft executive deal memos with assertion grounding or generate standard contracts (NDA, MSA, SOW, ICA, Demand Letter) from verified DraftPro templates. |
+| `document_pipeline` | `ingest`, `ocr_extract` | Ingest documents into the citation spine or run heuristic OCR to extract line items, amounts, dates, and counterparties. |
+
+> [!TIP]
+> **Complete Backwards Compatibility**: The MCP dispatcher internally retains routes for all 16 legacy micro-tools (`search_contracts_and_policies`, `get_clause_details`, `register_vendor_contract`, `create_business_invoice`, etc.), ensuring zero disruption to existing scripts or callers.
 
 ---
 
 ## 🧪 Automated Testing & CI Gates
 
 ```bash
-# Run full unit, integration, tagger, business ops, OCR, template, and security test suite (94 tests)
+# Run full unit, integration, tagger, business ops, OCR, template, and MCP test suite (100 tests)
 pytest tests
+
+# Run MCP server tests (verifies 6 canonical tools + 16 legacy aliases)
+pytest tests/test_mcp.py
 
 # Run commercial operations, OCR, and DraftPro test suites
 pytest tests/test_business_ops.py tests/test_business_ocr.py tests/test_business_templates.py

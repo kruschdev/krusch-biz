@@ -32,12 +32,18 @@ KruschBiz is an on-premise, air-gapped corporate intelligence engine and version
    - **Invoicing & Accounts Receivable**: Dual-storage JSON line items, automated subtotal, tax rate, and total calculation. Support status lifecycle (`draft`, `sent`, `paid`, `overdue`, `cancelled`) with automated aging breakdown (current, 1-30d, 31-60d, 61-90d, 90d+).
    - **Invoice & Document OCR Parsing**: Safe heuristic regex parser with date and currency sanitization, MIME validation, 20MB file cap, and confidence scoring.
    - **DraftPro Commercial Templates**: 5 core templates (`commercial_nda`, `master_services_agreement`, `statement_of_work`, `independent_contractor`, `commercial_demand_letter`). Strict field validation, dynamic math computation (e.g. demand letter total due), and legal revision engine.
-   - **Scope Boundaries**: Explicitly excludes personal/fleet expense tracking and mileage calculators (retained only in personal/fleet modules, omitted from KruschBiz per architecture directive).
+8. **MCP Canonical Consolidation & Anti-Tool-Bloat Standard**:
+   - **6 Canonical Tools**: To prevent context window bloat (~950 tokens vs ~3,500 tokens) and tool routing confusion on local 7B/14B models, `TOOLS_CATALOG` exposes strictly 6 high-leverage canonical tools: `contract_intelligence`, `manage_deal`, `vendor_portfolio`, `accounts_receivable`, `commercial_drafting`, and `document_pipeline`.
+   - **Backwards-Compatible Dispatch**: The MCP dispatcher maintains transparent routing for both the 6 canonical tools and all 16 legacy granular tool names, preventing breaks in existing integrations.
+   - **Separation of Concerns**: The database and FastAPI routes handle arithmetic, relational state, and ground truth; the agent and MCP layer handle reasoning and communicative interface.
 
 ## Testing Commands
 ```bash
-# Run full unit, integration, tagger, business ops, OCR, template, and security test suite (94 tests)
+# Run full unit, integration, tagger, business ops, OCR, template, and MCP test suite (100 tests)
 pytest tests
+
+# Run MCP server tests (verifies canonical 6 tools and backwards-compatible dispatch)
+pytest tests/test_mcp.py
 
 # Run commercial operations and DraftPro test suites
 pytest tests/test_business_ops.py tests/test_business_ocr.py tests/test_business_templates.py
