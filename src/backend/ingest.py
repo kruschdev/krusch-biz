@@ -15,6 +15,7 @@ Features:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import time
@@ -36,6 +37,7 @@ from .db import (
 )
 from .nexus_adapter import chunk_document, parse_document
 from .rag import get_embeddings_batch
+from .tagger import tag_commercial_chunk
 from .taxonomy import extract_structured_slots
 
 logger = logging.getLogger("kruschbiz.ingest")
@@ -421,6 +423,15 @@ def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, A
 
         for (item, source_hash), vec in zip(to_insert_records, vectors):
             topic, extracted_slots = extract_structured_slots(item["content"])
+            tag_info = tag_commercial_chunk(
+                content=item["content"],
+                filename=item.get("title", ""),
+                locator=item.get("section", ""),
+                use_llm=False
+            )
+            tags_json = json.dumps(tag_info.get("tags", []))
+            summary_text = tag_info.get("summary")
+            assigned_topic = tag_info.get("topic") or topic
 
             # 1. Ensure Agreement instrument exists in relational graph
             ag_title = f"{item['organization']} - {item['agreement_type']}"
@@ -466,11 +477,13 @@ def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, A
                 agreement_id=agreement_obj.id,
                 section=item["section"],
                 title=item["title"],
-                topic=topic,
+                topic=assigned_topic,
                 hierarchy_level=item.get("hierarchy_level", "clause"),
                 authority_class=item.get("authority_class", "governing_agreement"),
                 content=item["content"],
                 structured_slots=extracted_slots,
+                tags=tags_json,
+                summary=summary_text,
                 chunk_index=0,
                 is_active=not item.get("superseded", False),
                 embedding=vec
@@ -491,6 +504,9 @@ def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, A
                 definitions_ref=item.get("definitions_ref"),
                 exceptions_ref=item.get("exceptions_ref"),
                 authority_class=item.get("authority_class", "governing_agreement"),
+                topic=assigned_topic,
+                tags=tags_json,
+                summary=summary_text,
                 effective_date=item.get("effective_date"),
                 expiration_date=item.get("expiration_date"),
                 amended_date=item.get("amended_date"),
@@ -645,14 +661,27 @@ def ingest_business_document(
 
             if not exists:
                 topic, slots = extract_structured_slots(ch.text)
+                sec_locator = ch.section_locator or "Section"
+                tag_info = tag_commercial_chunk(
+                    content=ch.text,
+                    filename=filename,
+                    locator=sec_locator,
+                    doc_type=doc_type
+                )
+                tags_json = json.dumps(tag_info.get("tags", []))
+                summary_text = tag_info.get("summary")
+                assigned_topic = tag_info.get("topic") or topic
+
                 batch_chunks.append({
                     "content": ch.text,
-                    "section": ch.section_locator or "Section",
+                    "section": sec_locator,
                     "chunk_index": ch.chunk_index,
                     "page_number": ch.page_number,
                     "source_hash": ch_hash,
-                    "topic": topic,
-                    "slots": slots
+                    "topic": assigned_topic,
+                    "slots": slots,
+                    "tags": tags_json,
+                    "summary": summary_text
                 })
 
         inserted = 0
@@ -689,6 +718,8 @@ def ingest_business_document(
                     authority_class="statement_of_work" if "sow" in filename.lower() else "governing_agreement",
                     content=c["content"],
                     structured_slots=c["slots"],
+                    tags=c["tags"],
+                    summary=c["summary"],
                     chunk_index=c["chunk_index"],
                     is_active=True,
                     embedding=vec
@@ -707,6 +738,9 @@ def ingest_business_document(
                     parent_section=None,
                     hierarchy_level="clause",
                     authority_class="statement_of_work" if "sow" in filename.lower() else "governing_agreement",
+                    topic=c["topic"],
+                    tags=c["tags"],
+                    summary=c["summary"],
                     content=c["content"],
                     source_header=f"[{filename}] {c['section']}",
                     source_hash=c["source_hash"],
@@ -728,6 +762,9 @@ def ingest_business_document(
                         section_locator=c["section"],
                         chunk_index=c["chunk_index"],
                         content=c["content"],
+                        tags=c["tags"],
+                        summary=c["summary"],
+                        topic=c["topic"],
                         embedding=vec
                     )
                     db.add(ev_record)

@@ -22,7 +22,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,7 @@ from .rag import (
     generate_executive_brief,
     get_embedding,
     retrieve_clauses,
+    retrieve_deal_evidence,
 )
 from .resolver import (
     detect_contract_conflicts,
@@ -179,11 +180,67 @@ class ClauseResponse(BaseModel):
     superseded_by: str | None = None
     content: str
     source_header: str | None = None
+    topic: str | None = None
+    tags: list[str] = []
+    summary: str | None = None
     structured_slots: dict[str, Any] | None = None
     explanation: dict[str, Any] | None = None
     score: float | None = None
     vector_score: float | None = None
     lexical_score: float | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def parse_tags(cls, v):
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(t) for t in v]
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [str(t) for t in parsed]
+            except Exception:
+                pass
+            return [t.strip() for t in v.split(",") if t.strip()]
+        return []
+
+
+class DealEvidenceItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    deal_id: int
+    tenant_id: str | None = None
+    filename: str
+    doc_type: str
+    page_number: int | None = None
+    section_locator: str | None = None
+    chunk_index: int = 0
+    content: str
+    tags: list[str] = []
+    summary: str | None = None
+    topic: str | None = None
+    similarity: float | None = 1.0
+    created_at: str | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def parse_tags(cls, v):
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(t) for t in v]
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [str(t) for t in parsed]
+            except Exception:
+                pass
+            return [t.strip() for t in v.split(",") if t.strip()]
+        return []
 
 
 class ConsultResponse(BaseModel):
@@ -414,6 +471,98 @@ def legacy_purge_deal(
     return hard_delete_deal(deal_id=deal_id, db=db, api_key=api_key, x_tenant_id=x_tenant_id)
 
 
+# --- Deal Room Evidence & Semantic Exhibits ---
+
+@app.get("/api/deals/{deal_id}/evidence", response_model=list[DealEvidenceItem], tags=["Deals & Evidence"])
+def get_deal_evidence(
+    deal_id: int,
+    q: str | None = Query(None, description="Semantic or keyword query within deal exhibits"),
+    tag: str | None = Query(None, description="Filter by commercial semantic tag (e.g. 'payment-terms', 'net-30')"),
+    topic: str | None = Query(None, description="Filter by canonical commercial topic (e.g. 'PAYMENT_TERMS')"),
+    limit: int = Query(10, ge=1, le=100, description="Max evidence chunks to retrieve"),
+    doc_type: str | None = Query(None, description="Optional doc_type filter (e.g. contract, redline, sla)"),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """
+    Search deal room exhibits, vendor proposals, redlines, and commercial attachments
+    strictly within the designated deal matter.
+    Enriched with commercial semantic tags, 1-sentence micro-digests, and canonical topics.
+    Prevents cross-deal and cross-tenant data contamination.
+    """
+    deal = db.query(DealMatter).filter(
+        DealMatter.id == deal_id,
+        DealMatter.tenant_id == x_tenant_id,
+        DealMatter.is_deleted.is_(False)
+    ).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
+
+    try:
+        results = retrieve_deal_evidence(
+            db=db,
+            deal_id=deal_id,
+            text_query=q,
+            tag=tag,
+            topic=topic,
+            limit=limit,
+            doc_type=doc_type,
+            tenant_id=x_tenant_id
+        )
+        return [DealEvidenceItem(**r) for r in results]
+    except Exception as e:
+        logger.error(f"Error querying deal evidence: {e}")
+        raise HTTPException(status_code=500, detail=f"Evidence retrieval error: {str(e)}")
+
+
+@app.get("/api/deals/{deal_id}/evidence/tags", tags=["Deals & Evidence"])
+def get_deal_evidence_tags(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """
+    Return distinct commercial semantic tags and topics present in a deal's evidence corpus
+    for faceted filtering and exploratory navigation.
+    """
+    deal = db.query(DealMatter).filter(
+        DealMatter.id == deal_id,
+        DealMatter.tenant_id == x_tenant_id,
+        DealMatter.is_deleted.is_(False)
+    ).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
+
+    rows = db.query(DealEvidence.tags, DealEvidence.topic).filter(
+        DealEvidence.deal_id == deal_id,
+        DealEvidence.tenant_id == x_tenant_id
+    ).all()
+    unique_tags = set()
+    unique_topics = set()
+
+    for tags_val, topic_val in rows:
+        if topic_val:
+            unique_topics.add(topic_val)
+        if tags_val:
+            try:
+                parsed = json.loads(tags_val) if isinstance(tags_val, str) else list(tags_val)
+                for t in parsed:
+                    unique_tags.add(t)
+            except Exception:
+                for t in str(tags_val).split(","):
+                    if t.strip():
+                        unique_tags.add(t.strip())
+
+    return {
+        "deal_id": deal_id,
+        "tags": sorted(list(unique_tags)),
+        "topics": sorted(list(unique_topics)),
+        "total_evidence_chunks": len(rows)
+    }
+
+
 # --- Clauses & Contract Search ---
 
 @app.get("/api/clauses", response_model=list[ClauseResponse])
@@ -422,6 +571,8 @@ def search_clauses(
     organization: str | None = Query(None),
     agreement_type: str | None = Query(None),
     domain: str | None = Query(None),
+    topic: str | None = Query(None, description="Filter by canonical commercial topic"),
+    tag: str | None = Query(None, description="Filter by commercial semantic tag"),
     limit: int = Query(5, ge=1, le=50),
     offset: int = Query(0, ge=0),
     exclude_superseded: bool = Query(True),
@@ -443,6 +594,8 @@ def search_clauses(
             agreement_type=agreement_type,
             domain=domain,
             exclude_superseded=exclude_superseded,
+            topic=topic,
+            tag=tag,
             tenant_id=x_tenant_id
         )
         return results
@@ -458,6 +611,10 @@ def search_clauses(
         query_obj = query_obj.filter(CommercialClauseVector.agreement_type.ilike(f"%{agreement_type}%"))
     if domain:
         query_obj = query_obj.filter(CommercialClauseVector.domain.ilike(f"%{domain}%"))
+    if topic:
+        query_obj = query_obj.filter(CommercialClauseVector.topic.ilike(f"%{topic}%"))
+    if tag:
+        query_obj = query_obj.filter(CommercialClauseVector.tags.ilike(f"%{tag}%"))
 
     items = query_obj.order_by(CommercialClauseVector.id.asc()).offset(offset).limit(limit).all()
     return items

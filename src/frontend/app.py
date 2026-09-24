@@ -149,6 +149,52 @@ st.markdown("""
         font-family: monospace;
         font-size: 0.78rem;
     }
+    .tag-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(56, 189, 248, 0.12);
+        color: #38bdf8;
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        padding: 0.15rem 0.55rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-right: 4px;
+        margin-bottom: 4px;
+    }
+    .topic-pill {
+        display: inline-flex;
+        align-items: center;
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        padding: 0.2rem 0.6rem;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+    }
+    .micro-digest {
+        background: rgba(15, 23, 42, 0.6);
+        border-left: 3px solid #38bdf8;
+        padding: 0.5rem 0.85rem;
+        border-radius: 6px;
+        font-size: 0.88rem;
+        color: #e2e8f0;
+        font-style: italic;
+        margin: 0.5rem 0;
+    }
+    .evidence-card {
+        background: rgba(30, 41, 59, 0.45);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-left: 4px solid #38bdf8;
+        padding: 1.15rem;
+        border-radius: 10px;
+        margin-bottom: 1.15rem;
+    }
 
     /* Deal Card Styling */
     .deal-card {
@@ -290,6 +336,68 @@ with tab1:
         if current_deal:
             st.info(f"**Counterparty**: {current_deal.get('counterparty_name')} | **Type**: {current_deal.get('deal_type')} | **Status**: {current_deal.get('status')}")
             st.markdown(f"**Transaction Context**: {current_deal.get('context_facts')}")
+
+            with st.expander("📁 Deal Exhibits & Tagged Semantic Evidence", expanded=True):
+                # Fetch tags and topics for deal
+                ev_tags = []
+                ev_topics = []
+                try:
+                    tag_resp = httpx.get(f"{BACKEND_URL}/api/deals/{selected_deal}/evidence/tags", headers=get_auth_headers(), timeout=5.0)
+                    if tag_resp.status_code == 200:
+                        td = tag_resp.json()
+                        ev_tags = td.get("tags", [])
+                        ev_topics = td.get("topics", [])
+                except Exception:
+                    pass
+
+                f_q, f_topic, f_tag = st.columns([2, 1, 1])
+                with f_q:
+                    ev_q = st.text_input("Filter Evidence:", placeholder="e.g. Net 30, liability, SOC 2", key=f"ev_q_{selected_deal}")
+                with f_topic:
+                    ev_topic_sel = st.selectbox("Topic Filter:", ["All Topics"] + ev_topics, key=f"ev_top_{selected_deal}")
+                with f_tag:
+                    ev_tag_sel = st.selectbox("Tag Filter:", ["All Tags"] + ev_tags, key=f"ev_tag_{selected_deal}")
+
+                ev_params = {"limit": 10}
+                if ev_q:
+                    ev_params["q"] = ev_q
+                if ev_topic_sel != "All Topics":
+                    ev_params["topic"] = ev_topic_sel
+                if ev_tag_sel != "All Tags":
+                    ev_params["tag"] = ev_tag_sel
+
+                try:
+                    ev_resp = httpx.get(f"{BACKEND_URL}/api/deals/{selected_deal}/evidence", params=ev_params, headers=get_auth_headers(), timeout=10.0)
+                    if ev_resp.status_code == 200:
+                        evidence_list = ev_resp.json()
+                        if evidence_list:
+                            st.caption(f"Retrieved {len(evidence_list)} evidence exhibit chunk(s):")
+                            for ev in evidence_list:
+                                tag_pills = "".join(f"<span class='tag-pill'>🏷️ #{t}</span>" for t in ev.get("tags", []))
+                                topic_pill = f"<span class='topic-pill'>{ev.get('topic')}</span>" if ev.get("topic") else ""
+                                summary_html = f"<div class='micro-digest'>💡 {ev.get('summary')}</div>" if ev.get("summary") else ""
+                                page_info = f"p. {ev.get('page_number')} " if ev.get("page_number") is not None else ""
+                                sec_info = ev.get("section_locator") or "Exhibit"
+
+                                st.markdown(f"""
+                                    <div class="evidence-card">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                            <div style="font-weight: 700; color: #f8fafc; font-size: 0.95rem;">
+                                                📄 {ev.get('filename')} <span style="color: #94a3b8; font-weight: 400;">({page_info}§ {sec_info})</span>
+                                            </div>
+                                            <div>{topic_pill}</div>
+                                        </div>
+                                        {summary_html}
+                                        <div style="margin-top: 6px; margin-bottom: 8px;">{tag_pills}</div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                                with st.expander(f"Inspect verbatim text ({ev.get('filename')} § {sec_info})"):
+                                    st.code(ev.get("content"), language="text")
+                        else:
+                            st.info("No evidence exhibits found matching criteria for this deal matter. Upload documents in Tab 4.")
+                except Exception as ev_err:
+                    st.warning(f"Could not load deal evidence: {ev_err}")
+
         consult_params = {"deal_id": selected_deal, "limit": 5}
 
     c_run, c_redteam = st.columns([2, 1])
@@ -649,15 +757,22 @@ with tab3:
                 score_str = f"Score: {cl.get('score', 0):.4f}" if cl.get("score") is not None else ""
                 exp = cl.get("explanation") or {}
 
-                # Format structured slots
+                # Format structured slots, tags, and micro-digest
                 slots = cl.get("structured_slots") or {}
                 slots_html = "".join(f"<span class='slot-pill'>{k}: {v}</span>" for k, v in slots.items()) if slots else "<span style='color: #64748b;'>None</span>"
+                tags = cl.get("tags") or []
+                tag_pills = "".join(f"<span class='tag-pill'>🏷️ #{t}</span>" for t in tags) if tags else ""
+                summary = cl.get("summary")
+                summary_html = f"<div class='micro-digest'>💡 {summary}</div>" if summary else ""
+                topic_str = f" • 📌 {cl.get('topic')}" if cl.get("topic") else ""
 
                 st.markdown(f"""
                     <div class="clause-card">
                         <div class="clause-header">{title} <span style="font-weight: 400; color: #fbbf24;">({sec})</span></div>
-                        <div class="clause-meta">🏢 {org} • 📄 {cl.get('agreement_type')} • ⚖️ {auth} • {score_str}</div>
+                        <div class="clause-meta">🏢 {org} • 📄 {cl.get('agreement_type')} • ⚖️ {auth}{topic_str} • {score_str}</div>
+                        {summary_html}
                         <div class="clause-body">{cl.get('content')}</div>
+                        <div style="margin-top: 6px; margin-bottom: 6px;">{tag_pills}</div>
                         <div class="why-ranked-box">
                             <strong>💡 Why did this rank?</strong>
                             Authority Weight: <code>{exp.get('authority_weight', 1.0)}x</code> |

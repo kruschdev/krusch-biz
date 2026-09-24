@@ -197,6 +197,8 @@ class Clause(Base):
     authority_class = Column(String(50), default="governing_agreement", nullable=False, index=True)
     content = Column(Text, nullable=False)
     structured_slots = Column(JSONType, nullable=True)                # e.g. {"net_days": 30, "late_interest_pct": 1.5}
+    tags = Column(Text, nullable=True)                                # JSON array of semantic tags
+    summary = Column(Text, nullable=True)                             # 1-sentence commercial micro-digest
     chunk_index = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
@@ -298,6 +300,9 @@ class CommercialClauseVector(Base):
     source_hash = Column(String(64), nullable=True, index=True)
     chunk_index = Column(Integer, default=0, nullable=False)
     is_substantive = Column(Boolean, default=True, nullable=False)
+    topic = Column(String(100), default="GENERAL_COMMERCIAL", nullable=False, index=True)
+    tags = Column(Text, nullable=True)                                # JSON array of semantic tags
+    summary = Column(Text, nullable=True)                             # 1-sentence commercial micro-digest
     structured_slots = Column(JSONType, nullable=True)
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
 
@@ -318,6 +323,9 @@ class DealEvidence(Base):
     section_locator = Column(String(100), nullable=True)
     chunk_index = Column(Integer, default=0, nullable=False)
     content = Column(Text, nullable=False)
+    tags = Column(Text, nullable=True)                                # JSON array of semantic tags
+    summary = Column(Text, nullable=True)                             # 1-sentence commercial micro-digest
+    topic = Column(String(100), nullable=True, index=True)            # Canonical commercial topic
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -437,4 +445,14 @@ def init_db(target_engine=None):
                     to_tsvector('english', coalesce(content, '') || ' ' || coalesce(title, '') || ' ' || coalesce(section, ''))
                 );
             """))
+
+            # Idempotent column additions for semantic tags, micro-digests, and topics
+            conn.execute(text("ALTER TABLE deal_evidence ADD COLUMN IF NOT EXISTS topic VARCHAR(100);"))
+            conn.execute(text("ALTER TABLE deal_evidence ADD COLUMN IF NOT EXISTS tags TEXT;"))
+            conn.execute(text("ALTER TABLE deal_evidence ADD COLUMN IF NOT EXISTS summary TEXT;"))
+            conn.execute(text("ALTER TABLE commercial_clauses_vectors ADD COLUMN IF NOT EXISTS topic VARCHAR(100);"))
+            conn.execute(text("ALTER TABLE commercial_clauses_vectors ADD COLUMN IF NOT EXISTS tags TEXT;"))
+            conn.execute(text("ALTER TABLE commercial_clauses_vectors ADD COLUMN IF NOT EXISTS summary TEXT;"))
+            conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS tags TEXT;"))
+            conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS summary TEXT;"))
             conn.commit()

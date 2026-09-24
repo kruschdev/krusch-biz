@@ -27,7 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import CommercialClauseVector, CommercialGroundingReport
+from .db import CommercialClauseVector, CommercialGroundingReport, DealEvidence, SessionLocal
 from .taxonomy import CANONICAL_TOPICS, extract_structured_slots
 
 logger = logging.getLogger("kruschbiz.rag")
@@ -366,6 +366,8 @@ def retrieve_clauses(
     domain: str | None = None,
     deal_id: int | None = None,
     exclude_superseded: bool = True,
+    topic: str | None = None,
+    tag: str | None = None,
     tenant_id: str = "org_default"
 ) -> list[dict[str, Any]]:
     """
@@ -408,6 +410,8 @@ def retrieve_clauses(
                       AND (:organization IS NULL OR organization ILIKE :organization)
                       AND (:agreement_type IS NULL OR agreement_type ILIKE :agreement_type)
                       AND (:domain IS NULL OR domain ILIKE :domain)
+                      AND (:topic IS NULL OR topic ILIKE :topic)
+                      AND (:tag IS NULL OR tags ILIKE :tag)
                       AND (:exclude_superseded = FALSE OR (superseded = FALSE AND terminated = FALSE))
                     LIMIT 40
                 ),
@@ -429,6 +433,8 @@ def retrieve_clauses(
                       AND (:organization IS NULL OR organization ILIKE :organization)
                       AND (:agreement_type IS NULL OR agreement_type ILIKE :agreement_type)
                       AND (:domain IS NULL OR domain ILIKE :domain)
+                      AND (:topic IS NULL OR topic ILIKE :topic)
+                      AND (:tag IS NULL OR tags ILIKE :tag)
                       AND (:exclude_superseded = FALSE OR (superseded = FALSE AND terminated = FALSE))
                     LIMIT 40
                 )
@@ -436,7 +442,7 @@ def retrieve_clauses(
                        c.title, c.section, c.parent_section, c.hierarchy_level,
                        c.definitions_ref, c.exceptions_ref, c.authority_class,
                        c.effective_date, c.superseded, c.terminated, c.superseded_by,
-                       c.source_url, c.content, c.structured_slots,
+                       c.source_url, c.content, c.structured_slots, c.topic, c.tags, c.summary,
                        COALESCE(vr.sim_score, 0.0) as vector_score,
                        COALESCE(fr.fts_score, 0.0) as fts_score,
                        COALESCE(1.0 / (60 + vr.v_rank), 0.0) + COALESCE(1.0 / (60 + fr.f_rank), 0.0) as rrf_score
@@ -452,10 +458,19 @@ def retrieve_clauses(
                 "organization": organization,
                 "agreement_type": agreement_type,
                 "domain": domain,
+                "topic": topic,
+                "tag": f"%{tag}%" if tag else None,
                 "exclude_superseded": exclude_superseded,
             }
             results = db.execute(text(sql), params).fetchall()
             for r in results:
+                raw_tags = []
+                if getattr(r, "tags", None):
+                    try:
+                        raw_tags = json.loads(r.tags) if isinstance(r.tags, str) else list(r.tags)
+                    except Exception:
+                        raw_tags = [t.strip() for t in str(r.tags).split(",") if t.strip()]
+
                 raw_candidates[r.id] = {
                     "id": r.id,
                     "organization": r.organization,
@@ -476,6 +491,9 @@ def retrieve_clauses(
                     "source_url": r.source_url,
                     "content": r.content,
                     "structured_slots": r.structured_slots,
+                    "topic": getattr(r, "topic", None),
+                    "tags": raw_tags,
+                    "summary": getattr(r, "summary", None),
                     "vector_score": float(r.vector_score),
                     "lexical_score": float(r.fts_score),
                     "score": float(r.rrf_score),
@@ -497,6 +515,10 @@ def retrieve_clauses(
             base_query = base_query.filter(CommercialClauseVector.agreement_type.ilike(f"%{agreement_type}%"))
         if domain:
             base_query = base_query.filter(CommercialClauseVector.domain.ilike(f"%{domain}%"))
+        if topic:
+            base_query = base_query.filter(CommercialClauseVector.topic.ilike(f"%{topic}%"))
+        if tag:
+            base_query = base_query.filter(CommercialClauseVector.tags.ilike(f"%{tag}%"))
 
         all_clauses = base_query.all()
         query_words = set(re.findall(r'\w+', expanded_query.lower()))
@@ -522,6 +544,13 @@ def retrieve_clauses(
 
             combined_score = 0.5 * lex_score + 0.5 * vec_score
             if combined_score > 0.01 or overlap > 0:
+                raw_tags = []
+                if c.tags:
+                    try:
+                        raw_tags = json.loads(c.tags) if isinstance(c.tags, str) else list(c.tags)
+                    except Exception:
+                        raw_tags = [t.strip() for t in str(c.tags).split(",") if t.strip()]
+
                 raw_candidates[c.id] = {
                     "id": c.id,
                     "organization": c.organization,
@@ -542,6 +571,9 @@ def retrieve_clauses(
                     "source_url": c.source_url,
                     "content": c.content,
                     "structured_slots": c.structured_slots,
+                    "topic": c.topic,
+                    "tags": raw_tags,
+                    "summary": c.summary,
                     "vector_score": vec_score,
                     "lexical_score": lex_score,
                     "score": combined_score,
@@ -976,3 +1008,107 @@ Operational parameters demand strict enforcement of service delivery benchmarks.
 
     full_output = f"{analysis_text}\n\n{advisory}\n\n---\n*{COMMERCIAL_DISCLAIMER}*"
     return full_output, stats, claims
+
+
+def retrieve_deal_evidence(
+    db: Session,
+    deal_id: int,
+    text_query: str | None = None,
+    tag: str | None = None,
+    topic: str | None = None,
+    limit: int = 10,
+    doc_type: str | None = None,
+    tenant_id: str = "org_default"
+) -> list[dict[str, Any]]:
+    """
+    Search deal room exhibits, vendor proposals, redlines, and commercial attachments
+    strictly within a single deal matter.
+    Combines dense embeddings, lexical matching, canonical topic filtering, and commercial semantic tags.
+    Guarantees strict tenant and deal boundary isolation.
+    """
+    query = db.query(DealEvidence).filter(
+        DealEvidence.deal_id == deal_id,
+        DealEvidence.tenant_id == tenant_id
+    )
+
+    if doc_type:
+        query = query.filter(DealEvidence.doc_type == doc_type)
+    if topic:
+        query = query.filter(DealEvidence.topic.ilike(f"%{topic}%"))
+    if tag:
+        clean_tag = tag.lower().strip()
+        query = query.filter(DealEvidence.tags.ilike(f"%{clean_tag}%"))
+
+    rows = query.all()
+    if not rows:
+        return []
+
+    def _format_record(r: DealEvidence, score_val: float = 1.0) -> dict[str, Any]:
+        tags_list: list[str] = []
+        if r.tags:
+            try:
+                tags_list = json.loads(r.tags) if isinstance(r.tags, str) else list(r.tags)
+            except Exception:
+                tags_list = [t.strip() for t in str(r.tags).split(",") if t.strip()]
+        return {
+            "id": r.id,
+            "deal_id": r.deal_id,
+            "tenant_id": r.tenant_id,
+            "filename": r.filename,
+            "doc_type": r.doc_type,
+            "page_number": r.page_number,
+            "section_locator": r.section_locator,
+            "chunk_index": r.chunk_index,
+            "content": r.content,
+            "tags": tags_list,
+            "summary": r.summary,
+            "topic": r.topic,
+            "similarity": round(float(score_val), 4),
+            "created_at": r.created_at.isoformat() if r.created_at else None
+        }
+
+    if not text_query or not text_query.strip():
+        return [_format_record(r, 1.0) for r in rows[:limit]]
+
+    # Dense and lexical scoring
+    q_vec = None
+    try:
+        q_vec = get_embedding(text_query)
+    except Exception as e:
+        logger.warning(f"Embedding error for deal evidence query: {e}")
+
+    norm_q = math.sqrt(sum(a * a for a in q_vec)) if q_vec else 0.0
+    q_tokens = set(re.findall(r'\b[a-zA-Z0-9\.\-]{3,}\b', text_query.lower()))
+
+    scored_results = []
+    for r in rows:
+        cos_sim = 0.0
+        if q_vec and r.embedding:
+            try:
+                emb = json.loads(r.embedding) if isinstance(r.embedding, str) else r.embedding
+                dot = sum(a * b for a, b in zip(q_vec, emb))
+                norm_e = math.sqrt(sum(b * b for b in emb))
+                if norm_q > 0 and norm_e > 0:
+                    cos_sim = dot / (norm_q * norm_e)
+            except Exception:
+                cos_sim = 0.0
+
+        lex_score = 0.0
+        tag_boost = 0.0
+        if q_tokens:
+            tags_str = r.tags or ""
+            summary_str = r.summary or ""
+            doc_text = f"{r.filename} {r.section_locator or ''} {summary_str} {tags_str} {r.content}".lower()
+            matches = sum(1 for t in q_tokens if t in doc_text)
+            lex_score = min(1.0, matches / max(1, len(q_tokens)))
+
+            # Tag boost
+            for t in q_tokens:
+                if t in tags_str.lower():
+                    tag_boost = max(tag_boost, 0.2)
+
+        score = (0.6 * cos_sim) + (0.25 * lex_score) + (0.15 * tag_boost)
+        scored_results.append((score, r))
+
+    scored_results.sort(key=lambda x: x[0], reverse=True)
+    return [_format_record(r, s) for s, r in scored_results[:limit]]
