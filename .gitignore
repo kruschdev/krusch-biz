@@ -2,30 +2,92 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+
+# C extensions & building files
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # Environments & Virtualenvs
 .env
+.env.local
+.env.*.local
 .venv/
 venv/
 ENV/
 env/
+ENV*/
+venv*/
 
-# Database & Volume persistence
+# Database, Cache & Volume persistence
 *.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 pgdata/
 data/contracts/
 data/memos/
+data/uploads/
+data/exports/
+data/tmp/
+data/cache/
 
-# Testing & Logs
+# Testing, Linting & Coverage
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
 .coverage
+.coverage.*
+nosetests.xml
+coverage.xml
 htmlcov/
 *.log
+.hypothesis/
 
-# IDE & OS files
+# Local Project & Agent State Hygiene
+GEMINI_INFLIGHT.md
+*INFLIGHT*.md
+.gemini/
+.agents/
+.agent/
+agent_logs/
+
+# IDE, OS & Temporary Scratch files
 .vscode/
 .idea/
+*.sublime-workspace
+*.sublime-project
 .DS_Store
+.AppleDouble
+.LSOverride
 *.swp
-.agent/
+*.swo
+*~
+*.tmp
+*.bak
+*.orig
+scratch/
+tmp/
+temp/
+exports/
+uploads/
