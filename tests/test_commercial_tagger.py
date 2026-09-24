@@ -101,5 +101,23 @@ class TestCommercialTagger(unittest.TestCase):
             self.assertIn("indemnification", res["tags"])
 
 
+    def test_09_ensemble_tagging_merges_slots_and_llm(self):
+        content = "Section 4.1 Payment Terms: Invoices shall be paid within thirty (30) days ('Net 30')."
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": '{"summary": "Invoices must be satisfied within thirty days of issue.", "tags": ["corporate-finance", "accounts-payable"], "topic": "PAYMENT_TERMS"}'
+        }
+
+        with patch("httpx.Client.post", return_value=mock_resp):
+            res = tag_commercial_chunk(content, filename="msa.pdf", locator="Section 4.1", use_llm=True)
+            self.assertEqual(res["topic"], "PAYMENT_TERMS")
+            self.assertEqual(res["summary"], "Invoices must be satisfied within thirty days of issue.")
+            # Both deterministic slot tag AND LLM semantic tags should be present!
+            self.assertIn("net-30", res["tags"])
+            self.assertIn("corporate-finance", res["tags"])
+            self.assertIn("accounts-payable", res["tags"])
+
+
 if __name__ == "__main__":
     unittest.main()

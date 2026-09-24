@@ -234,8 +234,16 @@ def tag_commercial_chunk(
 ) -> dict[str, Any]:
     """
     Primary interface for commercial chunk tagging.
-    Attempts LLM tagging via local Ollama and falls back to deterministic heuristic tagging.
+    Combines deterministic slot extraction and keyword heuristics with
+    LLM semantic understanding for true ensemble tagging.
     """
+    heuristic = heuristic_tag_commercial_chunk(
+        content=content,
+        filename=filename,
+        locator=locator,
+        doc_type=doc_type
+    )
+
     if use_llm:
         res = tag_commercial_chunk_with_llm(
             content=content,
@@ -244,11 +252,37 @@ def tag_commercial_chunk(
             doc_type=doc_type
         )
         if res is not None and res.get("tags"):
-            return res
+            # Ensemble merge: combine deterministic slot tags + LLM tags
+            seen = set()
+            merged_tags: list[str] = []
 
-    return heuristic_tag_commercial_chunk(
-        content=content,
-        filename=filename,
-        locator=locator,
-        doc_type=doc_type
-    )
+            # 1. Prioritize slot-derived tags (net-..., uptime-..., cap-..., sec-...)
+            for t in heuristic.get("tags", []):
+                ct = sanitize_tag(t)
+                if ct and ct not in seen:
+                    seen.add(ct)
+                    merged_tags.append(ct)
+
+            # 2. Add LLM semantic tags
+            for t in res.get("tags", []):
+                ct = sanitize_tag(t)
+                if ct and ct not in seen:
+                    seen.add(ct)
+                    merged_tags.append(ct)
+                    if len(merged_tags) >= 7:
+                        break
+
+            assigned_topic = res.get("topic")
+            if not assigned_topic or assigned_topic == "GENERAL_COMMERCIAL":
+                assigned_topic = heuristic.get("topic", "GENERAL_COMMERCIAL")
+
+            summary_text = res.get("summary") or heuristic.get("summary")
+
+            return {
+                "summary": summary_text,
+                "tags": merged_tags[:7],
+                "topic": assigned_topic
+            }
+
+    return heuristic
+
