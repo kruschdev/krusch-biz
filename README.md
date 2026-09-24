@@ -4,11 +4,12 @@
 > *Private corporate contract retrieval, relational contract graph walking, commercial assertion-level grounding verification, and audit-logged executive decision intelligence using on-premise open-weight models and the sovereign KruschNexus ingestion spine.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-green.svg)](https://github.com/kruschdev/krusch-biz)
+[![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-green.svg)](https://github.com/kruschdev/krusch-biz)
 [![Python 3.11 | 3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![Tests: 77 Passing](https://img.shields.io/badge/Tests-77%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: Passing](https://img.shields.io/badge/CI%20Gates-3%2F3%20Passing-brightgreen.svg)](.github/workflows/ci.yml)
 
 ---
@@ -67,9 +68,74 @@ Enterprise legal departments, corporate procurement teams, and M&A executives fa
   * Max chunk DOS guardrail (`MAX_INGEST_CHUNKS_PER_DOC = 500`).
   * Transactional `IngestJob` state machine (`queued → parsing → extracting_slots → embedding → indexed | failed`).
 * 🏢 **Multi-Tenant Isolation**: Enforces `tenant_id` across all queries, agreements, clauses, deal matters, evidence, and audit logs.
+* 🏷️ **Commercial Ensemble Chunk Tagging & Micro-Digests**: Integrated commercial chunk tagger (`src.backend.tagger`) performing an ensemble merge of deterministic contractual slot tags (`net-30`, `uptime-99.9pct`, `cap-12mo`, `sec-12`) with local Ollama (`qwen2.5-coder:7b`) extracting 3–5 lowercase domain tags and 1-sentence micro-digests. Provides automatic deterministic fallback on timeout.
+* 🔍 **Dual-Path Commercial Retrieval & Faceted Deal Explorer**: Combines dense vector similarity (`bge-large` 1024-dim) with lexical cover-density RRF, applying an exact tag boost (+20%) and canonical topic filtering (`PAYMENT_TERMS`, `LIABILITY_CAP`, `SLA_UPTIME`, etc.). Features a dedicated faceted evidence explorer in Streamlit (Tab 1) and REST endpoints (`GET /api/deals/{deal_id}/evidence`, `/evidence/tags`, `GET /api/clauses?topic=...&tag=...`).
 * 🗑️ **Hard Delete & Regulatory Audit Trail**:
   * `DELETE /api/deals/{deal_id}/hard-delete` permanently purges deals, exhibits, and grounding reports while logging an immutable regulatory audit entry.
 * 🔌 **Model Context Protocol (MCP) Server**: Exposes 9 tools over stdio JSON-RPC for Claude Desktop, Antigravity, and autonomous agent workflows.
+
+---
+
+## 🏷️ Commercial Ensemble Chunk Tagging & Dual-Path Semantic Recall
+
+KruschBiz features a specialized commercial chunk tagging and retrieval pipeline tailored for corporate agreements, SOWs, and M&A due diligence exhibits.
+
+```
+                           Raw Contract Chunk
+                                   │
+                   ┌───────────────┴───────────────┐
+                   ▼                               ▼
+      Deterministic Slot Extraction     Local LLM Semantic Tagger
+     (net-30, uptime-99.9pct, cap, sec)  (Ollama qwen2.5-coder:7b @ 15s)
+                   │                               │
+          Exact Slot Anchor Tags          Semantic Concepts &
+      (e.g., `net-30`, `uptime-99.9pct`)   1-Sentence Micro-Digest
+                   │                               │
+                   └───────────────┬───────────────┘
+                                   ▼
+                         Ensemble Tag Union
+                   (Deduplicated, Normalized, Grounded)
+                                   │
+                                   ▼
+                   PostgreSQL 16 + pgvector Storage
+             (DealEvidence & CommercialClauseVector Schemas)
+                                   │
+                                   ▼
+                      Dual-Path Retrieval Pipeline
+    (Dense Vector Cosine + BM25 Lexical RRF + 20% Tag Boost + Topic Filter)
+```
+
+### 1. The Commercial Ensemble Tagging Standard
+Commercial agreements combine rigid numerical metrics (payment periods, availability commitments, damage caps) with nuanced qualitative obligations (confidentiality, IP assignments, indemnity triggers). An LLM-only tagger frequently captures the abstract concept (e.g. `payment-terms`) but drops the controlling numeric anchor (`net-30`).
+
+KruschBiz resolves this via **Ensemble Tagging** (`src/backend/tagger.py`):
+1. **Deterministic Slot Extraction**: High-precision regex extracts quantitative business metrics:
+   - Payment terms: `net-30`, `net-45`, `net-60`, `net-90`
+   - Availability SLOs: `uptime-99.9pct`, `uptime-99.95pct`, `uptime-99.99pct`
+   - Liability caps: `cap-12mo`, `cap-fees-paid`
+   - Structural section numbers: `sec-12`, `sec-4.2`
+2. **Local LLM Semantic Tagging**: Local Ollama `qwen2.5-coder:7b` extracts 3–5 lowercase domain tags and a 1-sentence executive micro-digest.
+3. **Ensemble Union**: Merges deterministic slot tags with LLM semantic tags, ensuring critical numbers are **never lost**.
+4. **Deterministic Fallback**: If Ollama times out or the GPU node is saturated, the system uses extractive first-sentence digests and slot anchors with zero cloud leakage.
+
+### 2. Schema Enrichment
+* **`DealEvidence`** (`deal_evidence`): Populated with `tags` (JSON array of strings), `summary` (1-sentence digest), and `topic` (canonical commercial doctrine).
+* **`CommercialClauseVector`** (`commercial_clause_vectors`): Enriched with `tags`, `summary`, and `topic`.
+* **`Clause`** (`clauses`): Added `tags` and `summary`.
+
+### 3. Dual-Path Retrieval & Exact Tag Boosting
+When retrieving deal exhibits or searching operative agreements (`src/backend/rag.py`):
+* **Dual Retrieval (`retrieve_deal_evidence`)**: Performs dense vector search (`bge-large`, 1024-dim) combined with BM25 lexical full-text ranking.
+* **Exact Tag Boost**: Chunks containing tags matching the inquiry receive an immediate **+20% score boost** (`score * 1.20`), guaranteeing that explicit slot queries (e.g., `net-30` or `uptime-99.9pct`) rank at the top.
+* **Topic & Tag Filtering (`retrieve_clauses`)**: Direct relational SQL filtering by `topic` and `tag` before ranking.
+
+### 4. Faceted Exploration UI & REST Endpoints
+* **Streamlit Tab 1 (Deal Evidence Explorer)**: Interactive evidence card gallery with tag filters, topic chips, and 1-sentence micro-digests.
+* **Streamlit Tab 3 (Agreements & Clauses)**: Displays clause-level tags and summary badges alongside relational graph metadata.
+* **REST API**:
+  - `GET /api/deals/{deal_id}/evidence`: Enriched deal exhibits with tags, summary, and topic.
+  - `GET /api/deals/{deal_id}/evidence/tags`: Aggregate unique tag distribution with occurrence counts for faceted UI filtering.
+  - `GET /api/clauses?topic=...&tag=...`: Clause search with topic and tag filtering.
 
 ---
 
@@ -166,8 +232,11 @@ KruschBiz provides a native stdio JSON-RPC MCP server (`src/mcp/server.py`) expo
 ## 🧪 Automated Testing & CI Gates
 
 ```bash
-# Run full unit, integration, resolver, and security test suite (53 tests)
-python -m unittest discover tests
+# Run full unit, integration, tagger, resolver, and security test suite (77 tests)
+pytest tests
+
+# Run commercial tagger and deal evidence tests
+pytest tests/test_commercial_tagger.py tests/test_deal_evidence.py
 
 # Run 3-gate empirical evaluation harness
 python scripts/eval_retrieval_and_grounding.py
