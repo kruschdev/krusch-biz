@@ -169,25 +169,30 @@ When retrieving deal exhibits or searching operative agreements (`src/backend/ra
 ## 🏗️ Architecture
 
 ```
-                               ┌────────────────────────────────┐
-                               │     KruschBiz Web Dashboard    │
-                               │  (Streamlit / 127.0.0.1:8506)  │
-                               │  *Executive Navy/Gold Styling* │
-                               └──────────────┬─────────────────┘
-                                              │ REST (CORS Restricted)
-                               ┌──────────────▼─────────────────┐
-                               │       KruschBiz Backend        │
-                               │   (FastAPI / 127.0.0.1:8086)   │
-                               │ *Relational Graph & Grounding* │
-                               └───┬──────────┬─────────────┬───┘
-                                   │          │             │
-                    SQL / pgvector │          │ Nexus Spine │ Local HTTP
-                                   │          │ Standalone  │
-        ┌──────────────────────────▼───┐  ┌───▼───────────┐ ┌──────────────▼────────────┐
-        │   PostgreSQL 16 + pgvector   │  │  Nexus Adapter│ │     Local Ollama Node     │
-        │ (Contract Clauses & Evidence)│  │ Ingest Spine  │ │  ├─ bge-large (Embeddings)│
-        │        127.0.0.1:5436        │  │ (PDF/DOCX/MD) │ │  └─ qwen2.5:14b / 7b (LLM)│
-        └──────────────────────────────┘  └───────────────┘ └───────────────────────────┘
+                                ┌────────────────────────────────┐       ┌────────────────────────────────┐
+                                │     KruschBiz Web Dashboard    │       │     IDE Agents / Subagents     │
+                                │  (Streamlit / 127.0.0.1:8506)  │       │ (Claude / Antigravity / Wind)  │
+                                │  *Executive Navy/Gold Styling* │       │  *6 Canonical Tools (~950 tok)*│
+                                └──────────────┬─────────────────┘       └──────────────┬─────────────────┘
+                                               │ REST (CORS Restricted)                 │ Stdio JSON-RPC
+                                               │                         ┌──────────────▼─────────────────┐
+                                               │                         │      KruschBiz MCP Server      │
+                                               │                         │      (src/mcp/server.py)       │
+                                               │                         └──────────────┬─────────────────┘
+                                               │                                        │ In-process / RPC
+                                ┌──────────────▼────────────────────────────────────────▼─┐
+                                │                   KruschBiz Backend                     │
+                                │              (FastAPI / 127.0.0.1:8086)                 │
+                                │      *Relational Graph, Grounding & Commercial Ops*     │
+                                └───┬──────────────────────┬──────────────────────────┬───┘
+                                    │                      │                          │
+                     SQL / pgvector │                      │ Nexus Spine / OCR        │ Local HTTP
+                                    │                      │ Standalone               │
+         ┌──────────────────────────▼───┐              ┌───▼───────────┐  ┌───────────▼──────────────┐
+         │   PostgreSQL 16 + pgvector   │              │  Nexus Adapter│  │     Local Ollama Node    │
+         │ (Contract Clauses & Evidence)│              │ Ingest Spine  │  │  ├─ bge-large (Embed)    │
+         │        127.0.0.1:5436        │              │ (PDF/DOCX/MD) │  │  └─ qwen2.5:14b / 7b     │
+         └──────────────────────────────┘              └───────────────┘  └──────────────────────────┘
 ```
 
 ---
