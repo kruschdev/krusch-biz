@@ -235,6 +235,226 @@ class TestComplianceJoin(unittest.TestCase):
         f = data["findings"][0]
         self.assertEqual(f["alignment"], "coverage_gap")
 
+    def test_07_deposit_return_extended_timeline_void(self):
+        """
+        Cal. Civ. Code § 1950.5(g)(1) sets 21 calendar day ceiling for deposit returns.
+        A lease clause allowing 45 days is VOID_AS_AGAINST_PUBLIC_POLICY.
+        """
+        cl_return = Clause(
+            tenant_id="org_default",
+            agreement_id=self.lease.id,
+            section="Section 4.3",
+            title="Return of Security Deposit",
+            topic="DEPOSIT_RETURN",
+            authority_class="governing_agreement",
+            content="Landlord shall return any unused deposit funds within forty-five (45) days of surrender.",
+            structured_slots={"deposit_return_days": 45.0},
+            is_active=True
+        )
+        self.db.add(cl_return)
+        self.db.commit()
+
+        payload = {
+            "counterparty": "Pacific Crest Properties LLC",
+            "jurisdiction": "CA:Oakland",
+            "as_of_date": "2024-08-15",
+            "topics": ["DEPOSIT_RETURN"]
+        }
+        resp = self.client.post("/conflicts/contract-vs-statute", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        self.assertEqual(data["verdict"], "NON_COMPLIANT_TERMS_FOUND")
+        f = data["findings"][0]
+        self.assertEqual(f["topic"], "DEPOSIT_RETURN")
+        self.assertEqual(f["alignment"], "contract_less_than_mandatory")
+        self.assertEqual(f["enforceability"], "VOID_AS_AGAINST_PUBLIC_POLICY")
+        self.assertIn("1950.5", f["controlling_statute"]["citation"])
+
+    def test_08_deposit_return_expedited_timeline_more_generous(self):
+        """
+        A lease granting 14 days deposit return exceeds statutory protection (21 days) -> contract_more_generous.
+        """
+        cl_return = Clause(
+            tenant_id="org_default",
+            agreement_id=self.lease.id,
+            section="Section 4.3",
+            title="Expedited Deposit Return",
+            topic="DEPOSIT_RETURN",
+            authority_class="governing_agreement",
+            content="Landlord guarantees deposit accounting and refund within fourteen (14) calendar days.",
+            structured_slots={"deposit_return_days": 14.0},
+            is_active=True
+        )
+        self.db.add(cl_return)
+        self.db.commit()
+
+        payload = {
+            "counterparty": "Pacific Crest Properties LLC",
+            "jurisdiction": "CA:Oakland",
+            "as_of_date": "2024-08-15",
+            "topics": ["DEPOSIT_RETURN"]
+        }
+        resp = self.client.post("/conflicts/contract-vs-statute", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        self.assertEqual(data["verdict"], "COMPLIANT")
+        f = data["findings"][0]
+        self.assertEqual(f["alignment"], "contract_more_generous")
+        self.assertEqual(f["enforceability"], "ENFORCEABLE")
+
+    def test_09_habitability_repair_deduct_waiver_void(self):
+        """
+        Cal. Civ. Code § 1942.1 renders any agreement waiving rights under § 1941 or § 1942 void.
+        A clause waiving repair-and-deduct rights is VOID_AS_AGAINST_PUBLIC_POLICY.
+        """
+        cl_hab = Clause(
+            tenant_id="org_default",
+            agreement_id=self.lease.id,
+            section="Section 11.4",
+            title="Waiver of Habitability Remedies",
+            topic="HABITABILITY_WAIVER",
+            authority_class="governing_agreement",
+            content="Tenant accepts premises strictly as-is and expressly waives all rights under Civil Code Section 1942 to repair and deduct.",
+            structured_slots={"waives_habitability": True, "waives_repair_deduct": True},
+            is_active=True
+        )
+        self.db.add(cl_hab)
+        self.db.commit()
+
+        payload = {
+            "counterparty": "Pacific Crest Properties LLC",
+            "jurisdiction": "CA:Oakland",
+            "as_of_date": "2024-08-15",
+            "topics": ["HABITABILITY_WAIVER"]
+        }
+        resp = self.client.post("/conflicts/contract-vs-statute", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        self.assertEqual(data["verdict"], "NON_COMPLIANT_TERMS_FOUND")
+        f = data["findings"][0]
+        self.assertEqual(f["alignment"], "contract_less_than_mandatory")
+        self.assertEqual(f["enforceability"], "VOID_AS_AGAINST_PUBLIC_POLICY")
+        self.assertIn("1942.1", f["controlling_statute"]["citation"])
+
+    def test_10_commercial_lease_deposit_flexibility(self):
+        """
+        Under Cal. Civ. Code § 1950.7, commercial tenancies are not subject to AB 12 1-month cap.
+        Commercial lease demanding 3.0 months deposit is ALIGNED and ENFORCEABLE.
+        """
+        comm_lease = Agreement(
+            tenant_id="org_default",
+            title="Commercial Warehouse Lease",
+            instrument_type="commercial_lease",
+            counterparty="Pacific Crest Commercial Holdings LLC",
+            effective_date=datetime(2024, 8, 1),
+            execution_status="executed",
+            status="active"
+        )
+        self.db.add(comm_lease)
+        self.db.flush()
+
+        cl_comm_dep = Clause(
+            tenant_id="org_default",
+            agreement_id=comm_lease.id,
+            section="Section 3.1",
+            title="Commercial Deposit",
+            topic="COMMERCIAL_SECURITY_DEPOSIT",
+            authority_class="governing_agreement",
+            content="Tenant shall deposit an amount equal to three (3) months' base rent ($15,000) as security.",
+            structured_slots={"deposit_cap_months": 3.0},
+            is_active=True
+        )
+        self.db.add(cl_comm_dep)
+        self.db.commit()
+
+        payload = {
+            "counterparty": "Pacific Crest Commercial Holdings LLC",
+            "jurisdiction": "CA:Oakland",
+            "as_of_date": "2024-08-15",
+            "topics": ["COMMERCIAL_SECURITY_DEPOSIT"],
+            "property_type": "commercial"
+        }
+        resp = self.client.post("/conflicts/contract-vs-statute", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        self.assertEqual(data["verdict"], "COMPLIANT")
+        f = data["findings"][0]
+        self.assertEqual(f["alignment"], "aligned")
+        self.assertEqual(f["enforceability"], "ENFORCEABLE")
+        self.assertIn("1950.7", f["controlling_statute"]["citation"])
+
+    def test_11_retaliation_defense_waiver_void(self):
+        """
+        Cal. Civ. Code § 1942.5(h) renders any tenant waiver of retaliation protections void.
+        """
+        cl_ret = Clause(
+            tenant_id="org_default",
+            agreement_id=self.lease.id,
+            section="Section 18.2",
+            title="Waiver of Retaliation Defenses",
+            topic="RETALIATION_WAIVER",
+            authority_class="governing_agreement",
+            content="Tenant covenants not to raise any defense of retaliation under Civil Code Section 1942.5.",
+            structured_slots={"waives_retaliation_defense": True},
+            is_active=True
+        )
+        self.db.add(cl_ret)
+        self.db.commit()
+
+        payload = {
+            "counterparty": "Pacific Crest Properties LLC",
+            "jurisdiction": "CA:Oakland",
+            "as_of_date": "2024-08-15",
+            "topics": ["RETALIATION_WAIVER"]
+        }
+        resp = self.client.post("/conflicts/contract-vs-statute", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        self.assertEqual(data["verdict"], "NON_COMPLIANT_TERMS_FOUND")
+        f = data["findings"][0]
+        self.assertEqual(f["alignment"], "contract_less_than_mandatory")
+        self.assertEqual(f["enforceability"], "VOID_AS_AGAINST_PUBLIC_POLICY")
+        self.assertIn("1942.5", f["controlling_statute"]["citation"])
+
+    def test_12_excessive_late_fee_liquidated_damages_void(self):
+        """
+        Cal. Civ. Code § 1671(d) caps late fees to reasonable approximations of damages (typically 5%).
+        A 15% late fee clause is non-compliant and VOID_AS_AGAINST_PUBLIC_POLICY.
+        """
+        cl_late = Clause(
+            tenant_id="org_default",
+            agreement_id=self.lease.id,
+            section="Section 5.2",
+            title="Late Charge",
+            topic="LATE_FEE",
+            authority_class="governing_agreement",
+            content="A late fee equal to fifteen percent (15%) of delinquent rent shall apply after 3 days.",
+            structured_slots={"late_penalty_pct": 15.0},
+            is_active=True
+        )
+        self.db.add(cl_late)
+        self.db.commit()
+
+        payload = {
+            "counterparty": "Pacific Crest Properties LLC",
+            "jurisdiction": "CA:Oakland",
+            "as_of_date": "2024-08-15",
+            "topics": ["LATE_FEE"]
+        }
+        resp = self.client.post("/conflicts/contract-vs-statute", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        self.assertEqual(data["verdict"], "NON_COMPLIANT_TERMS_FOUND")
+        f = data["findings"][0]
+        self.assertEqual(f["alignment"], "contract_less_than_mandatory")
+        self.assertEqual(f["enforceability"], "VOID_AS_AGAINST_PUBLIC_POLICY")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -361,6 +361,32 @@ pytest tests/eval/test_adversarial_corpus.py -v
 
 ---
 
+## ⚖️ Cross-Engine Compliance Benchmark: The Join (`POST /conflicts/contract-vs-statute`)
+
+KruschBiz integrates directly with KruschLaw to execute deterministic statutory compliance cross-examinations. Rather than delegating compliance analysis to probabilistic LLMs, **The Join** compares normalized contract slots resolved via the KruschBiz Precedence Graph against non-waivable statutory floors, ceilings, and prohibitions resolved via the KruschLaw Authority Graph.
+
+```bash
+# Execute the 1-command compliance benchmark suite (<50ms)
+python3 scripts/eval_contract_vs_statute_join.py
+```
+
+### Evaluated Statutory Conflict Pairs:
+| Benchmark ID | Test Scenario | Controlling Statute | Mandate Type | Deterministic Verdict |
+|---|---|---|---|---|
+| `TC-01` | **Post-AB 12 Security Deposit Violation** (2.0 mo demanded post-2024-07-01) | Cal. Civ. Code § 1950.5(c)(1) | Statutory Ceiling (1.0 mo) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
+| `TC-02` | **Pre-AB 12 Security Deposit Compliance** (2.0 mo demanded pre-2024-07-01) | Cal. Civ. Code § 1950.5(c) (Prior) | Statutory Ceiling (2.0 mo) | `aligned` (`ENFORCEABLE`) |
+| `TC-03` | **Sub-Statutory Landlord Entry Notice** (12 hrs vs 24 hr floor) | Cal. Civ. Code § 1954(d)(1) | Statutory Floor (24.0 hrs) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
+| `TC-04` | **More Generous Entry Notice** (48 hrs vs 24 hr floor) | Cal. Civ. Code § 1954(d)(1) | Statutory Floor (24.0 hrs) | `contract_more_generous` (`ENFORCEABLE`) |
+| `TC-05` | **Extended Deposit Return Timeline** (45 days vs 21-day ceiling) | Cal. Civ. Code § 1950.5(g)(1) | Statutory Ceiling (21 days) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
+| `TC-06` | **Expedited Deposit Return Timeline** (14 days vs 21-day ceiling) | Cal. Civ. Code § 1950.5(g)(1) | Statutory Ceiling (21 days) | `contract_more_generous` (`ENFORCEABLE`) |
+| `TC-07` | **Prohibited Habitability Waiver** (repair-and-deduct disclaimer) | Cal. Civ. Code § 1942.1 | Statutory Prohibition | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
+| `TC-08` | **Prohibited Retaliation Waiver** (retaliation defense disclaimer) | Cal. Civ. Code § 1942.5(h) | Statutory Prohibition | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
+| `TC-09` | **Excessive Late Fee Liquidated Damages** (15% vs 5% ceiling) | Cal. Civ. Code § 1671(d) | Statutory Ceiling (5.0%) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
+| `TC-10` | **Commercial Lease Deposit Flexibility** (3.0 mo base rent) | Cal. Civ. Code § 1950.7(f) | Permissive Waiver | `aligned` (`ENFORCEABLE`) |
+| `TC-11` | **Untracked Statutory Topic Coverage Gap** (`MUNICIPAL_SIDEWALK`) | None (Corpus Hole) | Coverage Gap | `coverage_gap` (`UNSPECIFIED`) |
+
+---
+
 ## 🔒 Security Architecture & Local-First Guarantees
 
 KruschBiz enforces defense-in-depth security to protect confidential commercial contracts:

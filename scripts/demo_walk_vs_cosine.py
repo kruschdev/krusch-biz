@@ -273,16 +273,16 @@ def run_demo():
     scores_liab.sort(key=lambda x: x[0], reverse=True)
     top_sim_liab, top_cl_liab = scores_liab[0]
 
-    print(f"  Ranking Results (Standard Vector / Semantic Match):")
+    print("  Ranking Results (Standard Vector / Semantic Match):")
     for rank, (sim, cl) in enumerate(scores_liab, 1):
         print(f"    #{rank} Score: {sim:.4f} | {cl['agreement']} ({cl['section']}) -> cap: ${cl['slots']['cap_amount']:,}")
 
     print(f"\n  {RED}{BOLD}❌ CRITICAL RAG FAILURE (The Amendment Blindspot):{RESET}")
     print(f"  Naive Cosine RAG selected: {BOLD}{top_cl_liab['agreement']} {top_cl_liab['section']}{RESET} (Score: {top_sim_liab:.4f})")
     print(f"  Extracted Answer:          {RED}{BOLD}${top_cl_liab['slots']['cap_amount']:,} USD{RESET}")
-    print(f"  Root Cause:                The 2024-01-15 MSA is longer and repeats query keywords ('limitation', 'liability',")
-    print(f"                             'aggregate', 'master', 'agreement') at 3x higher density than Amendment No. 1.")
-    print(f"                             Flat vector similarity is mathematically blind to legal supersession.")
+    print("  Root Cause:                The 2024-01-15 MSA is longer and repeats query keywords ('limitation', 'liability',")
+    print("                             'aggregate', 'master', 'agreement') at 3x higher density than Amendment No. 1.")
+    print("                             Flat vector similarity is mathematically blind to legal supersession.")
 
     # Method B: KruschBiz Precedence Graph Walk
     print(f"\n{BOLD}Approach B: KruschBiz Deterministic Precedence Graph Walk{RESET}")
@@ -307,7 +307,7 @@ def run_demo():
     print(f"  Status / Confidence:       {res_liab.get('status', '').upper()} (Confidence: {int(res_liab.get('confidence', 0)*100)}%)")
     print(f"  Resolved Liability Cap:    {GREEN}{BOLD}${slots_liab.get('cap_amount', 0):,} {slots_liab.get('currency', 'USD')}{RESET}")
     print(f"  Resolution Rationale:      {res_liab.get('resolution_rationale')}")
-    print(f"  Precedence Traversal Trail:")
+    print("  Precedence Traversal Trail:")
     for idx, step in enumerate(trail_liab, 1):
         print(f"    Step {idx}: {step.get('from_agreement_title')} (§ {step.get('from_section')}) "
               f"{CYAN}➔ {step.get('relation')} [Scope: {step.get('scope')}] ➔{RESET} "
@@ -336,7 +336,7 @@ def run_demo():
     print(f"  {GREEN}{BOLD}✅ TEMPORAL AS-OF CUTOFF ACCURACY:{RESET}")
     print(f"  Winning Authority:         {BOLD}{win_hist.get('agreement_title')} ({win_hist.get('section')}){RESET}")
     print(f"  Resolved Cap as of Mar 1:  {GREEN}{BOLD}${slots_hist.get('cap_amount', 0):,} USD{RESET}")
-    print(f"  Rationale:                 Amendment No. 1 (effective 2024-06-01) was strictly excluded by temporal guard.")
+    print("  Rationale:                 Amendment No. 1 (effective 2024-06-01) was strictly excluded by temporal guard.")
 
     # ---------------------------------------------------------
     # SUMMARY COMPARISON TABLE

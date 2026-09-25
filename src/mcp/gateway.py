@@ -99,7 +99,8 @@ GATEWAY_TOOLS_CATALOG = [
                 "counterparty": {"type": "string"},
                 "jurisdiction": {"type": "string"},
                 "as_of_date": {"type": "string"},
-                "topics": {"type": "array", "items": {"type": "string"}}
+                "topics": {"type": "array", "items": {"type": "string"}},
+                "property_type": {"type": "string"}
             },
             "required": ["as_of_date"]
         }
@@ -247,7 +248,8 @@ def handle_check_compliance(args: Dict[str, Any]) -> Dict[str, Any]:
         counterparty=args.get("counterparty"),
         jurisdiction=args.get("jurisdiction", "CA:Oakland"),
         as_of_date=args.get("as_of_date", ""),
-        topics=args.get("topics", ["SECURITY_DEPOSIT", "ENTRY_NOTICE", "LATE_FEE"])
+        topics=args.get("topics", ["SECURITY_DEPOSIT", "ENTRY_NOTICE", "LATE_FEE"]),
+        property_type=args.get("property_type", "residential")
     )
     db = db_mod.SessionLocal()
     try:
