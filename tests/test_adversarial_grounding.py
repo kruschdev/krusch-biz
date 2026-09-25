@@ -315,5 +315,129 @@ class TestAdversarialGrounding(unittest.TestCase):
         self.assertEqual(claims[0]["failure_mode"], "NEGATED_OBLIGATION")
 
 
+    def test_20_uncited_numeric_claim_supported(self):
+        """Verify that a sentence containing a commercial numeric slot without citation is grounded if it matches controlling clause."""
+        # Uncited statement matching Section 4.1's Net 30
+        draft = "Invoices are payable within Net 30 days."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
+        self.assertTrue(is_grounded)
+        self.assertEqual(stats["total_claims"], 1)
+        self.assertEqual(stats["supported_claims"], 1)
+        self.assertEqual(claims[0]["status"], "verified_grounded")
+        self.assertIsNone(claims[0]["cited_authority"])
+
+    def test_21_uncited_numeric_claim_divergent_rejected(self):
+        """Verify that an uncited sentence asserting divergent commercial slot fails UNCITED_NUMERIC_CLAIM."""
+        # Uncited statement claiming Net 45 when controlling clause is Net 30
+        draft = "Vendor invoices are payable within Net 45 days."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["total_claims"], 1)
+        self.assertEqual(stats["unsupported_claims"], 1)
+        self.assertEqual(stats["uncited_numeric_claims"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "UNCITED_NUMERIC_CLAIM")
+
+    def test_22_resolver_exclusive_authority_set_rejects_superseded_peer(self):
+        """Verify that grounding strictly licenses claims against resolver winner, rejecting superseded peers."""
+        controlling_res = {
+            "status": "resolved",
+            "topic": "PAYMENT_TERMS",
+            "controlling_clause": {
+                "id": 101,
+                "section": "Section 4.1",
+                "title": "2025 Amendment #1",
+                "content": "Section 4.1 is amended: Payment terms are Net 45 days.",
+                "structured_slots": {"net_days": 45},
+                "agreement_title": "2025 Amendment"
+            },
+            "amendment_trail": [{
+                "relation": "AMENDS",
+                "from_section": "Section 4.1",
+                "to_section": "Section 4.1",
+                "from_agreement_title": "2025 Amendment",
+                "to_agreement_title": "2023 MSA"
+            }]
+        }
+        # Retrieved clauses still contains old 2023 MSA Net 30
+        retrieved_with_old_peer = [
+            {
+                "id": 1,
+                "section": "Section 4.1",
+                "title": "2023 MSA",
+                "content": "Payment terms are Net 30 days.",
+                "structured_slots": {"net_days": 30},
+                "superseded": True
+            }
+        ]
+        # Draft cites Section 4.1 but asserts the old Net 30 from the superseded peer
+        draft = "Pursuant to Section 4.1, payment terms are Net 30 days."
+        is_grounded, claims, _, stats = verify_commercial_grounding(
+            analysis_text=draft,
+            retrieved_clauses=retrieved_with_old_peer,
+            controlling_result=controlling_res
+        )
+        self.assertFalse(is_grounded)
+        # Must fail because controlling winner has Net 45, not Net 30!
+        self.assertEqual(claims[0]["failure_mode"], "SLOT_MISMATCH")
+
+    def test_23_structured_polarity_grounding(self):
+        """Verify that structured slot polarity (capped: true vs asserted uncapped) flags NEGATED_OBLIGATION."""
+        clause_with_polarity = [
+            {
+                "section": "Section 12.1",
+                "title": "Limitation of Liability",
+                "content": "Liability under this agreement shall be capped at $1,000,000.",
+                "structured_slots": {
+                    "capped": True,
+                    "cap_amount": 1000000.0,
+                    "carve_outs": ["gross negligence", "willful misconduct"]
+                },
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        # Draft asserts liability is uncapped
+        draft = "Under Section 12.1, vendor liability shall be uncapped."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, clause_with_polarity)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["negated_obligations"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "NEGATED_OBLIGATION")
+
+    def test_24_new_slots_change_of_control_and_assignment(self):
+        """Verify extraction and grounding of change_of_control, assignment, and MFN slots."""
+        from src.backend.taxonomy import extract_structured_slots
+        text_coc = "In the event of a change of control of Customer, Vendor may terminate upon 30 days notice."
+        topic, slots = extract_structured_slots(text_coc)
+        self.assertEqual(topic, "CHANGE_OF_CONTROL")
+        self.assertTrue(slots["change_of_control"]["value"])
+        self.assertEqual(slots["notice_days"]["value"], 30)
+
+        text_mfn = "Vendor warrants that pricing offered under this agreement constitutes most favored nation pricing."
+        topic_mfn, slots_mfn = extract_structured_slots(text_mfn)
+        self.assertTrue(slots_mfn["most_favored_nation"]["value"])
+
+        text_assign = "Neither party may assign this agreement without prior written consent, except to an affiliate."
+        topic_assign, slots_assign = extract_structured_slots(text_assign)
+        self.assertEqual(topic_assign, "ASSIGNMENT")
+        self.assertTrue(slots_assign["assignment_consent_required"]["value"])
+
+    def test_25_multi_currency_and_notice_address(self):
+        """Verify multi-currency support (EUR, GBP, USD) and notice address slot extraction."""
+        from src.backend.taxonomy import extract_structured_slots
+        eur_text = "Aggregate liability is limited to €750,000."
+        _, slots_eur = extract_structured_slots(eur_text)
+        self.assertEqual(slots_eur["cap_amount"]["value"], 750000.0)
+        self.assertEqual(slots_eur["currency"]["value"], "EUR")
+
+        gbp_text = "Late payments incur a penalty fee of £5,000."
+        _, slots_gbp = extract_structured_slots(gbp_text)
+        self.assertEqual(slots_gbp["currency"]["value"], "GBP")
+
+        addr_text = "All formal legal notices shall be sent to 100 Main Street, Suite 400, New York, NY 10001."
+        topic_addr, slots_addr = extract_structured_slots(addr_text)
+        self.assertEqual(topic_addr, "NOTICES")
+        self.assertIn("Main Street", slots_addr["notice_address"]["value"])
+
+
 if __name__ == "__main__":
     unittest.main()

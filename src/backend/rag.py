@@ -453,9 +453,9 @@ def score_retrieval_candidate(
             boost *= 1.6
             break
 
-    # 7. Superseded penalty (heavy penalty so Gate 3 priority inversions are structurally impossible)
-    is_superseded = bool(cand.get("superseded") or cand.get("terminated"))
-    superseded_penalty = 0.05 if is_superseded else 1.0
+    # 7. Superseded penalty: hard-filter (0.0) dead/superseded clauses to force controlling set into retrieval
+    is_superseded = bool(cand.get("superseded") or cand.get("terminated") or cand.get("is_active") is False)
+    superseded_penalty = 0.0 if is_superseded else 1.0
 
     final_score = base_score * auth_mult * boost * superseded_penalty
 
@@ -700,6 +700,9 @@ def retrieve_clauses(
         )
         scored_list.append(scored)
 
+    if exclude_superseded:
+        scored_list = [c for c in scored_list if c.get("score", 0.0) > 0.0]
+
     scored_list.sort(key=lambda x: x["score"], reverse=True)
     return scored_list[offset:offset + limit]
 
@@ -805,25 +808,60 @@ def extract_rate_info(sentence: str) -> tuple[float | None, str | None]:
 
 def verify_commercial_grounding(
     analysis_text: str,
-    retrieved_clauses: list[dict[str, Any]],
-    allow_refusal: bool = True
+    retrieved_clauses: list[dict[str, Any]] | dict[str, Any] | None = None,
+    allow_refusal: bool = True,
+    controlling_result: dict[str, Any] | None = None
 ) -> tuple[bool, list[dict[str, Any]], str, dict[str, Any]]:
     """
     Verify commercial assertions and citations in generated text against retrieved clauses.
     Layered verification checker:
-      1. Citation Resolution: section + instrument matching against retrieved controlling set.
-      2. Superseded Check: detects inoperative / terminated instruments.
-      3. Slot Normalization: type-safe comparison of numbers, currencies, and percentages.
-      4. Partial Support: detects claims omitting required numerical terms on covered topics.
-      5. Negation & Exception Check: detects flipped obligations or dropped carve-outs.
-      6. Token Containment: substantive token coverage (non-stopwords).
+      1. Authority Licensing: takes resolve_controlling_clause result as the exclusive
+         authority set (controlling clause + amendment trail + incorporated clauses + carve-outs).
+      2. Uncited Claim Scanner: treats every sentence with a commercial numeric slot as a claim;
+         requires match against controlling clause or fails UNCITED_NUMERIC_CLAIM.
+      3. Citation Resolution: section + instrument matching against retrieved controlling set.
+      4. Superseded Check: detects inoperative / terminated instruments.
+      5. Structured Polarity Check: type-safe comparison of capped:bool, carve_outs:list, condition:str.
+      6. Slot Normalization: type-safe comparison of numbers, currencies, and percentages.
+      7. Partial Support: detects claims omitting required numerical terms on covered topics.
+      8. Token Containment: substantive token coverage (non-stopwords).
     """
     if not analysis_text or not analysis_text.strip():
         return False, [], "Analysis text is empty.", {"pass_rate": 0.0}
 
+    # Requirement 1: Take resolver result as the exclusive authority set
+    if controlling_result is None and isinstance(retrieved_clauses, dict) and ("controlling_clause" in retrieved_clauses or "status" in retrieved_clauses):
+        controlling_result = retrieved_clauses
+        retrieved_clauses = None
+
+    if controlling_result is not None:
+        ctrl_status = controlling_result.get("status")
+        authorities = []
+        ctrl_cl = controlling_result.get("controlling_clause")
+        if ctrl_status == "resolved" and ctrl_cl:
+            if hasattr(ctrl_cl, "__dict__") and not isinstance(ctrl_cl, dict):
+                c_dict = {
+                    "id": getattr(ctrl_cl, "id", None),
+                    "section": getattr(ctrl_cl, "section", None),
+                    "title": getattr(ctrl_cl, "title", None),
+                    "content": getattr(ctrl_cl, "content", ""),
+                    "structured_slots": getattr(ctrl_cl, "structured_slots", {}),
+                    "topic": getattr(ctrl_cl, "topic", None),
+                    "agreement_title": getattr(ctrl_cl, "agreement_title", None),
+                    "agreement_type": getattr(ctrl_cl, "authority_class", "governing_agreement")
+                }
+            else:
+                c_dict = dict(ctrl_cl)
+            authorities.append(c_dict)
+
+        for inc in controlling_result.get("incorporated_clauses", []):
+            authorities.append(dict(inc))
+    else:
+        authorities = list(retrieved_clauses or [])
+
     # Index known clauses by normalized section and instrument
     known_clauses_by_sec: dict[str, list[dict[str, Any]]] = {}
-    for c in retrieved_clauses:
+    for c in authorities:
         sec = c.get("section")
         if sec:
             raw_k = sec.lower().strip()
@@ -851,6 +889,17 @@ def verify_commercial_grounding(
             if clean_k not in (norm_sec, raw_k):
                 known_clauses_by_sec.setdefault(clean_k, []).append(c)
 
+    # Index amendment trail step sections as well
+    if controlling_result and controlling_result.get("amendment_trail") and authorities:
+        winner_c = authorities[0]
+        for step in controlling_result.get("amendment_trail", []):
+            for sec_key in ("from_section", "to_section"):
+                step_sec = step.get(sec_key)
+                if step_sec:
+                    norm_st = re.sub(r'^(?:(?:Exhibit\s+[A-Za-z\d]+|Article\s+[IVXLCDM\d]+)\s*,?\s*)?(?:Section|Clause|§)\s*', '', step_sec, flags=re.IGNORECASE).strip().lower()
+                    if norm_st and norm_st not in known_clauses_by_sec:
+                        known_clauses_by_sec[norm_st] = [winner_c]
+
     claim_records: list[dict[str, Any]] = []
     # Claim decomposition: split on sentence boundaries, semicolons, and newlines
     sentences = [s.strip() for s in re.split(r'(?<=[.!?;\n])\s+', analysis_text) if s.strip()]
@@ -865,6 +914,7 @@ def verify_commercial_grounding(
     partial_supports = 0
     negated_obligations = 0
     ambiguous_citations = 0
+    uncited_numeric_claims = 0
 
     citation_pattern = re.compile(
         r'((?:(?:the\s+)?(?:\d{4}\s+)?(?:MSA|SOW|Statement\s+of\s+Work|Master\s+Agreement|Amendment(?:\s+No\.?\s*\d+)?|Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Article\s+[IVXLCDM\d]+|Lease)\s*,?\s*)?(?:Section|Clause|§)\s*[\w\.\-]+(?:\([a-zA-Z\d]+\))*|Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Lease\s*§\s*[\w\.\-]+)',
@@ -873,7 +923,95 @@ def verify_commercial_grounding(
 
     for sentence in sentences:
         matches = list(citation_pattern.finditer(sentence))
+        _, sent_slots = extract_structured_slots(sentence)
+        sent_amt, sent_curr = normalize_money_val(sentence)
+        sent_rate, sent_basis = extract_rate_info(sentence)
+
+        # Requirement 2: Commercial numeric slots that constitute commercial assertions
+        numeric_slot_keys = [
+            k for k in (
+                "net_days", "cap_amount", "late_interest_pct", "uptime_pct",
+                "notice_days", "notice_hours", "cap_period_months",
+                "audit_notice_days", "cure_period_days", "non_solicit_months",
+                "most_favored_nation", "assignment_consent_required", "change_of_control"
+            )
+            if k in sent_slots
+        ]
+        has_numeric_slot = bool(numeric_slot_keys) or (sent_amt is not None) or (sent_rate is not None and sent_rate > 0)
+
+        # If sentence has NO citation:
         if not matches:
+            if not has_numeric_slot:
+                continue
+
+            # Requirement 2: Treat sentence with commercial slot as uncited claim
+            total_claims += 1
+            slot_match = False
+            matching_auth = None
+            divergence_details = None
+
+            for auth_cl in authorities:
+                auth_slots = auth_cl.get("structured_slots") or {}
+                if not auth_slots:
+                    _, auth_slots = extract_structured_slots(auth_cl.get("content", ""))
+
+                for k in numeric_slot_keys:
+                    if k in auth_slots:
+                        v_sent = get_slot_val(sent_slots[k])
+                        v_auth = get_slot_val(auth_slots[k])
+                        try:
+                            if float(v_sent) == float(v_auth):
+                                slot_match = True
+                                matching_auth = auth_cl
+                                break
+                            else:
+                                divergence_details = f"{k}: asserted {v_sent} vs controlling {v_auth}"
+                        except (ValueError, TypeError):
+                            if str(v_sent).lower() == str(v_auth).lower():
+                                slot_match = True
+                                matching_auth = auth_cl
+                                break
+                            else:
+                                divergence_details = f"{k}: asserted {v_sent} vs controlling {v_auth}"
+
+                if not slot_match and sent_amt is not None and "cap_amount" in auth_slots:
+                    v_auth_cap = get_slot_val(auth_slots["cap_amount"])
+                    try:
+                        if float(sent_amt) == float(v_auth_cap):
+                            slot_match = True
+                            matching_auth = auth_cl
+                    except (ValueError, TypeError):
+                        pass
+
+                if slot_match:
+                    break
+
+            if slot_match and matching_auth:
+                supported_claims += 1
+                span_match = matching_auth.get("content", "")[:180] + "..."
+                claim_records.append({
+                    "claim_id": f"claim_{total_claims}",
+                    "sentence": sentence,
+                    "cited_authority": None,
+                    "status": "verified_grounded",
+                    "failure_mode": None,
+                    "details": f"Uncited numeric claim verified against controlling clause '{matching_auth.get('section', 'N/A')}' in '{matching_auth.get('agreement_title', 'controlling agreement')}'.",
+                    "evidence_span": span_match
+                })
+            else:
+                unsupported_claims += 1
+                uncited_numeric_claims += 1
+                divergent_terms += 1
+                det = divergence_details or f"Uncited commercial claim asserts slot(s) {numeric_slot_keys or ['monetary/numeric value']} with no matching controlling clause."
+                claim_records.append({
+                    "claim_id": f"claim_{total_claims}",
+                    "sentence": sentence,
+                    "cited_authority": None,
+                    "status": "uncited_numeric_claim",
+                    "failure_mode": "UNCITED_NUMERIC_CLAIM",
+                    "details": det,
+                    "evidence_span": None
+                })
             continue
 
         for m in matches:
@@ -928,7 +1066,7 @@ def verify_commercial_grounding(
                     "cited_authority": cited_raw,
                     "status": "no_authority",
                     "failure_mode": "NO_AUTHORITY",
-                    "details": f"Cited authority '{cited_raw}' does not exist in the retrieved commercial corpus.",
+                    "details": f"Cited authority '{cited_raw}' does not exist in the governing commercial authority set.",
                     "evidence_span": None
                 })
                 continue
@@ -1002,15 +1140,20 @@ def verify_commercial_grounding(
                 })
                 continue
 
-            # 3. Check: Negation and Carve-outs (NEGATED_OBLIGATION)
+            # 3. Check: Negation and Carve-outs (NEGATED_OBLIGATION) via structured polarity (Requirement 3)
             sent_lower = sentence.lower()
             clause_content = matching_clause.get("content", "")
             clause_lower = clause_content.lower()
+            clause_slots = matching_clause.get("structured_slots") or {}
+            if not clause_slots:
+                _, clause_slots = extract_structured_slots(clause_content)
 
-            # Negation polarity inversion
-            is_claim_negated = bool(re.search(r'\b(?:shall\s+not\s+be\s+capped|is\s+not\s+capped|uncapped|without\s+cap|unlimited\s+liability|shall\s+exceed|not\s+apply)\b', sent_lower))
-            is_clause_limiting = bool(re.search(r'\b(?:shall\s+be\s+capped|aggregate\s+liability\s+shall|in\s+no\s+event\s+shall|limited\s+to|shall\s+not\s+exceed)\b', clause_lower))
-            if is_claim_negated and is_clause_limiting and "cap_amount" in (matching_clause.get("structured_slots") or {}):
+            # Structured polarity: capped
+            sent_capped = sent_slots.get("capped")
+            clause_capped = clause_slots.get("capped")
+            is_claim_negated = (sent_capped is False) or bool(re.search(r'\b(?:shall\s+not\s+be\s+capped|is\s+not\s+capped|uncapped|without\s+cap|unlimited\s+liability|shall\s+exceed|not\s+apply)\b', sent_lower))
+            is_clause_limiting = (clause_capped is True) or bool(re.search(r'\b(?:shall\s+be\s+capped|aggregate\s+liability\s+shall|in\s+no\s+event\s+shall|limited\s+to|shall\s+not\s+exceed)\b', clause_lower))
+            if is_claim_negated and is_clause_limiting and "cap_amount" in clause_slots:
                 negated_obligations += 1
                 unsupported_claims += 1
                 claim_records.append({
@@ -1024,9 +1167,10 @@ def verify_commercial_grounding(
                 })
                 continue
 
-            # Dropped carve-out check: clause has exceptions, but claim asserts absolute/uncarved cap
-            clause_has_carveouts = "carve_outs" in (matching_clause.get("structured_slots") or {}) or "except" in clause_lower or "excluding" in clause_lower
-            claim_drops_carveouts = bool(re.search(r'\b(?:for\s+all\s+claims\s+without\s+exception|without\s+exception|including\s+gross\s+negligence)\b', sent_lower))
+            # Structured polarity: carve_outs
+            clause_has_carveouts = bool(clause_slots.get("carve_outs")) or "except" in clause_lower or "excluding" in clause_lower
+            sent_carveouts = sent_slots.get("carve_outs")
+            claim_drops_carveouts = (sent_carveouts == []) and bool(re.search(r'\b(?:for\s+all\s+claims\s+without\s+exception|without\s+exception|including\s+gross\s+negligence)\b', sent_lower)) or bool(re.search(r'\b(?:for\s+all\s+claims\s+without\s+exception|without\s+exception|including\s+gross\s+negligence)\b', sent_lower))
             if clause_has_carveouts and claim_drops_carveouts:
                 negated_obligations += 1
                 unsupported_claims += 1
@@ -1041,8 +1185,9 @@ def verify_commercial_grounding(
                 })
                 continue
 
-            # Conditionals & Carve-outs: Handle "upon material breach", "except for", "notwithstanding", "unless pre-approved"
-            clause_has_condition = bool(re.search(
+            # Structured polarity: condition
+            clause_condition = clause_slots.get("condition")
+            clause_has_condition = bool(clause_condition) or bool(re.search(
                 r'\b(?:except\s+for|except\s+in|excluding|subject\s+to|upon\s+material\s+breach|conditioned\s+upon|unless\s+pre-approved|except\s+for\s+pre-approved|notwithstanding)\b',
                 clause_lower
             ))
@@ -1245,12 +1390,13 @@ def verify_commercial_grounding(
     else:
         pass_rate = round((supported_claims / total_claims) * 100.0, 1)
         if pass_rate < 100.0:
+            uncited_note = f", {uncited_numeric_claims} uncited numeric claim(s)" if uncited_numeric_claims else ""
             advisory_md = (
                 f"> ⚠️ **COMMERCIAL GROUNDING WARNING**: Only {supported_claims}/{total_claims} assertions ({pass_rate}%) "
                 f"are verified against the governing contract graph. "
                 f"{invented_clauses} invented clause(s), {divergent_terms} divergent term(s), {superseded_terms} superseded term(s), "
-                f"{wrong_instruments} wrong instrument(s), {partial_supports} partial support(s), {negated_obligations} negated obligation(s), "
-                f"and {ambiguous_citations} ambiguous citation(s) detected."
+                f"{wrong_instruments} wrong instrument(s), {partial_supports} partial support(s), {negated_obligations} negated obligation(s)"
+                f"{uncited_note}, and {ambiguous_citations} ambiguous citation(s) detected."
             )
         else:
             advisory_md = (
@@ -1271,7 +1417,8 @@ def verify_commercial_grounding(
         "superseded_terms": superseded_terms,
         "no_authorities": invented_clauses + ambiguous_citations,
         "invented_clauses": invented_clauses,
-        "divergent_terms": sum(1 for c in claim_records if c.get("failure_mode") in ("SLOT_MISMATCH", "UNIT_MISMATCH")),
+        "uncited_numeric_claims": uncited_numeric_claims,
+        "divergent_terms": sum(1 for c in claim_records if c.get("failure_mode") in ("SLOT_MISMATCH", "UNIT_MISMATCH", "UNCITED_NUMERIC_CLAIM")),
         "ambiguous_citations": ambiguous_citations,
         "pass_rate": pass_rate
     }
@@ -1366,24 +1513,60 @@ def generate_executive_brief(
             break
 
     if conflicting_topic:
-        refusal_msg = (
-            f"CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS: Contract conflict detected on topic '{conflicting_topic}' "
-            f"between operative agreements ({diverging_details}). "
-            f"KruschBiz strictly refuses to synthesize an executive brief while live controlling terms diverge. "
-            f"Please run 'resolve_controlling_clause' or execute an amendment to harmonize the conflicting terms."
-        )
-        stats = {
-            "total_claims": 0,
-            "supported_claims": 0,
-            "unsupported_claims": 0,
-            "invented_clauses": 0,
-            "divergent_terms": 1,
-            "superseded_terms": 0,
-            "pass_rate": 0.0,
-            "refusal_reason": "CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS",
-            "conflict_details": diverging_details
-        }
-        return refusal_msg, stats, []
+        if db is not None and counterparty:
+            from .resolver import resolve_controlling_clause
+            resolved = resolve_controlling_clause(
+                db=db,
+                tenant_id=tenant_id,
+                counterparty=counterparty,
+                topic=conflicting_topic,
+                deal_id=deal_id,
+                persist_trace=False
+            )
+            if resolved.get("status") == "resolved":
+                winner_cl = resolved.get("controlling_clause")
+                if winner_cl:
+                    clauses = [c for c in clauses if c.get("topic") != conflicting_topic]
+                    clauses.insert(0, winner_cl)
+                    conflicting_topic = None
+            elif resolved.get("status") == "ambiguous":
+                refusal_msg = (
+                    f"CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS: Contract conflict on topic '{conflicting_topic}' "
+                    f"between operative agreements cannot be resolved: {resolved.get('resolution_rationale')} "
+                    f"KruschBiz strictly refuses to synthesize an executive brief while live controlling terms diverge."
+                )
+                stats = {
+                    "total_claims": 0,
+                    "supported_claims": 0,
+                    "unsupported_claims": 0,
+                    "invented_clauses": 0,
+                    "divergent_terms": 1,
+                    "superseded_terms": 0,
+                    "pass_rate": 0.0,
+                    "refusal_reason": "CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS",
+                    "conflict_details": resolved.get("resolution_rationale")
+                }
+                return refusal_msg, stats, []
+
+        if conflicting_topic:
+            refusal_msg = (
+                f"CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS: Contract conflict detected on topic '{conflicting_topic}' "
+                f"between operative agreements ({diverging_details}). "
+                f"KruschBiz strictly refuses to synthesize an executive brief while live controlling terms diverge. "
+                f"Please run 'resolve_controlling_clause' or execute an amendment to harmonize the conflicting terms."
+            )
+            stats = {
+                "total_claims": 0,
+                "supported_claims": 0,
+                "unsupported_claims": 0,
+                "invented_clauses": 0,
+                "divergent_terms": 1,
+                "superseded_terms": 0,
+                "pass_rate": 0.0,
+                "refusal_reason": "CANNOT_DRAFT_WITH_ACTIVE_CONFLICTS",
+                "conflict_details": diverging_details
+            }
+            return refusal_msg, stats, []
 
     model_name = model or settings.OLLAMA_LLM_MODEL
     authorities_text = ""
@@ -1476,6 +1659,11 @@ Operational parameters demand strict enforcement of service delivery benchmarks.
 
     if db is not None and deal_id is not None:
         try:
+            clause_ids = [c.get("id") for c in clauses if c.get("id") is not None]
+            slot_primitives = {
+                str(c.get("id")): c.get("structured_slots")
+                for c in clauses if c.get("id") is not None and c.get("structured_slots")
+            }
             report = CommercialGroundingReport(
                 tenant_id=tenant_id,
                 deal_id=deal_id,
@@ -1487,7 +1675,9 @@ Operational parameters demand strict enforcement of service delivery benchmarks.
                 superseded_terms=stats.get("superseded_terms", 0),
                 pass_rate=stats.get("pass_rate", 100.0),
                 claims_json=json.dumps(claims),
-                advisory_markdown=advisory
+                advisory_markdown=advisory,
+                clause_ids_json=json.dumps(clause_ids),
+                slot_primitives_json=json.dumps(slot_primitives)
             )
             db.add(report)
             db.commit()

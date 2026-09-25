@@ -487,6 +487,8 @@ class CommercialGroundingReport(Base):
     pass_rate = Column(Float, default=100.0, nullable=False)
     claims_json = Column(Text, nullable=False)
     advisory_markdown = Column(Text, nullable=True)
+    clause_ids_json = Column(Text, nullable=True)
+    slot_primitives_json = Column(Text, nullable=True)
 
 
 class AuditLog(Base):

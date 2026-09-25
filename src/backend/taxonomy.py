@@ -54,6 +54,9 @@ TOPIC_MOST_FAVORED_NATION = "MOST_FAVORED_NATION"
 TOPIC_GOVERNING_LAW = "GOVERNING_LAW"
 TOPIC_CONFIDENTIALITY = "CONFIDENTIALITY"
 TOPIC_WARRANTIES = "WARRANTIES"
+TOPIC_CHANGE_OF_CONTROL = "CHANGE_OF_CONTROL"
+TOPIC_ASSIGNMENT = "ASSIGNMENT"
+TOPIC_NOTICES = "NOTICES"
 
 CANONICAL_TOPICS: list[str] = [
     TOPIC_PAYMENT_TERMS,
@@ -75,6 +78,9 @@ CANONICAL_TOPICS: list[str] = [
     TOPIC_GOVERNING_LAW,
     TOPIC_CONFIDENTIALITY,
     TOPIC_WARRANTIES,
+    TOPIC_CHANGE_OF_CONTROL,
+    TOPIC_ASSIGNMENT,
+    TOPIC_NOTICES,
 ]
 
 # Canonical alias normalization mapping
@@ -102,6 +108,9 @@ TOPIC_KEYWORDS: dict[str, list[str]] = {
     TOPIC_GOVERNING_LAW: ["governing law", "jurisdiction", "venue", "laws of the state of", "arbitration"],
     TOPIC_CONFIDENTIALITY: ["confidential information", "non-disclosure", "proprietary information", "trade secret"],
     TOPIC_WARRANTIES: ["warranty", "warranties", "disclaimer", "as is", "merchantability", "sole and exclusive remedy"],
+    TOPIC_CHANGE_OF_CONTROL: ["change of control", "acquisition", "merger", "voting securities", "sale of all or substantially all"],
+    TOPIC_ASSIGNMENT: ["assignment", "assign", "prior written consent", "successor", "affiliates"],
+    TOPIC_NOTICES: ["notice address", "formal notice", "formal legal notices", "written notice shall be sent", "notices under this agreement", "notices shall be sent", "notices"],
 }
 
 
@@ -167,12 +176,18 @@ def slot_dict_to_primitives(slots: dict[str, Any]) -> dict[str, Any]:
     return {k: get_slot_val(v) for k, v in slots.items()}
 
 
-TAXONOMY_VERSION = 2
+TAXONOMY_VERSION = 3
 
 
 def classify_topic_from_slots(slots: dict[str, Any]) -> str | None:
     """Classify topic from authoritative structured slot signatures."""
-    if "cap_amount" in slots or "carve_outs" in slots:
+    if "change_of_control" in slots or "change_of_control_notice_days" in slots:
+        return TOPIC_CHANGE_OF_CONTROL
+    if "assignment_consent_required" in slots:
+        return TOPIC_ASSIGNMENT
+    if "most_favored_nation" in slots:
+        return TOPIC_MOST_FAVORED_NATION
+    if "cap_amount" in slots or "carve_outs" in slots or "capped" in slots:
         return TOPIC_LIMITATION_OF_LIABILITY
     if "net_days" in slots or "late_interest_pct" in slots or "payment_dispute_notice_days" in slots:
         return TOPIC_PAYMENT_TERMS
@@ -180,6 +195,8 @@ def classify_topic_from_slots(slots: dict[str, Any]) -> str | None:
         return TOPIC_SLA_PERFORMANCE
     if "notice_hours" in slots:
         return TOPIC_DATA_PROTECTION
+    if "notice_address" in slots:
+        return TOPIC_NOTICES
     if "termination_notice_days" in slots or "cure_days" in slots:
         return TOPIC_TERMINATION
     if "exclusive_remedy" in slots:
@@ -451,19 +468,37 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
             confidence=0.95
         )
 
-    # Monetary currency search: inspect context window strictly
-    monetary_matches = list(re.finditer(r"\$\s*([\d,]+(?:\.\d{2})?)", text))
+    # Monetary currency search: inspect context window strictly (USD, EUR, GBP)
+    monetary_matches = list(re.finditer(r"([\$€£]|USD|EUR|GBP)\s*([\d,]+(?:\.\d{2})?)", text))
     for m in monetary_matches:
-        clean_amount = m.group(1).replace(",", "")
+        raw_symbol = m.group(1).upper()
+        curr_unit = "USD"
+        if raw_symbol in ("€", "EUR"):
+            curr_unit = "EUR"
+        elif raw_symbol in ("£", "GBP"):
+            curr_unit = "GBP"
+
+        clean_amount = m.group(2).replace(",", "")
         try:
             amt = float(clean_amount)
         except ValueError:
             continue
 
+        span_str = text[m.start():m.end()]
+        if "currency" not in slots and curr_unit:
+            slots["currency"] = make_typed_slot(
+                value=curr_unit,
+                unit="iso_currency",
+                raw_span=span_str,
+                char_start=m.start(),
+                char_end=m.end(),
+                pattern_id="commercial_currency",
+                confidence=0.98
+            )
+
         start_ctx = max(0, m.start() - 60)
         end_ctx = min(len(text_lower), m.end() + 60)
         surrounding_text = text_lower[start_ctx:end_ctx]
-        span_str = text[m.start():m.end()]
 
         is_cap_context = any(w in surrounding_text for w in [
             "liability", "aggregate", "maximum", "exceed", "capped", "in no event shall", "cap"
@@ -476,7 +511,7 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
             if "cap_amount" not in slots:
                 slots["cap_amount"] = make_typed_slot(
                     value=amt,
-                    unit="USD",
+                    unit=curr_unit,
                     raw_span=span_str,
                     char_start=m.start(),
                     char_end=m.end(),
@@ -487,7 +522,7 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
             if "fee_amount" not in slots:
                 slots["fee_amount"] = make_typed_slot(
                     value=amt,
-                    unit="USD",
+                    unit=curr_unit,
                     raw_span=span_str,
                     char_start=m.start(),
                     char_end=m.end(),
@@ -499,7 +534,7 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
             if topic in (TOPIC_LIABILITY_CAP, TOPIC_LIMITATION_OF_LIABILITY) and is_cap_context and "cap_amount" not in slots:
                 slots["cap_amount"] = make_typed_slot(
                     value=amt,
-                    unit="USD",
+                    unit=curr_unit,
                     raw_span=span_str,
                     char_start=m.start(),
                     char_end=m.end(),
@@ -535,6 +570,48 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
                 confidence=0.95
             )
 
+    # 7b. Structured Polarity on Slots (Design Invariant #3)
+    # Store explicit boolean 'capped' and condition on slots for structured polarity verification
+    if re.search(r'\b(?:shall\s+not\s+be\s+capped|is\s+not\s+capped|uncapped|without\s+cap|unlimited\s+liability|shall\s+exceed|not\s+apply)\b', text_lower):
+        slots["capped"] = make_typed_slot(
+            value=False,
+            unit="boolean",
+            raw_span="uncapped",
+            char_start=0,
+            char_end=len(text),
+            pattern_id="polarity_uncapped",
+            confidence=0.98
+        )
+    elif "cap_amount" in slots or re.search(r'\b(?:shall\s+be\s+capped|aggregate\s+liability\s+shall|in\s+no\s+event\s+shall|limited\s+to|shall\s+not\s+exceed)\b', text_lower):
+        slots["capped"] = make_typed_slot(
+            value=True,
+            unit="boolean",
+            raw_span="capped",
+            char_start=0,
+            char_end=len(text),
+            pattern_id="polarity_capped",
+            confidence=0.98
+        )
+
+    # Condition string extraction
+    conditions = []
+    if "gross negligence" in text_lower or "willful misconduct" in text_lower:
+        conditions.append("gross negligence|willful misconduct")
+    if "upon material breach" in text_lower or "material breach" in text_lower:
+        conditions.append("material breach")
+    if "unless pre-approved" in text_lower or "prior written consent" in text_lower:
+        conditions.append("prior written consent")
+    if conditions:
+        slots["condition"] = make_typed_slot(
+            value="; ".join(conditions),
+            unit="condition",
+            raw_span="; ".join(conditions),
+            char_start=0,
+            char_end=len(text),
+            pattern_id="slot_conditions",
+            confidence=0.95
+        )
+
     # 8. Exclusive Remedy
     if "sole and exclusive remedy" in text_lower or "exclusive remedy" in text_lower:
         rem_match = re.search(r"(?:sole\s+and\s+)?exclusive\s+remedy", text_lower)
@@ -549,6 +626,80 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
             pattern_id="exclusive_remedy_clause",
             confidence=0.98
         )
+
+    # 9. Extended Governance Topics (Taxonomy Version 3: Change of Control, Assignment, MFN, Notice Address)
+    if re.search(r"\bchange\s+of\s+control\b", text_lower):
+        slots["change_of_control"] = make_typed_slot(
+            value=True,
+            unit="boolean",
+            raw_span="change of control",
+            char_start=text_lower.find("change of control"),
+            char_end=text_lower.find("change of control") + len("change of control"),
+            pattern_id="change_of_control_trigger",
+            confidence=0.95
+        )
+        coc_notice = re.search(r"(?:within|at\s+least)\s+(\d{1,3})\s*(?:calendar\s+|business\s+)?days", text_lower)
+        if coc_notice:
+            slots["change_of_control_notice_days"] = make_typed_slot(
+                value=int(coc_notice.group(1)),
+                unit="days",
+                raw_span=coc_notice.group(0),
+                char_start=coc_notice.start(),
+                char_end=coc_notice.end(),
+                pattern_id="change_of_control_notice_days",
+                confidence=0.94
+            )
+
+    if re.search(r"\bassign(?:ment|s)?\b", text_lower):
+        if any(w in text_lower for w in ("prior written consent", "without consent", "consent of")):
+            slots["assignment_consent_required"] = make_typed_slot(
+                value=True,
+                unit="boolean",
+                raw_span="prior written consent",
+                char_start=0,
+                char_end=len(text),
+                pattern_id="assignment_consent_required",
+                confidence=0.95
+            )
+
+    if re.search(r"\b(?:most\s+favored\s+nation|mfn)\b", text_lower):
+        slots["most_favored_nation"] = make_typed_slot(
+            value=True,
+            unit="boolean",
+            raw_span="most favored nation",
+            char_start=0,
+            char_end=len(text),
+            pattern_id="mfn_clause",
+            confidence=0.96
+        )
+
+    email_m = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
+    if email_m and any(w in text_lower for w in ("notice", "notices", "formal", "contact", "legal")):
+        slots["notice_address"] = make_typed_slot(
+            value=email_m.group(0),
+            unit="email",
+            raw_span=email_m.group(0),
+            char_start=email_m.start(),
+            char_end=email_m.end(),
+            pattern_id="notice_address_email",
+            confidence=0.98
+        )
+    else:
+        addr_m = re.search(r'(?:sent\s+to|addressed\s+to|delivered\s+to|notices?\s+(?:shall\s+be\s+)?sent\s+to)\s+([^;\.\n]+)', text, re.IGNORECASE)
+        if not addr_m:
+            addr_m = re.search(r'\b\d{1,5}\s+[A-Za-z0-9\.\s,]+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Way|Lane|Ln|Court|Ct|Suite|Floor|Ste)[^;\.\n]*', text, re.IGNORECASE)
+        if addr_m and any(w in text_lower for w in ("notice", "notices", "formal", "contact", "legal", "sent to")):
+            raw_addr = addr_m.group(1) if addr_m.lastindex else addr_m.group(0)
+            raw_addr = raw_addr.strip().rstrip(".,")
+            slots["notice_address"] = make_typed_slot(
+                value=raw_addr,
+                unit="postal_address",
+                raw_span=raw_addr,
+                char_start=addr_m.start(),
+                char_end=addr_m.end(),
+                pattern_id="notice_address_postal",
+                confidence=0.95
+            )
 
     # Final Topic Priority: Slot signature > provided topic > classify_topic
     slot_topic = classify_topic_from_slots(slots)

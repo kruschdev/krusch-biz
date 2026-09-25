@@ -194,7 +194,8 @@ class TestRAG(unittest.TestCase):
         )
 
         self.assertGreater(res_active["score"], res_super["score"], "Active controlling clause must rank higher than superseded clause due to superseded_penalty!")
-        self.assertEqual(res_super["explanation"]["superseded_penalty"], 0.05)
+        self.assertEqual(res_super["explanation"]["superseded_penalty"], 0.0)
+        self.assertEqual(res_super["score"], 0.0)
 
     def test_10_embeddings_offline_refusal(self):
         """Verify that when embeddings are required and fail, drafting refuses with CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE."""

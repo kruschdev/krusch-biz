@@ -23,6 +23,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -34,14 +35,82 @@ from .db import (
     DealEvidence,
     DealMatter,
     IngestJob,
+    Party,
+    PartyAlias,
     SessionLocal,
 )
 from .nexus_adapter import chunk_document, parse_document
 from .rag import get_embeddings_batch
+from .resolver import normalize_party_name
 from .tagger import tag_commercial_chunk
 from .taxonomy import extract_structured_slots
 
 logger = logging.getLogger("kruschbiz.ingest")
+
+
+def ensure_party_and_alias(
+    db: Session,
+    tenant_id: str,
+    counterparty_name: str,
+    entity_type: str = "corporation"
+) -> Party | None:
+    """
+    Ensure canonical Party entity and PartyAlias records exist at ingest/review.
+    Extracts normalized name variant (stripping LLC, Inc., punctuation) and registers
+    both canonical and normalized aliases to enable authoritative join key lookup.
+    """
+    clean_name = counterparty_name.strip()
+    norm_name = normalize_party_name(clean_name)
+    if not clean_name:
+        return None
+
+    party = db.query(Party).filter(
+        Party.tenant_id == tenant_id,
+        or_(
+            func.lower(Party.canonical_name) == clean_name.lower(),
+            func.lower(Party.canonical_name) == norm_name.lower()
+        )
+    ).first()
+
+    if not party:
+        alias = db.query(PartyAlias).filter(
+            PartyAlias.tenant_id == tenant_id,
+            or_(
+                func.lower(PartyAlias.alias_name) == clean_name.lower(),
+                func.lower(PartyAlias.alias_name) == norm_name.lower()
+            )
+        ).first()
+        if alias:
+            party = alias.party
+
+    if not party:
+        party = Party(
+            tenant_id=tenant_id,
+            canonical_name=clean_name,
+            entity_type=entity_type
+        )
+        db.add(party)
+        db.flush()
+
+        alias_canon = PartyAlias(
+            tenant_id=tenant_id,
+            party_id=party.id,
+            alias_name=clean_name,
+            match_type="exact"
+        )
+        db.add(alias_canon)
+
+        if norm_name and norm_name.lower() != clean_name.lower():
+            alias_norm = PartyAlias(
+                tenant_id=tenant_id,
+                party_id=party.id,
+                alias_name=norm_name,
+                match_type="suffix_normalized"
+            )
+            db.add(alias_norm)
+        db.flush()
+
+    return party
 
 MAX_INGEST_FILE_SIZE_BYTES = 50 * 1024 * 1024
 MAX_INGEST_CHUNKS_PER_DOC = 1000
@@ -469,11 +538,18 @@ def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, A
                         inst_type = "bylaws"
 
                     ag_status = "superseded" if item.get("superseded") else "active"
+                    party_id = None
+                    if item.get("counterparty"):
+                        p_entity = ensure_party_and_alias(db, tenant_id, item["counterparty"])
+                        if p_entity:
+                            party_id = p_entity.id
+
                     new_ag = Agreement(
                         tenant_id=tenant_id,
                         title=ag_title,
                         instrument_type=inst_type,
                         counterparty=item.get("counterparty"),
+                        party_id=party_id,
                         effective_date=item.get("effective_date"),
                         expiration_date=item.get("expiration_date"),
                         status=ag_status,

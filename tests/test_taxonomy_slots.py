@@ -166,9 +166,9 @@ class TestTaxonomyTypedSlots(unittest.TestCase):
         self.assertEqual(slots["notice_days"]["value"], 15)
 
     def test_08_slot_spans_and_taxonomy_version(self):
-        """Verify get_slot_spans returns character offsets and TAXONOMY_VERSION == 2."""
+        """Verify get_slot_spans returns character offsets and TAXONOMY_VERSION == 3."""
         from src.backend.taxonomy import TAXONOMY_VERSION, get_slot_spans
-        self.assertEqual(TAXONOMY_VERSION, 2)
+        self.assertEqual(TAXONOMY_VERSION, 3)
 
         text = "Invoices are payable Net 45 days."
         _, slots = extract_structured_slots(text)

@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 172 Passing](https://img.shields.io/badge/Tests-172%20Passing-brightgreen.svg)](tests/)
+[![Tests: 188 Passing](https://img.shields.io/badge/Tests-188%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: 4/4 Passing](https://img.shields.io/badge/CI%20Gates-4%2F4%20Passing-brightgreen.svg)](scripts/eval_adversarial_corpus.py)
 
 ---
@@ -20,7 +20,7 @@
 
 KruschBiz is built for one job:
 1. **Determining the controlling contractual instrument and clause** across complex multi-document families, chronological amendment chains, and schedule carve-outs.
-2. **Auditing and grounding generated commercial claims** against the controlling text using typed slot primitives and a canonical 7-mode failure taxonomy.
+2. **Auditing and grounding generated commercial claims** against the controlling text using typed slot primitives and a canonical failure taxonomy.
 
 Operational sludge (accounts receivable aging, OCR ingestion, invoice templates) has been permanently excised to sibling packages. Deep theoretical background on why standard vector search collapses on commercial agreements is detailed in [`docs/why_krusch_biz_differs_from_business_rag.md`](docs/why_krusch_biz_differs_from_business_rag.md). Comprehensive graph model and algorithm details are documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -30,11 +30,11 @@ Operational sludge (accounts receivable aging, OCR ingestion, invoice templates)
 
 * **Confirmed-Edge Invariant**: Relation extraction proposes edges with `status='proposed'`. The controlling document resolver walks **only confirmed edges** (`status='confirmed'`). Unconfirmed proposals never silently alter controlling terms and are returned strictly as advisories.
 * **DAG Precedence Resolver**: Transitive DAG walk (`resolve_controlling_clause`) resolves multi-hop amendment chains (A → B → C) chronologically by effective date, with DFS recursion-stack cycle detection, self-loop prevention, and a depth cap (`depth < 32`).
-* **Unexecuted Draft Isolation**: Agreements with `execution_status='draft'` cannot defeat, supersede, or amend executed agreements in precedence resolution.
+* **Unexecuted Draft Isolation**: Agreements with `execution_status='draft'` cannot defeat, supersede, or amend executed agreements in precedence resolution (enforced on both `SUPERSEDES` and `AMENDS`).
 * **Document Hierarchy Safeguards**: Master Agreements outrank SOWs/schedules on general governance (liability, indemnification, governing law); schedules outrank Master Agreements strictly on commercial parameters (fees, SLAs, deliverables).
-* **7 Canonical Grounding Failure Codes**: Verification audits generated assertions against controlling text and categorizes failures into:
-  `WRONG_INSTRUMENT`, `SLOT_MISMATCH`, `UNIT_MISMATCH`, `NEGATED_OBLIGATION`, `PARTIAL_SUPPORT`, `SUPERSEDED`, and `NO_AUTHORITY`.
-* **Closed Commercial Taxonomy & Slot Spans**: 13 canonical commercial topics (`PAYMENT_TERMS`, `LIABILITY_CAP`, `FEES`, etc.) with quantitative slots (`net_days`, `cap_amount`, `late_interest_pct`) extracted with exact character offset spans (`slot_spans`) and a frozen 32-character `clause_uid` hash.
+* **Canonical Grounding Failure Codes**: Verification audits generated assertions against the exclusive authority set (controlling clause + amendment trail + incorporated clauses + carve-outs) and categorizes failures into:
+  `WRONG_INSTRUMENT`, `SLOT_MISMATCH`, `UNIT_MISMATCH`, `NEGATED_OBLIGATION`, `PARTIAL_SUPPORT`, `SUPERSEDED`, `NO_AUTHORITY`, `UNCITED_NUMERIC_CLAIM`, and `UNGROUNDED_TOPIC`.
+* **Closed Commercial Taxonomy & Slot Spans (v3)**: 16 canonical commercial topics (`PAYMENT_TERMS`, `LIABILITY_CAP`, `CHANGE_OF_CONTROL`, `ASSIGNMENT`, `NOTICES`, etc.) with quantitative, multi-currency (USD, EUR, GBP), and typed polarity slots extracted with exact character offset spans (`slot_spans`) and a frozen 32-character `clause_uid` hash.
 * **Air-Gapped Sovereign Security**: Loopback-bound (`127.0.0.1:8086`, `127.0.0.1:8506`), boot-check failure on non-loopback or placeholder API keys outside development, single `tenant_id:key_secret` auth story rejecting header spoofing (HTTP 403), and pre-spool MIME magic-byte validation rejecting executable binaries (`MZ`, `\x7fELF`, Mach-O) and HTML-disguised PDFs.
 * **Transactional Purge & Append-Only Audit**: Atomically cleans deal and agreement records with zero orphan rows across all tables. Audit log records reject `UPDATE` and `DELETE` at the database engine level via SQLAlchemy event listeners.
 * **Dual MCP Architecture**:

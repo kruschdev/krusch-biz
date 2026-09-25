@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="KruschBiz | Sovereign Corporate Intelligence Engine",
     description="Air-gapped enterprise contract and corporate policy graph with assertion-level grounding.",
-    version="0.1.0",
+    version="0.1.0-alpha.1",
     lifespan=lifespan
 )
 

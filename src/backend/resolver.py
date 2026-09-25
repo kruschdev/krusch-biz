@@ -233,66 +233,106 @@ def compute_clause_uid(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
+def parse_relation_scope(scope_obj: Any) -> dict[str, list[str]]:
+    """
+    Parse a relation scope into a first-class typed dictionary:
+      {
+        "topics": list[str],
+        "sections": list[str],
+        "slot_keys": list[str]
+      }
+    """
+    res: dict[str, list[str]] = {"topics": [], "sections": [], "slot_keys": []}
+    if scope_obj is None:
+        return res
+
+    if hasattr(scope_obj, "scope_type"):
+        s_type = (getattr(scope_obj, "scope_type", None) or "ALL").upper()
+        if s_type == "TOPICS":
+            res["topics"] = [t.upper() for t in (getattr(scope_obj, "scope_topics", []) or [])]
+        elif s_type == "SECTIONS":
+            res["sections"] = [normalize_section(s) for s in (getattr(scope_obj, "scope_sections", []) or []) if normalize_section(s)]
+        raw_scope = getattr(scope_obj, "clause_scope", None)
+    elif isinstance(scope_obj, dict):
+        res["topics"] = [t.upper() for t in scope_obj.get("topics", [])]
+        res["sections"] = [normalize_section(s) for s in scope_obj.get("sections", []) if normalize_section(s)]
+        res["slot_keys"] = list(scope_obj.get("slot_keys", []))
+        return res
+    elif isinstance(scope_obj, str):
+        raw_scope = scope_obj
+    else:
+        raw_scope = None
+
+    if not raw_scope or raw_scope.strip().upper() in ("ALL", "*"):
+        return res
+
+    scope_str = raw_scope.strip()
+    if scope_str.startswith("{") and scope_str.endswith("}"):
+        try:
+            parsed_json = json.loads(scope_str)
+            if isinstance(parsed_json, dict):
+                if "topics" in parsed_json:
+                    res["topics"] = [t.upper() for t in parsed_json["topics"]]
+                if "sections" in parsed_json:
+                    res["sections"] = [normalize_section(s) for s in parsed_json["sections"] if normalize_section(s)]
+                if "slot_keys" in parsed_json:
+                    res["slot_keys"] = list(parsed_json["slot_keys"])
+                return res
+        except Exception:
+            pass
+
+    if scope_str.lower().startswith(("slots:", "slot:")):
+        slots_part = scope_str.split(":", 1)[1]
+        res["slot_keys"] = [k.strip() for k in slots_part.split(",") if k.strip()]
+        return res
+
+    if scope_str.lower().startswith("topic:"):
+        res["topics"] = [scope_str.split(":", 1)[1].strip().upper()]
+        return res
+
+    if scope_str.upper() in TOPIC_ALIASES or scope_str.upper() in SOW_CONTROLLING_TOPICS or scope_str.upper() in MSA_CONTROLLING_TOPICS:
+        res["topics"] = [scope_str.upper()]
+        return res
+
+    norm_s = normalize_section(scope_str)
+    if norm_s:
+        res["sections"] = [norm_s]
+    return res
+
+
 def is_scope_match(scope_obj: Any, clause: Clause, topic: str) -> bool:
     """
-    Verify if a relation's scope governs a specific clause or topic.
-    Supports structured scope attributes (scope_type, scope_topics, scope_sections) on AgreementRelation,
-    as well as string clause_scope. Enforces strict exact normalized section matching so 'Section 4'
-    cannot falsely govern 'Section 4.2'.
+    Verify if a relation's first-class typed scope governs a specific clause or topic.
+    Scope = {topics[], sections[], slot_keys[]}.
     """
     if scope_obj is None:
         return True
 
-    # 1. Structured Scope Evaluation on AgreementRelation model
-    if hasattr(scope_obj, "scope_type"):
-        s_type = (getattr(scope_obj, "scope_type", None) or "ALL").upper()
-        if s_type in ("ALL", "*"):
-            return True
-        if s_type == "TOPICS":
-            t_list = [t.upper() for t in (getattr(scope_obj, "scope_topics", []) or [])]
-            return topic.upper() in t_list
-        if s_type == "SECTIONS":
-            sec_list = [normalize_section(s) for s in (getattr(scope_obj, "scope_sections", []) or [])]
-            c_sec = normalize_section(clause.section)
-            return bool(c_sec and c_sec in sec_list)
-        if s_type == "EXHIBITS":
-            ex_list = [ex.lower() for ex in (getattr(scope_obj, "scope_exhibits", []) or [])]
-            c_sec_raw = (clause.section or "").lower()
-            c_title_raw = (clause.title or "").lower()
-            return any(ex in c_sec_raw or ex in c_title_raw for ex in ex_list)
-        clause_scope = getattr(scope_obj, "clause_scope", None)
-    elif isinstance(scope_obj, str):
-        clause_scope = scope_obj
-    else:
-        clause_scope = None
+    scope_dict = parse_relation_scope(scope_obj)
+    topics = scope_dict["topics"]
+    sections = scope_dict["sections"]
+    slot_keys = scope_dict["slot_keys"]
 
-    if not clause_scope or clause_scope.strip().upper() in ("ALL", "*"):
+    if not topics and not sections and not slot_keys:
         return True
 
-    scope = clause_scope.strip().lower()
+    if topics:
+        if topic.upper() not in topics and not any(t in TOPIC_ALIASES.get(topic.upper(), []) for t in topics):
+            return False
 
-    # Topic-level scope, e.g. "topic:PAYMENT_TERMS" or "PAYMENT_TERMS"
-    if scope.startswith("topic:"):
-        scope_topic = scope.split("topic:", 1)[1].strip().upper()
-        return scope_topic == topic.upper()
-    if scope.upper() == topic.upper():
-        return True
+    if sections:
+        c_sec = normalize_section(clause.section)
+        c_title = (clause.title or "").strip().lower()
+        sec_match = (c_sec in sections) or any(s in c_title for s in sections)
+        if not sec_match:
+            return False
 
-    # Section-level scope: Strict normalized exact match prevents '4' matching '4.2'
-    if clause.section:
-        c_sec = clause.section.strip().lower()
-        if scope == c_sec:
-            return True
-        norm_scope = normalize_section(scope)
-        norm_c_sec = normalize_section(c_sec)
-        if norm_scope and norm_scope == norm_c_sec:
-            return True
+    if slot_keys:
+        cl_slots = clause.structured_slots or {}
+        if not any(k in cl_slots for k in slot_keys):
+            return False
 
-    # Check if clause title matches scope
-    if clause.title and scope == clause.title.strip().lower():
-        return True
-
-    return False
+    return True
 
 
 def get_party_agreements(db: Session, tenant_id: str, counterparty: str) -> list[Agreement]:
@@ -300,75 +340,53 @@ def get_party_agreements(db: Session, tenant_id: str, counterparty: str) -> list
     Fetch agreements for a strictly matched counterparty entity or alias.
     Resolves canonical Party entity and PartyAlias records if present.
     STRICT SECURITY INVARIANT: Zero fallback to all tenant agreements.
-    Filters candidate agreements at SQL level before exact normalized matching.
+    Uses Party / PartyAlias as the ONLY join key, with exact normalized equality.
+    Zero substring ILIKE prefiltering (prevents over-fetching and tenant leaks).
     """
     from .db import Party, PartyAlias
 
-    norm_target = normalize_party_name(counterparty)
+    target_clean = counterparty.strip()
+    norm_target = normalize_party_name(target_clean)
 
-    # 1. Check if counterparty matches a first-class Party entity or PartyAlias
+    # 1. Authoritative resolution through Party / PartyAlias join key
     party = db.query(Party).filter(
         Party.tenant_id == tenant_id,
-        (Party.canonical_name.ilike(counterparty.strip()) |
-         Party.canonical_name.ilike(norm_target))
+        or_(
+            func.lower(Party.canonical_name) == target_clean.lower(),
+            func.lower(Party.canonical_name) == norm_target.lower()
+        )
     ).first()
 
     if not party:
         alias = db.query(PartyAlias).filter(
             PartyAlias.tenant_id == tenant_id,
-            (PartyAlias.alias_name.ilike(counterparty.strip()) |
-             PartyAlias.alias_name.ilike(norm_target))
+            or_(
+                func.lower(PartyAlias.alias_name) == target_clean.lower(),
+                func.lower(PartyAlias.alias_name) == norm_target.lower()
+            )
         ).first()
         if alias:
             party = alias.party
 
-    party_ids = [party.id] if party else []
-    search_terms = {counterparty.strip().lower(), norm_target}
     if party:
-        search_terms.add(party.canonical_name.strip().lower())
-        search_terms.add(normalize_party_name(party.canonical_name))
+        valid_names = {party.canonical_name.strip().lower(), normalize_party_name(party.canonical_name)}
         for a in party.aliases:
-            search_terms.add(a.alias_name.strip().lower())
-            search_terms.add(normalize_party_name(a.alias_name))
+            valid_names.add(a.alias_name.strip().lower())
+            valid_names.add(normalize_party_name(a.alias_name))
 
-    # SQL-level candidate pre-filtering to avoid loading entire tenant agreement catalog
-    sql_conds = []
-    if party_ids:
-        sql_conds.append(Agreement.party_id.in_(party_ids))
+        agreements = db.query(Agreement).filter(
+            Agreement.tenant_id == tenant_id,
+            or_(
+                Agreement.party_id == party.id,
+                func.lower(Agreement.counterparty).in_([n for n in valid_names if n])
+            )
+        ).all()
+        return agreements
 
-    for term in search_terms:
-        if not term:
-            continue
-        sql_conds.append(func.lower(Agreement.counterparty) == term)
-        if len(term) >= 2:
-            sql_conds.append(Agreement.counterparty.ilike(f"%{term}%"))
-
-    if not sql_conds:
-        return []
-
-    candidate_agreements = db.query(Agreement).filter(
-        Agreement.tenant_id == tenant_id,
-        or_(*sql_conds)
-    ).all()
-
-    matched = []
-    for ag in candidate_agreements:
-        # Match via first-class Party entity link
-        if party and ag.party_id is not None and ag.party_id in party_ids:
-            matched.append(ag)
-            continue
-        # Match via party aliases if party entity exists
-        if party and ag.counterparty:
-            if any(is_party_match(ag.counterparty, a.alias_name) for a in party.aliases):
-                matched.append(ag)
-                continue
-            if is_party_match(ag.counterparty, party.canonical_name):
-                matched.append(ag)
-                continue
-        # Standard strict normalized string matching (exact equality)
-        if is_party_match(ag.counterparty, counterparty):
-            matched.append(ag)
-
+    # 2. Strict fail-closed fallback when no Party entity exists in store:
+    # Exact normalized equality only — no substring ilike prefilter!
+    tenant_agreements = db.query(Agreement).filter(Agreement.tenant_id == tenant_id).all()
+    matched = [ag for ag in tenant_agreements if is_party_match(ag.counterparty, counterparty)]
     return matched
 
 
@@ -542,8 +560,10 @@ def _persist_trace_record(
         )
         db.add(trace_rec)
         db.commit()
+        result_dict["trace_persisted"] = True
     except Exception as exc:
         logger.warning(f"Could not persist ResolutionTraceRecord: {exc}")
+        result_dict["trace_persisted"] = False
 
 
 def compute_resolution_confidence(
@@ -553,24 +573,49 @@ def compute_resolution_confidence(
     is_keyword_fallback: bool = False,
     cycle_detected: bool = False,
     base_confidence: float = 0.85
-) -> float:
+) -> tuple[float, list[dict[str, Any]]]:
     """
-    Compute dynamic, non-hardcoded confidence for a resolved controlling clause.
-    Deducts for missing dates, keyword fallback, or cycles. Zero on unresolved conflicts.
+    Compute dynamic, non-hardcoded resolution quality and itemized deductions.
+    Returns (resolution_quality, deductions).
+    Cycle or competing peers yields exactly 0.0 (never clamped to 0.1).
     """
+    deductions: list[dict[str, Any]] = []
+
+    if cycle_detected:
+        deductions.append({
+            "code": "GRAPH_CYCLE",
+            "penalty": 1.0,
+            "reason": "Circular precedence dependency detected in relation DAG"
+        })
+        return 0.0, deductions
+
     if has_competing_peers:
-        return 0.0
+        deductions.append({
+            "code": "COMPETING_PEERS",
+            "penalty": 1.0,
+            "reason": "Multiple competing peer instruments without reconciling edge"
+        })
+        return 0.0, deductions
 
     conf = 1.0 if trail else base_confidence
 
     if missing_dates:
+        deductions.append({
+            "code": "MISSING_DATES",
+            "penalty": 0.15,
+            "reason": "Agreement missing execution or effective date"
+        })
         conf -= 0.15
     if is_keyword_fallback:
+        deductions.append({
+            "code": "KEYWORD_FALLBACK",
+            "penalty": 0.20,
+            "reason": "Resolved via keyword matching rather than canonical topic tag"
+        })
         conf -= 0.20
-    if cycle_detected:
-        conf -= 0.25
 
-    return max(0.1, min(1.0, round(conf, 2)))
+    score = max(0.0, min(1.0, round(conf, 2)))
+    return score, deductions
 
 
 def resolve_controlling_clause(
@@ -600,9 +645,14 @@ def resolve_controlling_clause(
 
     def _finalize_result(result_dict: dict[str, Any]) -> dict[str, Any]:
         result_dict["proposed_relations_advisory"] = proposed_relations_advisory
+        res_quality = result_dict.get("resolution_quality", result_dict.get("confidence", 0.0))
+        result_dict["resolution_quality"] = res_quality
+        result_dict["confidence"] = res_quality
+        result_dict.setdefault("resolution_deductions", [])
         if persist_trace:
             _persist_trace_record(db, tenant_id, counterparty, topic, as_of, result_dict)
         else:
+            result_dict["trace_persisted"] = False
             trace_id = str(uuid.uuid4())
             winner = result_dict.get("controlling_clause")
             winner_ag_id = winner.get("agreement_id") if isinstance(winner, dict) else None
@@ -615,11 +665,14 @@ def resolve_controlling_clause(
                 "status": result_dict.get("status"),
                 "controlling_clause_id": winner_cl_id,
                 "controlling_agreement_id": winner_ag_id,
-                "confidence": result_dict.get("confidence", 0.0),
+                "confidence": res_quality,
+                "resolution_quality": res_quality,
+                "resolution_deductions": result_dict.get("resolution_deductions", []),
                 "resolution_rationale": result_dict.get("resolution_rationale"),
                 "amendment_trail": result_dict.get("amendment_trail", []),
                 "proposed_relations_advisory": proposed_relations_advisory,
                 "conflicting_candidates": result_dict.get("conflicting_candidates", []),
+                "trace_persisted": False,
             }
         return result_dict
 
@@ -717,24 +770,34 @@ def resolve_controlling_clause(
     ).all()
     candidate_clauses = [c for c in raw_candidates if is_clause_temporally_valid(c, as_of)]
 
-    # Check confirmed INCORPORATES relations to pull referenced provisions into candidate authorities
-    if not candidate_clauses:
-        incorporates_relations = [
-            r for r in valid_relations
-            if r.relation_type == "INCORPORATES"
-            and (getattr(r, "status", None) or "proposed") in ("confirmed", "accepted")
-            and r.source_agreement_id in surviving_ag_ids
-        ]
-        for inc_rel in incorporates_relations:
-            inc_raw = db.query(Clause).filter(
-                Clause.tenant_id == tenant_id,
-                Clause.agreement_id == inc_rel.target_agreement_id,
-                Clause.is_active.is_(True),
-                Clause.topic.in_(topic_candidates)
-            ).all()
-            for ic in inc_raw:
-                if is_clause_temporally_valid(ic, as_of):
-                    candidate_clauses.append(ic)
+    # Check confirmed INCORPORATES relations: union incorporated provisions into candidate authorities
+    incorporates_relations = [
+        r for r in valid_relations
+        if r.relation_type == "INCORPORATES"
+        and (getattr(r, "status", None) or "proposed") in ("confirmed", "accepted")
+        and r.source_agreement_id in surviving_ag_ids
+    ]
+    incorporated_clauses: list[dict[str, Any]] = []
+    for inc_rel in incorporates_relations:
+        inc_raw = db.query(Clause).filter(
+            Clause.tenant_id == tenant_id,
+            Clause.agreement_id == inc_rel.target_agreement_id,
+            Clause.is_active.is_(True),
+            Clause.topic.in_(topic_candidates)
+        ).all()
+        for ic in inc_raw:
+            if is_clause_temporally_valid(ic, as_of):
+                candidate_clauses.append(ic)
+                incorporated_clauses.append({
+                    "id": ic.id,
+                    "agreement_id": ic.agreement_id,
+                    "agreement_title": ag_by_id[ic.agreement_id].title if ic.agreement_id in ag_by_id else "Incorporated Instrument",
+                    "section": ic.section,
+                    "title": ic.title,
+                    "topic": ic.topic,
+                    "structured_slots": ic.structured_slots,
+                    "content": ic.content
+                })
 
     if not candidate_clauses:
         topic_kw = topic.replace("_", " ").lower()
@@ -761,9 +824,16 @@ def resolve_controlling_clause(
         })
 
     # Index relations by target agreement for fast AMENDS lookup
+    # Apply draft isolation on AMENDS: draft agreements cannot amend executed agreements
     amends_by_target: dict[int, list[AgreementRelation]] = {}
     for rel in valid_relations:
         if rel.relation_type == "AMENDS":
+            src_ag = ag_by_id.get(rel.source_agreement_id)
+            tgt_ag = ag_by_id.get(rel.target_agreement_id)
+            if src_ag and tgt_ag:
+                if getattr(src_ag, "execution_status", "executed") == "draft" and getattr(tgt_ag, "execution_status", "executed") != "draft":
+                    logger.info(f"Draft isolation: draft {src_ag.id} cannot amend executed {tgt_ag.id}")
+                    continue
             amends_by_target.setdefault(rel.target_agreement_id, []).append(rel)
 
     # Deduplicate candidate clauses per agreement before graph traversal:
@@ -898,7 +968,14 @@ def resolve_controlling_clause(
             applied_ag_ids.add(chosen_rel.source_agreement_id)
 
             # Slot inheritance: overlay amended slots onto inherited base slots
-            amd_slots = dict(matching_sc.structured_slots or {})
+            # First-class typed scope: if slot_keys are specified, overlay ONLY those keys!
+            rel_scope = parse_relation_scope(chosen_rel)
+            target_slot_keys = rel_scope.get("slot_keys", [])
+            if target_slot_keys:
+                amd_slots = {k: v for k, v in (matching_sc.structured_slots or {}).items() if k in target_slot_keys}
+            else:
+                amd_slots = dict(matching_sc.structured_slots or {})
+
             overridden_keys = [k for k in amd_slots.keys() if k in effective_slots]
             inherited_keys = [k for k in effective_slots.keys() if k not in amd_slots]
             effective_slots.update(amd_slots)
@@ -999,18 +1076,19 @@ def resolve_controlling_clause(
             "confidence": 0.0
         })
 
-    # 7. Evaluate CARVES_OUT and INCORPORATES Relations (Narrowing Qualifications & Schedules)
-    subordinate_relations = [r for r in valid_relations if r.relation_type in ("CARVES_OUT", "INCORPORATES")]
+    # 7. Evaluate CARVES_OUT Relations (Narrowing Qualifications)
+    # CARVES_OUT attaches exceptions to winner; never a second controller
+    subordinate_relations = [r for r in valid_relations if r.relation_type == "CARVES_OUT"]
     if len(unique_terminals) > 1 and subordinate_relations:
-        # Check if one candidate is a CARVES_OUT or INCORPORATED schedule/exhibit of the other
+        # Check if one candidate is a CARVES_OUT exception instrument of the other
         pruned_terminals: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
         for cl, tr, sl in unique_terminals:
             is_subordinate_source = False
             for sr in subordinate_relations:
                 if sr.source_agreement_id == cl.agreement_id:
-                    # cl is from the carve-out / incorporated schedule instrument
+                    # cl is from the carve-out instrument
                     is_subordinate_source = True
-                    # Find the target terminal candidate to attach carve-out / schedule qualification
+                    # Find the target terminal candidate to attach carve-out qualification
                     for target_cl, target_tr, target_sl in unique_terminals:
                         if target_cl.agreement_id == sr.target_agreement_id:
                             target_tr.append({
@@ -1036,6 +1114,63 @@ def resolve_controlling_clause(
 
         if pruned_terminals:
             unique_terminals = pruned_terminals
+
+    # INCORPORATES: Union incorporated provisions into candidate authority set; never a second controller
+    incorporates_rels = [r for r in valid_relations if r.relation_type == "INCORPORATES"]
+    if len(unique_terminals) > 1 and incorporates_rels:
+        pruned_inc_terminals: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
+        for cl, tr, sl in unique_terminals:
+            is_inc_source = False
+            for ir in incorporates_rels:
+                target_ag = ag_by_id.get(ir.target_agreement_id)
+
+                inc_ag_id = None
+                gov_ag_id = None
+                if ir.source_agreement_id == cl.agreement_id:
+                    inc_ag_id = ir.source_agreement_id
+                    gov_ag_id = ir.target_agreement_id
+                elif ir.target_agreement_id == cl.agreement_id:
+                    if target_ag and (
+                        (target_ag.instrument_type or "").lower() in ("exhibit", "schedule", "addendum")
+                        or "exhibit" in (target_ag.title or "").lower()
+                        or "schedule" in (target_ag.title or "").lower()
+                    ):
+                        inc_ag_id = ir.target_agreement_id
+                        gov_ag_id = ir.source_agreement_id
+
+                if inc_ag_id == cl.agreement_id and gov_ag_id:
+                    for target_cl, target_tr, target_sl in unique_terminals:
+                        if target_cl.agreement_id == gov_ag_id:
+                            is_inc_source = True
+                            incorporated_clauses.append({
+                                "id": cl.id,
+                                "agreement_id": cl.agreement_id,
+                                "agreement_title": ag_by_id[cl.agreement_id].title if cl.agreement_id in ag_by_id else "Incorporated Instrument",
+                                "section": cl.section,
+                                "title": cl.title,
+                                "topic": cl.topic,
+                                "structured_slots": cl.structured_slots,
+                                "content": cl.content
+                            })
+                            target_tr.append({
+                                "relation": "INCORPORATES",
+                                "scope": ir.clause_scope or "ALL",
+                                "from_agreement_id": cl.agreement_id,
+                                "from_agreement_title": ag_by_id[cl.agreement_id].title if cl.agreement_id in ag_by_id else "Incorporated Instrument",
+                                "from_section": cl.section,
+                                "to_agreement_id": target_cl.agreement_id,
+                                "to_agreement_title": ag_by_id[target_cl.agreement_id].title if target_cl.agreement_id in ag_by_id else "Governing Agreement",
+                                "to_section": target_cl.section,
+                                "effective_date": str(ir.effective_date) if ir.effective_date else None,
+                            })
+                            break
+                    if is_inc_source:
+                        break
+            if not is_inc_source:
+                pruned_inc_terminals.append((cl, tr, sl))
+
+        if pruned_inc_terminals:
+            unique_terminals = pruned_inc_terminals
 
     # 7b. Fail-Closed on Cycle Detection (Priority 3: Cycle is a data error, not a haircut)
     has_cycle = supersedes_cycle or amends_cycle_detected
@@ -1071,7 +1206,7 @@ def resolve_controlling_clause(
         winner, trail, merged_slots = unique_terminals[0]
         ag_winner = ag_by_id.get(winner.agreement_id)
 
-        confidence = compute_resolution_confidence(
+        confidence, deductions = compute_resolution_confidence(
             trail=trail,
             has_competing_peers=False,
             missing_dates=missing_dates,
@@ -1106,8 +1241,11 @@ def resolve_controlling_clause(
                 "effective_date": str(ag_winner.effective_date) if ag_winner and ag_winner.effective_date else None,
             },
             "amendment_trail": trail,
+            "incorporated_clauses": incorporated_clauses,
             "resolution_rationale": rationale,
-            "confidence": confidence
+            "confidence": confidence,
+            "resolution_quality": confidence,
+            "resolution_deductions": deductions
         })
 
     # 9. Multiple Surviving Candidates: Order of Precedence (SOW vs MSA via DealPlaybook)
@@ -1143,7 +1281,7 @@ def resolve_controlling_clause(
                 "to_agreement_title": ag_winner.title if ag_winner else "SOW",
                 "effective_date": str(ag_winner.effective_date) if ag_winner and ag_winner.effective_date else None,
             })
-            confidence = compute_resolution_confidence(
+            confidence, deductions = compute_resolution_confidence(
                 trail=trail,
                 has_competing_peers=False,
                 missing_dates=missing_dates,
@@ -1166,11 +1304,14 @@ def resolve_controlling_clause(
                     "effective_date": str(ag_winner.effective_date) if ag_winner and ag_winner.effective_date else None,
                 },
                 "amendment_trail": trail,
+                "incorporated_clauses": incorporated_clauses,
                 "resolution_rationale": (
                     f"Resolved via order of precedence: Statement of Work '{ag_winner.title if ag_winner else 'SOW'}' "
                     f"controls for scoped topic '{topic}' over Master Services Agreement."
                 ),
-                "confidence": confidence
+                "confidence": confidence,
+                "resolution_quality": confidence,
+                "resolution_deductions": deductions
             })
         elif topic in msa_topics or topic not in sow_topics:
             winner = msa_candidate
@@ -1185,7 +1326,7 @@ def resolve_controlling_clause(
                 "to_agreement_title": ag_winner.title if ag_winner else "MSA",
                 "effective_date": str(ag_winner.effective_date) if ag_winner and ag_winner.effective_date else None,
             })
-            confidence = compute_resolution_confidence(
+            confidence, deductions = compute_resolution_confidence(
                 trail=trail,
                 has_competing_peers=False,
                 missing_dates=missing_dates,
@@ -1208,11 +1349,14 @@ def resolve_controlling_clause(
                     "effective_date": str(ag_winner.effective_date) if ag_winner and ag_winner.effective_date else None,
                 },
                 "amendment_trail": trail,
+                "incorporated_clauses": incorporated_clauses,
                 "resolution_rationale": (
                     f"Resolved via order of precedence: Master Services Agreement '{ag_winner.title if ag_winner else 'MSA'}' "
                     f"controls for general legal governance ('{topic}') over Statement of Work."
                 ),
-                "confidence": confidence
+                "confidence": confidence,
+                "resolution_quality": confidence,
+                "resolution_deductions": deductions
             })
 
     # 10. Concurrently Active Instruments Disagree: Return AMBIGUOUS
@@ -1341,7 +1485,24 @@ def detect_contract_conflicts(
                     if differing:
                         resolved_trail = res.get("amendment_trail", [])
                         trail_ag_ids = {h.get("from_agreement_id") for h in resolved_trail} | {h.get("to_agreement_id") for h in resolved_trail}
-                        if not (c1.agreement_id in trail_ag_ids and c2.agreement_id in trail_ag_ids):
+                        on_trail = (c1.agreement_id in trail_ag_ids and c2.agreement_id in trail_ag_ids)
+                        unscoped_differing = dict(differing)
+                        if on_trail:
+                            reconciled_keys = set()
+                            for h in resolved_trail:
+                                rel_from = h.get("from_agreement_id")
+                                rel_to = h.get("to_agreement_id")
+                                if (rel_from in (c1.agreement_id, c2.agreement_id)) or (rel_to in (c1.agreement_id, c2.agreement_id)):
+                                    raw_scope = h.get("scope")
+                                    parsed = parse_relation_scope(raw_scope)
+                                    if parsed["slot_keys"]:
+                                        reconciled_keys.update(parsed["slot_keys"])
+                                    else:
+                                        # If scope has no specific slot keys restricted, covers all slots for that topic
+                                        reconciled_keys.update(differing.keys())
+                            unscoped_differing = {k: v for k, v in differing.items() if k not in reconciled_keys}
+
+                        if unscoped_differing:
                             ag1_title = next((a.title for a in agreements if a.id == c1.agreement_id), "Agreement 1")
                             ag2_title = next((a.title for a in agreements if a.id == c2.agreement_id), "Agreement 2")
                             conflicts.append({
@@ -1350,9 +1511,9 @@ def detect_contract_conflicts(
                                 "severity": "MEDIUM",
                                 "explanation": (
                                     f"Topic '{top}' has divergent operative terms between '{ag1_title}' ({c1.section}) "
-                                    f"and '{ag2_title}' ({c2.section}) without an explicit precedence edge reconciling differing slots: {differing}."
+                                    f"and '{ag2_title}' ({c2.section}) with unscoped differing slots: {unscoped_differing}."
                                 ),
-                                "differing_slots": differing,
+                                "differing_slots": unscoped_differing,
                                 "candidates": [
                                     {"clause_id": c1.id, "agreement_id": c1.agreement_id, "agreement_title": ag1_title, "slots": slots1},
                                     {"clause_id": c2.id, "agreement_id": c2.agreement_id, "agreement_title": ag2_title, "slots": slots2},

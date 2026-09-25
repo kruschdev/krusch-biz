@@ -1084,6 +1084,25 @@ with tab2:
 
                 for pe in proposed_edges:
                     p_id = pe["id"]
+                    rel_type = pe.get('relation_type', 'MODIFIES')
+                    src_title = pe.get('source_title', 'Source')
+                    tgt_title = pe.get('target_title', 'Target')
+                    scope_str = pe.get('clause_scope', 'ALL')
+                    scope_display = f" {scope_str}" if scope_str and scope_str.upper() != "ALL" else ""
+
+                    if rel_type == "SUPERSEDES":
+                        action_preview = f"{src_title} retires {tgt_title}{scope_display}"
+                    elif rel_type == "AMENDS":
+                        action_preview = f"{src_title} overlays terms on {tgt_title}{scope_display}"
+                    elif rel_type == "INCORPORATES":
+                        action_preview = f"{src_title} unions provisions into authority set of {tgt_title}"
+                    elif rel_type == "CARVES_OUT":
+                        action_preview = f"{src_title} attaches carve-out exceptions to {tgt_title}{scope_display}"
+                    elif rel_type == "SCHEDULE_OF":
+                        action_preview = f"{src_title} governs scoped operational terms over {tgt_title}"
+                    else:
+                        action_preview = f"{src_title} links to {tgt_title} ({rel_type})"
+
                     with st.container():
                         st.markdown(f"""
                             <div class="edge-card" style="border-left: 4px solid #f59e0b; margin-bottom: 0.75rem;">
@@ -1094,6 +1113,9 @@ with tab2:
                                     <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">
                                         Confidence: {int(pe.get('confidence', 0.9)*100)}%
                                     </span>
+                                </div>
+                                <div style="font-size: 0.88rem; color: #38bdf8; font-weight: 600; margin-top: 6px;">
+                                    🎯 <strong>Edge Direction (Source = Surviving):</strong> <em>“{action_preview}”</em>
                                 </div>
                             </div>
                         """, unsafe_allow_html=True)
