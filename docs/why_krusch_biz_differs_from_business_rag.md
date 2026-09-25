@@ -178,7 +178,7 @@ Most enterprise software relies on cloud APIs for inference and vector hosting. 
 
 * **Zero Cloud Data Leakage**: KruschBiz binds strictly to localhost loopback (`127.0.0.1:8086`, `127.0.0.1:8506`). All inference is executed locally using open-weight models (`qwen2.5-coder:7b` via Ollama) on bare-metal Linux workstations.
 * **Storage Sovereignty**: All vector embeddings (`bge-large`, 1024 dimensions) and relational graphs live in an on-premise PostgreSQL 16 cluster with `pgvector` (`localhost:5436`).
-* **Anti-Tool-Bloat MCP Architecture**: When exposing tools to AI agents over the Model Context Protocol (MCP), exposing dozens of granular tools floods the context window with 3,500+ tokens of JSON-RPC schemas, degrading local model reasoning. KruschBiz consolidates its entire surface area into **6 canonical high-leverage tools** (~950 tokens), maintaining backwards-compatible routing to legacy granular endpoints while preserving local model focus.
+* **Anti-Tool-Bloat MCP Architecture**: When exposing tools to AI agents over the Model Context Protocol (MCP), exposing dozens of granular tools floods the context window with 3,500+ tokens of JSON-RPC schemas, degrading local model reasoning. KruschBiz consolidates its entire surface area into **4 canonical high-leverage tools** (~650 tokens), maintaining backwards-compatible routing to legacy granular endpoints while preserving local model focus.
 
 ---
 
@@ -194,7 +194,7 @@ Most enterprise software relies on cloud APIs for inference and vector hosting. 
 | **Hallucination Detection** | None (relies on raw LLM output) | **Proposition Scanner**: 4-way taxonomy (`VERIFIED`, `INVENTED`, `DIVERGENT`, `SUPERSEDED`) |
 | **Agent Refusal Behavior** | Pleaser mode: generates plausible answer even with no authority | **Fail-Closed Invariants**: Refuses drafting if authorities are missing or superseded |
 | **Data Privacy & Compliance** | Third-party cloud egress (OpenAI, Pinecone, Anthropic) | **100% Air-Gapped**: Loopback-only (`127.0.0.1`), on-premise Ollama & PostgreSQL 16 |
-| **Agent Context Overhead** | 3,000–5,000 tokens of scattered tool definitions | **6 Canonical MCP Tools** (~950 tokens) with backwards-compatible dispatch |
+| **Agent Context Overhead** | 3,000–5,000 tokens of scattered tool definitions | **4 Canonical MCP Tools** (~650 tokens) with backwards-compatible dispatch |
 
 ---
 
