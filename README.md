@@ -147,25 +147,82 @@ When retrieving deal exhibits or searching operative agreements (`src/backend/ra
 * **Exact Tag Boost**: Chunks containing tags matching the inquiry receive an immediate **+20% score boost** (`score * 1.20`), guaranteeing that explicit slot queries (e.g., `net-30` or `uptime-99.9pct`) rank at the top.
 * **Topic & Tag Filtering (`retrieve_clauses`)**: Direct relational SQL filtering by `topic` and `tag` before ranking.
 
-### 4. 4-Tab Core Application Architecture
-* **Tab 1: 🏛️ The Deal Room**:
-  - Operational transaction summary, deal matters, and counterparty portfolio overview.
-  - Automated controlling clause consult, citation verification, and proposition grounding audits.
-  - **Prominent Uncertainty Alert Banner**: When unconfirmed proposed relation edges exist in the deal room, displays an amber `> ⚠️ CONTROLLING CLAUSE UNCERTAIN; N proposed relation link(s) pending human review.` alert across briefs and consultations.
-* **Tab 2: 🔗 Relation Review Queue & Precedence Graph (The Core Product)**:
-  - **First-Class Human-in-the-Loop Review Queue**: Evaluates proposed `AMENDS`, `SUPERSEDES`, `INCORPORATES`, and `CARVES_OUT` edges extracted from body-level restatements, conflict clauses, and schedules.
-  - Displays triggering textual spans, algorithmic confidence, and provides one-click Accept, Reject, and Edit actions.
-  - Interactive DAG visualization and instrument side-by-side diffing.
-* **Tab 3: 🌲 Sovereign Ingest & Deep Extraction**:
-  - Sovereign document ingestion with pre-spool MIME magic bytes validation (`%PDF-`, `PK\x03\x04`, `\xd0\xcf\x11\xe0`).
-  - 7-step deterministic parsing and legal boundary chunking pipeline.
-  - Structured commercial slot extraction (`net_days`, `uptime_pct`, `liability_cap`, `late_interest_pct`) with character offset provenance spans (`slot_spans`).
-* **Tab 4: 🛡️ Adversarial Multi-Document Scorecard**:
-  - Empirical verification dashboard benchmarked against 7 adversarial multi-document contract families.
-  - Displays live scores across the 4 uncoupled metrics: Relation F1, Controlling Clause As-Of Accuracy, Slot Exact-Match, and Proposition Grounding.
-  - One-click benchmark trigger calling `GET /api/evaluation/adversarial`.
+---
 
-### 5. Core REST API & Relation Management
+## 🖥️ User Interface & Visual Walkthrough
+
+KruschBiz features an on-premise, cyber-executive interface styled in deep navy and titanium slate with gold-amber accents. Engineered for corporate legal departments, procurement teams, and M&A analysts, the interface provides high-contrast React-Aria navigation tabs, deterministic feedback states, and full visibility into contractual graph precedence.
+
+---
+
+### Tab 1: 🏛️ The Deal Room
+> **Operational Transaction Overview, Operative Controlling Terms & Proposition Grounding Audit**
+
+The **Deal Room** serves as the central operational command center for active transactions, corporate counterparties, and matter exhibits. It enables operators to consult controlling terms as of any temporal date, audit assertion-level grounding, and generate exportable General Counsel memos.
+
+![Tab 1: The Deal Room](docs/images/tab1_deal_room.png)
+
+* **Key Features**:
+  * **Operative Controlling Term Consultation**: Queries `(counterparty, topic, as_of_date)` to resolve governing terms across multi-year agreement portfolios.
+  * **Uncertainty Alert Banner**: When unconfirmed proposed relation edges exist in the deal room, displays an amber `⚠️ CONTROLLING CLAUSE UNCERTAIN; N proposed relation link(s) pending human review` warning across briefs and consultations to prevent premature reliance.
+  * **Assertion Grounding Scanner**: Verifies draft propositions against retrieved controlling authorities, flagging invented clauses, divergent numbers, or superseded language.
+  * **One-Page Memo Generation**: Emits an authoritative "What Controls as of DATE" briefing with complete amendment lineage trails.
+
+---
+
+### Tab 2: 🔗 Relation Review Queue & Precedence Graph (The Core Product)
+> **Human-in-the-Loop Relation Confirmation, Body-Level Spans & Precedence DAG Walk**
+
+The **Relation Review Queue** is the foundational core of KruschBiz. Rather than allowing unverified heuristic edges to silently dictate controlling terms, the system extracts candidate relations with `status='proposed'` and presents them in an actionable review queue.
+
+![Tab 2: Relation Review Queue & Precedence Graph](docs/images/tab2_relation_review.png)
+
+* **Key Features**:
+  * **First-Class Proposed Relation Cards**: Side-by-side inspection of source and target instruments, effective dates, and relationship types (`AMENDS`, `SUPERSEDES`, `INCORPORATES`, `CARVES_OUT`).
+  * **Triggering Source Text Span**: Surfaces the exact contractual sentence (from body text, conflict clauses, or preambles) that triggered the relationship extraction.
+  * **One-Click Actions**: Single-click `Accept` (confirms edge for DAG resolver), `Reject` (removes invalid edge), or `Edit` (adjusts relation type, date, or scope).
+  * **Precedence DAG Walk**: Visualizes confirmed transitive amendment chains (A → B → C) and cycle-safe graph traversals.
+  * **Side-by-Side Instrument Diffing**: Inspects divergent language between base master agreements and operative amendments.
+
+---
+
+### Tab 3: 🌲 Sovereign Ingest & Deep Extraction
+> **Pre-Spool MIME Magic Verification, 5-Stage Ingest Pipeline & Structured Slot Explorer**
+
+The **Sovereign Ingestion** suite processes incoming commercial agreements entirely on-premise without third-party cloud leaks or external sub-processors.
+
+![Tab 3: Sovereign Ingest & Deep Extraction](docs/images/tab3_sovereign_ingest.png)
+
+* **Key Features**:
+  * **Pre-Spool Magic Byte Verification**: Inspects file headers (`%PDF-`, `PK\x03\x04`, `\xd0\xcf\x11\xe0`) before spooling to disk, rejecting executable binaries (`MZ`, `\x7fELF`) before processing.
+  * **5-Stage State Machine Pipeline**: Visual tracking of `queued → parsing → extracting_slots → embedding → indexed`.
+  * **Structured Commercial Slot Extraction**: Automatically extracts quantitative metrics (`net_days`, `late_interest_pct`, `uptime_pct`, `cap_period_months`, `breach_notice_days`, `termination_notice_days`) with exact character offset provenance spans (`slot_spans`).
+  * **Ensemble Tagging & Micro-Digests**: Merges deterministic slot anchors (`net-30`, `uptime-99.9pct`) with local Ollama semantic tags into PostgreSQL 16 + pgvector.
+
+---
+
+### Tab 4: 🛡️ Adversarial Multi-Document Scorecard
+> **Empirical Verification Across 7 Adversarial Contract Families & 4 Uncoupled Metrics**
+
+The **Adversarial Scorecard** provides verifiable proof of algorithmic rigor, executing deterministic evaluations against complex, real-world multi-document contract traps.
+
+![Tab 4: Adversarial Multi-Document Scorecard](docs/images/tab4_adversarial_scorecard.png)
+
+* **Key Features**:
+  * **Live 4-Metric Benchmark**:
+    * **Relation Extraction F1 (100.0%)**: Precision and recall across body-level `AMENDS`, `SUPERSEDES`, `INCORPORATES`, and `CARVES_OUT` links.
+    * **Controlling Clause As-Of Accuracy (100.0%)**: Accuracy of transitive DAG walks resolving the governing clause as of historical and present dates.
+    * **Slot Extraction Exact-Match (100.0%)**: Exact normalized match on quantitative slots from controlling clauses.
+    * **Proposition Grounding Accuracy (100.0%)**: 6-way assertion verification rejecting hallucinations and stale terms.
+  * **7 Adversarial Contract Families**: Covers verbose master agreements, surgical 1-sentence restatements, conflicting SOWs, express carve-outs, unmarked side letters, and merger clause conflicts.
+  * **One-Click Execution**: Interactive button calling `GET /api/evaluation/adversarial` to re-verify all CI gates in real time.
+
+---
+
+## 🌐 Core REST API & Relation Management
+
+KruschBiz exposes a clean, sovereign REST API adhering strictly to loopback-only bindings:
+
 * `GET /api/deals`: List active deal rooms and transaction portfolios.
 * `GET /api/deals/{deal_id}/evidence`: Enriched deal exhibits with tags, summary, and canonical topics.
 * `GET /api/clauses`: Clause search with topic, tag, and as-of date temporal filtering.
