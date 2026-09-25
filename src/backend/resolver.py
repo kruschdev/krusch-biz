@@ -24,7 +24,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .db import Agreement, AgreementRelation, Clause, ResolutionTraceRecord
@@ -90,19 +90,98 @@ def normalize_party_name(name: str | None) -> str:
 
 
 def is_party_match(party_a: str | None, party_b: str | None) -> bool:
-    """Check if two counterparty strings identify the exact same entity."""
+    """
+    Check if two counterparty strings identify the exact same entity.
+    Requires exact match of normalized entity names (zero fuzzy substring containment).
+    """
     if not party_a or not party_b:
         return False
     norm_a = normalize_party_name(party_a)
     norm_b = normalize_party_name(party_b)
     if not norm_a or not norm_b:
         return False
-    if norm_a == norm_b:
+    return norm_a == norm_b
+
+
+def is_clause_temporally_valid(clause: Clause, as_of: date) -> bool:
+    """
+    Check if a specific clause is temporally valid as of a UTC date.
+    Evaluates clause.is_active, clause.effective_from, clause.effective_to,
+    and any temporal bounds in clause.structured_slots.
+    """
+    if not getattr(clause, "is_active", True):
+        return False
+    cl_eff_from = getattr(clause, "effective_from", None)
+    if cl_eff_from and to_utc_date(cl_eff_from) > as_of:
+        return False
+    cl_eff_to = getattr(clause, "effective_to", None)
+    if cl_eff_to and to_utc_date(cl_eff_to) <= as_of:
+        return False
+    if clause.structured_slots and isinstance(clause.structured_slots, dict):
+        slot_from = clause.structured_slots.get("effective_from") or clause.structured_slots.get("effective_date")
+        if slot_from:
+            try:
+                if to_utc_date(slot_from) > as_of:
+                    return False
+            except Exception:
+                pass
+        slot_to = clause.structured_slots.get("effective_to") or clause.structured_slots.get("expiration_date")
+        if slot_to:
+            try:
+                if to_utc_date(slot_to) <= as_of:
+                    return False
+            except Exception:
+                pass
+    return True
+
+
+def is_sow_instrument(ag: Agreement, valid_relations: list[AgreementRelation] | None = None) -> bool:
+    """
+    Classify whether an agreement is a Statement of Work / Schedule vs Master Agreement.
+    Strictly excludes amendments and addenda.
+    """
+    itype = (ag.instrument_type or "").strip().lower()
+    title = (ag.title or "").strip().upper()
+    if itype in ("amendment", "amendment_addendum", "rider", "addendum"):
+        return False
+    if "AMENDMENT" in title or "ADDENDUM" in title:
+        return False
+    if itype in ("statement_of_work", "sow", "schedule"):
         return True
-    min_len = min(len(norm_a), len(norm_b))
-    if min_len >= 4 and (norm_a in norm_b or norm_b in norm_a):
+    if valid_relations:
+        for r in valid_relations:
+            if r.source_agreement_id == ag.id and r.relation_type in ("SCHEDULE_OF", "STATEMENT_OF_WORK"):
+                return True
+    if re.search(r"\b(sow|statement\s+of\s+work|fee\s+schedule|pricing\s+schedule)\b", title, re.IGNORECASE):
         return True
     return False
+
+
+def get_playbook(
+    db: Session,
+    tenant_id: str,
+    deal_id: int | None = None,
+    counterparty: str | None = None,
+    playbook_name: str | None = None
+) -> Any | None:
+    """Resolve deal playbook by deal_id, counterparty, name, or tenant default."""
+    from .db import DealPlaybook
+    if playbook_name:
+        pb = db.query(DealPlaybook).filter(DealPlaybook.tenant_id == tenant_id, DealPlaybook.playbook_name == playbook_name).first()
+        if pb:
+            return pb
+    if deal_id:
+        pb = db.query(DealPlaybook).filter(DealPlaybook.tenant_id == tenant_id, DealPlaybook.playbook_name == f"deal_{deal_id}").first()
+        if pb:
+            return pb
+    if counterparty:
+        pb = db.query(DealPlaybook).filter(DealPlaybook.tenant_id == tenant_id, DealPlaybook.playbook_name == counterparty).first()
+        if pb:
+            return pb
+    pb = db.query(DealPlaybook).filter(DealPlaybook.tenant_id == tenant_id, DealPlaybook.playbook_name == "default_commercial").first()
+    if pb:
+        return pb
+    return db.query(DealPlaybook).filter(DealPlaybook.tenant_id == tenant_id).first()
 
 
 def to_utc_date(val: Any) -> date:
@@ -221,6 +300,7 @@ def get_party_agreements(db: Session, tenant_id: str, counterparty: str) -> list
     Fetch agreements for a strictly matched counterparty entity or alias.
     Resolves canonical Party entity and PartyAlias records if present.
     STRICT SECURITY INVARIANT: Zero fallback to all tenant agreements.
+    Filters candidate agreements at SQL level before exact normalized matching.
     """
     from .db import Party, PartyAlias
 
@@ -242,14 +322,39 @@ def get_party_agreements(db: Session, tenant_id: str, counterparty: str) -> list
         if alias:
             party = alias.party
 
-    all_agreements = db.query(Agreement).filter(
-        Agreement.tenant_id == tenant_id
+    party_ids = [party.id] if party else []
+    search_terms = {counterparty.strip().lower(), norm_target}
+    if party:
+        search_terms.add(party.canonical_name.strip().lower())
+        search_terms.add(normalize_party_name(party.canonical_name))
+        for a in party.aliases:
+            search_terms.add(a.alias_name.strip().lower())
+            search_terms.add(normalize_party_name(a.alias_name))
+
+    # SQL-level candidate pre-filtering to avoid loading entire tenant agreement catalog
+    sql_conds = []
+    if party_ids:
+        sql_conds.append(Agreement.party_id.in_(party_ids))
+
+    for term in search_terms:
+        if not term:
+            continue
+        sql_conds.append(func.lower(Agreement.counterparty) == term)
+        if len(term) >= 2:
+            sql_conds.append(Agreement.counterparty.ilike(f"%{term}%"))
+
+    if not sql_conds:
+        return []
+
+    candidate_agreements = db.query(Agreement).filter(
+        Agreement.tenant_id == tenant_id,
+        or_(*sql_conds)
     ).all()
 
     matched = []
-    for ag in all_agreements:
+    for ag in candidate_agreements:
         # Match via first-class Party entity link
-        if party and ag.party_id is not None and ag.party_id == party.id:
+        if party and ag.party_id is not None and ag.party_id in party_ids:
             matched.append(ag)
             continue
         # Match via party aliases if party entity exists
@@ -260,7 +365,7 @@ def get_party_agreements(db: Session, tenant_id: str, counterparty: str) -> list
             if is_party_match(ag.counterparty, party.canonical_name):
                 matched.append(ag)
                 continue
-        # Standard strict normalized string matching
+        # Standard strict normalized string matching (exact equality)
         if is_party_match(ag.counterparty, counterparty):
             matched.append(ag)
 
@@ -353,6 +458,41 @@ def get_transitive_superseded(
     return fully_superseded, scoped_superseded, cycle_detected
 
 
+def detect_amends_cycle(valid_relations: list[AgreementRelation]) -> bool:
+    """
+    Detect directed cycles or self-loops in AMENDS relations using DFS.
+    """
+    adj: dict[int, list[int]] = {}
+    for r in valid_relations:
+        if r.relation_type == "AMENDS":
+            if r.source_agreement_id == r.target_agreement_id:
+                return True
+            adj.setdefault(r.source_agreement_id, []).append(r.target_agreement_id)
+
+    visited_dfs: set[int] = set()
+    rec_stack: set[int] = set()
+
+    def dfs(u: int) -> bool:
+        visited_dfs.add(u)
+        rec_stack.add(u)
+        for v in adj.get(u, []):
+            if v == u:
+                return True
+            if v in rec_stack:
+                return True
+            if v not in visited_dfs:
+                if dfs(v):
+                    return True
+        rec_stack.remove(u)
+        return False
+
+    for node in list(adj.keys()):
+        if node not in visited_dfs:
+            if dfs(node):
+                return True
+    return False
+
+
 def _persist_trace_record(
     db: Session,
     tenant_id: str,
@@ -403,7 +543,6 @@ def _persist_trace_record(
         db.add(trace_rec)
         db.commit()
     except Exception as exc:
-        db.rollback()
         logger.warning(f"Could not persist ResolutionTraceRecord: {exc}")
 
 
@@ -439,7 +578,10 @@ def resolve_controlling_clause(
     tenant_id: str,
     counterparty: str,
     topic: str,
-    as_of_date: Any = None
+    as_of_date: Any = None,
+    deal_id: int | None = None,
+    playbook_name: str | None = None,
+    persist_trace: bool = True
 ) -> dict[str, Any]:
     """
     Resolve which contract clause controls for a given topic as of a specific date.
@@ -458,7 +600,27 @@ def resolve_controlling_clause(
 
     def _finalize_result(result_dict: dict[str, Any]) -> dict[str, Any]:
         result_dict["proposed_relations_advisory"] = proposed_relations_advisory
-        _persist_trace_record(db, tenant_id, counterparty, topic, as_of, result_dict)
+        if persist_trace:
+            _persist_trace_record(db, tenant_id, counterparty, topic, as_of, result_dict)
+        else:
+            trace_id = str(uuid.uuid4())
+            winner = result_dict.get("controlling_clause")
+            winner_ag_id = winner.get("agreement_id") if isinstance(winner, dict) else None
+            winner_cl_id = winner.get("id") if isinstance(winner, dict) else None
+            result_dict["resolution_trace"] = {
+                "trace_id": trace_id,
+                "as_of_date": str(as_of),
+                "counterparty": counterparty,
+                "topic": topic,
+                "status": result_dict.get("status"),
+                "controlling_clause_id": winner_cl_id,
+                "controlling_agreement_id": winner_ag_id,
+                "confidence": result_dict.get("confidence", 0.0),
+                "resolution_rationale": result_dict.get("resolution_rationale"),
+                "amendment_trail": result_dict.get("amendment_trail", []),
+                "proposed_relations_advisory": proposed_relations_advisory,
+                "conflicting_candidates": result_dict.get("conflicting_candidates", []),
+            }
         return result_dict
 
     # 1. Fetch agreements for counterparty (STRICT ZERO FALLBACK)
@@ -503,7 +665,7 @@ def resolve_controlling_clause(
 
     valid_relations: list[AgreementRelation] = []
     for rel in relations:
-        rel_status = getattr(rel, "status", "confirmed")
+        rel_status = getattr(rel, "status", None) or "proposed"
         if rel_status == "rejected":
             continue
         if rel_status == "proposed":
@@ -544,27 +706,48 @@ def resolve_controlling_clause(
             "confidence": 0.0
         })
 
-    # 5. Fetch candidate clauses matching topic
+    # 5. Fetch candidate clauses matching topic (strictly from surviving agreements)
     is_keyword_fallback = False
     topic_candidates = TOPIC_ALIASES.get(topic, [topic])
-    candidate_clauses = db.query(Clause).filter(
+    raw_candidates = db.query(Clause).filter(
         Clause.tenant_id == tenant_id,
-        Clause.agreement_id.in_(ag_ids),
+        Clause.agreement_id.in_(surviving_ag_ids),
         Clause.is_active.is_(True),
         Clause.topic.in_(topic_candidates)
     ).all()
+    candidate_clauses = [c for c in raw_candidates if is_clause_temporally_valid(c, as_of)]
+
+    # Check confirmed INCORPORATES relations to pull referenced provisions into candidate authorities
+    if not candidate_clauses:
+        incorporates_relations = [
+            r for r in valid_relations
+            if r.relation_type == "INCORPORATES"
+            and (getattr(r, "status", None) or "proposed") in ("confirmed", "accepted")
+            and r.source_agreement_id in surviving_ag_ids
+        ]
+        for inc_rel in incorporates_relations:
+            inc_raw = db.query(Clause).filter(
+                Clause.tenant_id == tenant_id,
+                Clause.agreement_id == inc_rel.target_agreement_id,
+                Clause.is_active.is_(True),
+                Clause.topic.in_(topic_candidates)
+            ).all()
+            for ic in inc_raw:
+                if is_clause_temporally_valid(ic, as_of):
+                    candidate_clauses.append(ic)
 
     if not candidate_clauses:
         topic_kw = topic.replace("_", " ").lower()
-        candidate_clauses = db.query(Clause).filter(
+        kw_candidates = db.query(Clause).filter(
             Clause.tenant_id == tenant_id,
-            Clause.agreement_id.in_(ag_ids),
+            Clause.agreement_id.in_(surviving_ag_ids),
             Clause.is_active.is_(True),
             or_(
                 Clause.content.ilike(f"%{topic_kw}%"),
                 Clause.title.ilike(f"%{topic_kw}%")
             )
         ).all()
+        candidate_clauses = [c for c in kw_candidates if is_clause_temporally_valid(c, as_of)]
         if candidate_clauses:
             is_keyword_fallback = True
 
@@ -600,10 +783,20 @@ def resolve_controlling_clause(
     # 6. Clause Graph Traversal with Slot Inheritance & Depth Cap
     terminal_candidates: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
     amended_clause_ids = set()
-    amends_cycle_detected = False
+    amends_cycle_detected = detect_amends_cycle(valid_relations)
+
+    def _rel_eff_date(r: AgreementRelation) -> date:
+        if r.effective_date:
+            return to_utc_date(r.effective_date)
+        src_ag = ag_by_id.get(r.source_agreement_id)
+        if src_ag and src_ag.effective_date:
+            return to_utc_date(src_ag.effective_date)
+        return date.min
 
     for base_clause in candidate_clauses:
         if base_clause.agreement_id in fully_superseded_ag_ids:
+            continue
+        if base_clause.id in amended_clause_ids:
             continue
 
         # Check scoped supersession
@@ -615,39 +808,35 @@ def resolve_controlling_clause(
         if is_scoped_out:
             continue
 
+        # Check clause temporal validity
+        if not is_clause_temporally_valid(base_clause, as_of):
+            continue
+
         # Walk AMENDS edges forward from this base clause
         trail: list[dict[str, Any]] = []
         current_clause = base_clause
         effective_slots = dict(base_clause.structured_slots or {})
         visited_clauses = {current_clause.id}
+        applied_ag_ids = {base_clause.agreement_id}
         depth = 0
 
         while depth < 32:
             depth += 1
-            current_ag_id = current_clause.agreement_id
-            incoming_amendments = list(amends_by_target.get(current_ag_id, []))
 
-            # Order by effective date ascending to step forward temporally
-            def _rel_eff_date(r: AgreementRelation) -> date:
-                if r.effective_date:
-                    return to_utc_date(r.effective_date)
-                src_ag = ag_by_id.get(r.source_agreement_id)
-                if src_ag and src_ag.effective_date:
-                    return to_utc_date(src_ag.effective_date)
-                return date.min
-
-            incoming_amendments.sort(key=_rel_eff_date)
-
-            found_next = False
-            for rel in incoming_amendments:
-                if rel.source_agreement_id == rel.target_agreement_id:
-                    amends_cycle_detected = True
-                    break
-
+            # Sibling & chained amendment evaluation:
+            # Gather all candidate amendments targeting ANY agreement currently in applied_ag_ids
+            candidate_amends: list[tuple[AgreementRelation, Clause]] = []
+            for rel in valid_relations:
+                if rel.relation_type != "AMENDS":
+                    continue
+                if rel.target_agreement_id not in applied_ag_ids:
+                    continue
+                if rel.source_agreement_id in applied_ag_ids:
+                    continue
                 if rel.source_agreement_id not in active_ag_ids or rel.source_agreement_id in fully_superseded_ag_ids:
                     continue
 
-                # Check if amending source is scoped superseded for this topic
+                # Check scoped supersession on source
                 is_src_scoped_out = False
                 for sup_ag_id, sup_scope in scoped_superseded:
                     if rel.source_agreement_id == sup_ag_id and is_scope_match(sup_scope, current_clause, topic):
@@ -658,13 +847,16 @@ def resolve_controlling_clause(
 
                 # Invariant: Draft agreement cannot amend executed agreement
                 src_ag = ag_by_id.get(rel.source_agreement_id)
-                tgt_ag = ag_by_id.get(current_clause.agreement_id)
+                tgt_ag = ag_by_id.get(rel.target_agreement_id)
                 if src_ag and tgt_ag:
                     if getattr(src_ag, "execution_status", "executed") == "draft" and getattr(tgt_ag, "execution_status", "executed") != "draft":
                         logger.info(f"Skipping AMENDS edge: draft {src_ag.id} cannot amend executed {tgt_ag.id}")
                         continue
 
                 if not is_scope_match(rel.clause_scope, current_clause, topic):
+                    continue
+
+                if _rel_eff_date(rel) > as_of:
                     continue
 
                 # Fetch amending clauses in the source agreement
@@ -679,46 +871,56 @@ def resolve_controlling_clause(
 
                 matching_amending_clause = None
                 for sc in source_clauses:
+                    if not is_clause_temporally_valid(sc, as_of):
+                        continue
                     if sc.topic == topic or is_scope_match(rel.clause_scope, sc, topic):
                         matching_amending_clause = sc
                         break
 
-                if matching_amending_clause and matching_amending_clause.id not in visited_clauses:
-                    visited_clauses.add(matching_amending_clause.id)
-                    amended_clause_ids.add(current_clause.id)
+                if matching_amending_clause:
+                    candidate_amends.append((rel, matching_amending_clause))
 
-                    # Slot inheritance: overlay amended slots onto inherited base slots
-                    amd_slots = dict(matching_amending_clause.structured_slots or {})
-                    overridden_keys = [k for k in amd_slots.keys() if k in effective_slots]
-                    inherited_keys = [k for k in effective_slots.keys() if k not in amd_slots]
-                    effective_slots.update(amd_slots)
+            if not candidate_amends:
+                break
 
-                    trail.append({
-                        "relation": "AMENDS",
-                        "scope": rel.clause_scope or "ALL",
-                        "from_agreement_id": current_clause.agreement_id,
-                        "from_agreement_title": ag_by_id[current_clause.agreement_id].title if current_clause.agreement_id in ag_by_id else "Agreement",
-                        "from_section": current_clause.section,
-                        "to_agreement_id": matching_amending_clause.agreement_id,
-                        "to_agreement_title": ag_by_id[matching_amending_clause.agreement_id].title if matching_amending_clause.agreement_id in ag_by_id else "Agreement",
-                        "to_section": matching_amending_clause.section,
-                        "effective_date": str(rel.effective_date) if rel.effective_date else None,
-                        "inherited_slots": inherited_keys,
-                        "overridden_slots": overridden_keys,
-                    })
+            # Order chronologically ascending by effective date to step forward temporally
+            candidate_amends.sort(key=lambda pair: _rel_eff_date(pair[0]))
 
-                    current_clause = matching_amending_clause
-                    found_next = True
-                    break
-                elif matching_amending_clause and matching_amending_clause.id in visited_clauses:
-                    amends_cycle_detected = True
+            chosen_rel, matching_sc = candidate_amends[0]
 
-            if depth >= 32 and found_next:
+            if matching_sc.id in visited_clauses or chosen_rel.source_agreement_id in applied_ag_ids:
                 amends_cycle_detected = True
                 break
 
-            if not found_next:
-                break
+            visited_clauses.add(matching_sc.id)
+            amended_clause_ids.add(current_clause.id)
+            amended_clause_ids.add(base_clause.id)
+            applied_ag_ids.add(chosen_rel.source_agreement_id)
+
+            # Slot inheritance: overlay amended slots onto inherited base slots
+            amd_slots = dict(matching_sc.structured_slots or {})
+            overridden_keys = [k for k in amd_slots.keys() if k in effective_slots]
+            inherited_keys = [k for k in effective_slots.keys() if k not in amd_slots]
+            effective_slots.update(amd_slots)
+
+            target_title = ag_by_id[chosen_rel.target_agreement_id].title if chosen_rel.target_agreement_id in ag_by_id else "Agreement"
+            source_title = ag_by_id[matching_sc.agreement_id].title if matching_sc.agreement_id in ag_by_id else "Agreement"
+
+            trail.append({
+                "relation": "AMENDS",
+                "scope": chosen_rel.clause_scope or "ALL",
+                "from_agreement_id": chosen_rel.target_agreement_id,
+                "from_agreement_title": target_title,
+                "from_section": current_clause.section,
+                "to_agreement_id": matching_sc.agreement_id,
+                "to_agreement_title": source_title,
+                "to_section": matching_sc.section,
+                "effective_date": str(chosen_rel.effective_date) if chosen_rel.effective_date else None,
+                "inherited_slots": inherited_keys,
+                "overridden_slots": overridden_keys,
+            })
+
+            current_clause = matching_sc
 
         if current_clause.agreement_id in surviving_ag_ids:
             # Check if current_clause was scoped superseded
@@ -839,21 +1041,22 @@ def resolve_controlling_clause(
     has_cycle = supersedes_cycle or amends_cycle_detected
     if has_cycle:
         cycle_type = "SUPERSEDES" if supersedes_cycle else "AMENDS"
-        try:
-            from .db import ContractConflictRecord
-            conflict_rec = ContractConflictRecord(
-                tenant_id=tenant_id,
-                counterparty=counterparty,
-                topic=topic,
-                as_of_date=str(as_of) if as_of else "unspecified",
-                conflict_type="GRAPH_CYCLE",
-                missing_edge_type=cycle_type,
-                details=f"Cycle defect detected in {cycle_type} relation chain for counterparty '{counterparty}'."
-            )
-            db.add(conflict_rec)
-            db.commit()
-        except Exception as exc:
-            logger.warning(f"Could not persist ContractConflictRecord for GRAPH_CYCLE: {exc}")
+        if persist_trace:
+            try:
+                from .db import ContractConflictRecord
+                conflict_rec = ContractConflictRecord(
+                    tenant_id=tenant_id,
+                    counterparty=counterparty,
+                    topic=topic,
+                    as_of_date=str(as_of) if as_of else "unspecified",
+                    conflict_type="GRAPH_CYCLE",
+                    missing_edge_type=cycle_type,
+                    details=f"Cycle defect detected in {cycle_type} relation chain for counterparty '{counterparty}'."
+                )
+                db.add(conflict_rec)
+                db.commit()
+            except Exception as exc:
+                logger.warning(f"Could not persist ContractConflictRecord for GRAPH_CYCLE: {exc}")
 
         return _finalize_result({
             "status": "GRAPH_CYCLE",
@@ -908,39 +1111,25 @@ def resolve_controlling_clause(
         })
 
     # 9. Multiple Surviving Candidates: Order of Precedence (SOW vs MSA via DealPlaybook)
-    from .db import DealPlaybook
-    playbook = db.query(DealPlaybook).filter(DealPlaybook.tenant_id == tenant_id).first()
+    playbook = get_playbook(db, tenant_id, deal_id=deal_id, counterparty=counterparty, playbook_name=playbook_name)
     sow_topics = set(playbook.sow_controlling_topics) if (playbook and playbook.sow_controlling_topics) else SOW_CONTROLLING_TOPICS
+    msa_topics = set(playbook.master_controlling_topics) if (playbook and playbook.master_controlling_topics) else MSA_CONTROLLING_TOPICS
 
-    sow_candidate = None
-    msa_candidate = None
-    sow_trail = []
-    msa_trail = []
-    sow_slots = {}
-    msa_slots = {}
+    sow_candidates: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
+    msa_candidates: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
 
-    schedule_relations = [r for r in valid_relations if r.relation_type in ("SCHEDULE_OF", "STATEMENT_OF_WORK")]
-
-    for cl, tr, sl in unique_terminals:
+    for item in unique_terminals:
+        cl = item[0]
         ag = ag_by_id.get(cl.agreement_id)
-        if not ag:
-            continue
-        is_sow = ag.instrument_type in ("statement_of_work", "schedule") or "SOW" in ag.title.upper() or "SCHEDULE" in ag.title.upper()
-        for sr in schedule_relations:
-            if sr.source_agreement_id == ag.id:
-                is_sow = True
-                break
-
-        if is_sow:
-            sow_candidate = cl
-            sow_trail = tr
-            sow_slots = sl
+        if ag and is_sow_instrument(ag, valid_relations):
+            sow_candidates.append(item)
         else:
-            msa_candidate = cl
-            msa_trail = tr
-            msa_slots = sl
+            msa_candidates.append(item)
 
-    if sow_candidate and msa_candidate and len(unique_terminals) == 2:
+    if len(sow_candidates) == 1 and len(msa_candidates) == 1 and len(unique_terminals) == 2:
+        sow_candidate, sow_trail, sow_slots = sow_candidates[0]
+        msa_candidate, msa_trail, msa_slots = msa_candidates[0]
+
         if topic in sow_topics:
             winner = sow_candidate
             trail = list(sow_trail)
@@ -983,7 +1172,7 @@ def resolve_controlling_clause(
                 ),
                 "confidence": confidence
             })
-        else:
+        elif topic in msa_topics or topic not in sow_topics:
             winner = msa_candidate
             trail = list(msa_trail)
             ag_winner = ag_by_id.get(winner.agreement_id)
@@ -1042,29 +1231,29 @@ def resolve_controlling_clause(
 
     cand_a = unique_terminals[0][0] if len(unique_terminals) > 0 else None
     cand_b = unique_terminals[1][0] if len(unique_terminals) > 1 else None
-    try:
-        from .db import ContractConflictRecord
-        conflict_rec = ContractConflictRecord(
-            tenant_id=tenant_id,
-            counterparty=counterparty,
-            topic=topic,
-            as_of_date=str(as_of) if as_of else "unspecified",
-            conflict_type="AMBIGUOUS_CONTROLLING_INSTRUMENT",
-            candidate_a_agreement_id=cand_a.agreement_id if cand_a else None,
-            candidate_a_clause_id=cand_a.id if cand_a else None,
-            candidate_b_agreement_id=cand_b.agreement_id if cand_b else None,
-            candidate_b_clause_id=cand_b.id if cand_b else None,
-            missing_edge_type="SUPERSEDES / AMENDS",
-            details=(
-                f"Found {len(unique_terminals)} concurrently active candidate clauses for topic '{topic}' "
-                f"without a governing amendment or precedence edge."
+    if persist_trace:
+        try:
+            from .db import ContractConflictRecord
+            conflict_rec = ContractConflictRecord(
+                tenant_id=tenant_id,
+                counterparty=counterparty,
+                topic=topic,
+                as_of_date=str(as_of) if as_of else "unspecified",
+                conflict_type="AMBIGUOUS_CONTROLLING_INSTRUMENT",
+                candidate_a_agreement_id=cand_a.agreement_id if cand_a else None,
+                candidate_a_clause_id=cand_a.id if cand_a else None,
+                candidate_b_agreement_id=cand_b.agreement_id if cand_b else None,
+                candidate_b_clause_id=cand_b.id if cand_b else None,
+                missing_edge_type="SUPERSEDES / AMENDS",
+                details=(
+                    f"Found {len(unique_terminals)} concurrently active candidate clauses for topic '{topic}' "
+                    f"without a governing amendment or precedence edge."
+                )
             )
-        )
-        db.add(conflict_rec)
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.warning(f"Could not persist ContractConflictRecord for AMBIGUOUS_CONTROLLING_INSTRUMENT: {exc}")
+            db.add(conflict_rec)
+            db.commit()
+        except Exception as exc:
+            logger.warning(f"Could not persist ContractConflictRecord for AMBIGUOUS_CONTROLLING_INSTRUMENT: {exc}")
 
     return _finalize_result({
         "status": "ambiguous",
@@ -1083,14 +1272,16 @@ def detect_contract_conflicts(
     db: Session,
     tenant_id: str,
     counterparty: str,
-    as_of_date: Any = None
+    as_of_date: Any = None,
+    deal_id: int | None = None
 ) -> list[dict[str, Any]]:
     """
     Scan for unresolved commercial conflicts across a counterparty's agreement portfolio.
     Runs POST-RESOLUTION:
       1. Resolves all topics present in active agreements using resolve_controlling_clause.
-      2. If a topic returns 'ambiguous', flags as an active conflict.
-      3. For surviving operative clauses across different agreements, identifies differing slot values.
+      2. If a topic returns 'ambiguous', flags as an active conflict (AMBIGUOUS_CONTROLLING_INSTRUMENT).
+      3. For surviving operative clauses across different agreements, identifies differing slot values
+         where no precedence edge reconciles them (DIVERGENT_OPERATIVE_TERMS).
     """
     as_of = to_utc_date(as_of_date)
     agreements = get_party_agreements(db, tenant_id, counterparty)
@@ -1109,7 +1300,8 @@ def detect_contract_conflicts(
     conflicts: list[dict[str, Any]] = []
 
     for (top,) in topics:
-        res = resolve_controlling_clause(db, tenant_id, counterparty, top, as_of)
+        # Pass persist_trace=False so conflict detection does not pollute audit logs or commit transactions
+        res = resolve_controlling_clause(db, tenant_id, counterparty, top, as_of, deal_id=deal_id, persist_trace=False)
         if res.get("status") == "ambiguous":
             candidates = res.get("conflicting_candidates", [])
             conflicts.append({
@@ -1122,6 +1314,50 @@ def detect_contract_conflicts(
                 ),
                 "candidates": candidates
             })
+        elif res.get("status") == "resolved":
+            # Compare structured slot values across active candidate clauses
+            topic_candidates = TOPIC_ALIASES.get(top, [top])
+            active_clauses = db.query(Clause).filter(
+                Clause.tenant_id == tenant_id,
+                Clause.agreement_id.in_(ag_ids),
+                Clause.is_active.is_(True),
+                Clause.topic.in_(topic_candidates)
+            ).all()
+            active_clauses = [c for c in active_clauses if is_clause_temporally_valid(c, as_of)]
+
+            for i in range(len(active_clauses)):
+                for j in range(i + 1, len(active_clauses)):
+                    c1, c2 = active_clauses[i], active_clauses[j]
+                    if c1.agreement_id == c2.agreement_id:
+                        continue
+                    slots1 = c1.structured_slots or {}
+                    slots2 = c2.structured_slots or {}
+                    differing = {}
+                    for sk in set(slots1.keys()) & set(slots2.keys()):
+                        v1 = get_slot_val(slots1[sk])
+                        v2 = get_slot_val(slots2[sk])
+                        if v1 is not None and v2 is not None and v1 != v2:
+                            differing[sk] = {"clause_1": v1, "clause_2": v2}
+                    if differing:
+                        resolved_trail = res.get("amendment_trail", [])
+                        trail_ag_ids = {h.get("from_agreement_id") for h in resolved_trail} | {h.get("to_agreement_id") for h in resolved_trail}
+                        if not (c1.agreement_id in trail_ag_ids and c2.agreement_id in trail_ag_ids):
+                            ag1_title = next((a.title for a in agreements if a.id == c1.agreement_id), "Agreement 1")
+                            ag2_title = next((a.title for a in agreements if a.id == c2.agreement_id), "Agreement 2")
+                            conflicts.append({
+                                "topic": top,
+                                "conflict_type": "DIVERGENT_OPERATIVE_TERMS",
+                                "severity": "MEDIUM",
+                                "explanation": (
+                                    f"Topic '{top}' has divergent operative terms between '{ag1_title}' ({c1.section}) "
+                                    f"and '{ag2_title}' ({c2.section}) without an explicit precedence edge reconciling differing slots: {differing}."
+                                ),
+                                "differing_slots": differing,
+                                "candidates": [
+                                    {"clause_id": c1.id, "agreement_id": c1.agreement_id, "agreement_title": ag1_title, "slots": slots1},
+                                    {"clause_id": c2.id, "agreement_id": c2.agreement_id, "agreement_title": ag2_title, "slots": slots2},
+                                ]
+                            })
 
     return conflicts
 

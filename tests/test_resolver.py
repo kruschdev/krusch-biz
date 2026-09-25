@@ -136,7 +136,8 @@ class TestControllingDocumentResolver(unittest.TestCase):
             target_agreement_id=msa.id,
             relation_type="AMENDS",
             effective_date=datetime(2024, 6, 1),
-            clause_scope="Section 4.1"
+            clause_scope="Section 4.1",
+            status="confirmed"
         )
         self.db.add(rel)
         self.db.commit()
@@ -214,14 +215,16 @@ class TestControllingDocumentResolver(unittest.TestCase):
             source_agreement_id=ag2.id,
             target_agreement_id=ag1.id,
             relation_type="AMENDS",
-            effective_date=datetime(2024, 2, 1)
+            effective_date=datetime(2024, 2, 1),
+            status="confirmed"
         )
         rel2 = AgreementRelation(
             tenant_id="tenant_test",
             source_agreement_id=ag1.id,
             target_agreement_id=ag2.id,
             relation_type="AMENDS",
-            effective_date=datetime(2024, 3, 1)
+            effective_date=datetime(2024, 3, 1),
+            status="confirmed"
         )
         self.db.add_all([rel1, rel2])
         self.db.commit()
@@ -353,7 +356,8 @@ class TestControllingDocumentResolver(unittest.TestCase):
             source_agreement_id=sow.id,
             target_agreement_id=msa.id,
             relation_type="SCHEDULE_OF",
-            effective_date=datetime(2024, 2, 1)
+            effective_date=datetime(2024, 2, 1),
+            status="confirmed"
         )
         self.db.add(rel)
         self.db.commit()
@@ -547,7 +551,8 @@ class TestControllingDocumentResolver(unittest.TestCase):
             target_agreement_id=msa.id,
             relation_type="AMENDS",
             clause_scope="Section 4.1",
-            effective_date=datetime(2023, 1, 1)
+            effective_date=datetime(2023, 1, 1),
+            status="confirmed"
         )
         rel2 = AgreementRelation(
             tenant_id="tenant_test",
@@ -555,7 +560,8 @@ class TestControllingDocumentResolver(unittest.TestCase):
             target_agreement_id=amd1.id,
             relation_type="AMENDS",
             clause_scope="Amd1 Sec 2",
-            effective_date=datetime(2025, 1, 1)
+            effective_date=datetime(2025, 1, 1),
+            status="confirmed"
         )
         self.db.add_all([rel1, rel2])
         self.db.commit()
@@ -757,7 +763,8 @@ class TestControllingDocumentResolver(unittest.TestCase):
             clause_scope="Section 4",
             scope_type="sections",
             scope_sections=["Section 4"],
-            effective_date=datetime(2024, 2, 1)
+            effective_date=datetime(2024, 2, 1),
+            status="confirmed"
         )
         self.db.add(rel)
         self.db.commit()
@@ -883,7 +890,8 @@ class TestControllingDocumentResolver(unittest.TestCase):
             source_agreement_id=ag_sow.id,
             target_agreement_id=ag_msa.id,
             relation_type="SCHEDULE_OF",
-            effective_date=datetime(2024, 1, 1)
+            effective_date=datetime(2024, 1, 1),
+            status="confirmed"
         )
         self.db.add(rel)
         self.db.commit()
@@ -899,7 +907,522 @@ class TestControllingDocumentResolver(unittest.TestCase):
         self.assertEqual(res["status"], "resolved")
         self.assertEqual(res["controlling_clause"]["agreement_id"], ag_sow.id)
 
+    def test_sibling_amendments_both_targeting_msa(self):
+        """
+        Bug 1: Sibling amendments targeting original MSA.
+        Amd 1 (Jan 2024, Net 60) and Amd 2 (June 2024, Net 45) both AMEND the base MSA.
+        Precedence walk must walk all sibling and chained amendments chronologically.
+        Querying as of July 2024 must resolve to Amd 2 (Net 45) with a 2-hop amendment trail.
+        """
+        msa = Agreement(
+            tenant_id="tenant_sibling",
+            title="Master Commercial Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="SiblingCorp",
+            effective_date=datetime(2023, 1, 1),
+            status="active"
+        )
+        amd1 = Agreement(
+            tenant_id="tenant_sibling",
+            title="Amendment No. 1",
+            instrument_type="amendment",
+            counterparty="SiblingCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        amd2 = Agreement(
+            tenant_id="tenant_sibling",
+            title="Amendment No. 2",
+            instrument_type="amendment",
+            counterparty="SiblingCorp",
+            effective_date=datetime(2024, 6, 1),
+            status="active"
+        )
+        self.db.add_all([msa, amd1, amd2])
+        self.db.flush()
+
+        cl0 = Clause(
+            tenant_id="tenant_sibling",
+            agreement_id=msa.id,
+            section="Section 4",
+            topic="PAYMENT_TERMS",
+            content="Net 30.",
+            structured_slots={"net_days": 30},
+            is_active=True
+        )
+        cl1 = Clause(
+            tenant_id="tenant_sibling",
+            agreement_id=amd1.id,
+            section="Amd1 Sec 2",
+            topic="PAYMENT_TERMS",
+            content="Amended to Net 60.",
+            structured_slots={"net_days": 60},
+            is_active=True
+        )
+        cl2 = Clause(
+            tenant_id="tenant_sibling",
+            agreement_id=amd2.id,
+            section="Amd2 Sec 2",
+            topic="PAYMENT_TERMS",
+            content="Amended to Net 45.",
+            structured_slots={"net_days": 45},
+            is_active=True
+        )
+        self.db.add_all([cl0, cl1, cl2])
+
+        # Both Amd1 and Amd2 target the original MSA (sibling amendments)
+        rel1 = AgreementRelation(
+            tenant_id="tenant_sibling",
+            source_agreement_id=amd1.id,
+            target_agreement_id=msa.id,
+            relation_type="AMENDS",
+            effective_date=datetime(2024, 1, 1),
+            status="confirmed"
+        )
+        rel2 = AgreementRelation(
+            tenant_id="tenant_sibling",
+            source_agreement_id=amd2.id,
+            target_agreement_id=msa.id,
+            relation_type="AMENDS",
+            effective_date=datetime(2024, 6, 1),
+            status="confirmed"
+        )
+        self.db.add_all([rel1, rel2])
+        self.db.commit()
+
+        # As of July 2024: Amd 2 must control (Net 45), with full 2-hop trail (MSA -> Amd1 -> Amd2)
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_sibling",
+            counterparty="SiblingCorp",
+            topic="PAYMENT_TERMS",
+            as_of_date="2024-07-01"
+        )
+        self.assertEqual(res["status"], "resolved")
+        self.assertEqual(res["controlling_clause"]["agreement_id"], amd2.id)
+        self.assertEqual(res["controlling_clause"]["structured_slots"]["net_days"], 45)
+        self.assertEqual(len(res["amendment_trail"]), 2)
+
+    def test_sow_classifier_rejects_amendments_with_schedule_in_title(self):
+        """
+        Bug 2: SOW classifier is a title heuristic.
+        Instruments like 'Payment Schedule Amendment No. 1' or 'Schedule 2 to Credit Agreement'
+        with instrument_type='amendment' must not be misclassified as SOWs.
+        """
+        from src.backend.resolver import is_sow_instrument
+        msa = Agreement(
+            tenant_id="tenant_sow_title",
+            title="Master Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="ScheduleCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        amd = Agreement(
+            tenant_id="tenant_sow_title",
+            title="Payment Schedule Amendment No. 1",
+            instrument_type="amendment",
+            counterparty="ScheduleCorp",
+            effective_date=datetime(2024, 2, 1),
+            status="active"
+        )
+        self.db.add_all([msa, amd])
+        self.db.flush()
+
+        rel = AgreementRelation(
+            tenant_id="tenant_sow_title",
+            source_agreement_id=amd.id,
+            target_agreement_id=msa.id,
+            relation_type="AMENDS",
+            effective_date=datetime(2024, 2, 1),
+            status="confirmed"
+        )
+        self.db.add(rel)
+        self.db.commit()
+
+        # is_sow_instrument must return False for an amendment even if 'Schedule' is in title
+        self.assertFalse(is_sow_instrument(amd, [rel]))
+
+    def test_multiple_live_sows_return_ambiguous(self):
+        """
+        Bug 2b: Multiple concurrent SOWs without mutual precedence order must return 'ambiguous',
+        not arbitrarily let the last one in the loop win.
+        """
+        msa = Agreement(
+            tenant_id="tenant_sow_mult",
+            title="Master Services Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="MultiSowCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        sow1 = Agreement(
+            tenant_id="tenant_sow_mult",
+            title="Statement of Work Alpha",
+            instrument_type="statement_of_work",
+            counterparty="MultiSowCorp",
+            effective_date=datetime(2024, 2, 1),
+            status="active"
+        )
+        sow2 = Agreement(
+            tenant_id="tenant_sow_mult",
+            title="Statement of Work Beta",
+            instrument_type="statement_of_work",
+            counterparty="MultiSowCorp",
+            effective_date=datetime(2024, 3, 1),
+            status="active"
+        )
+        self.db.add_all([msa, sow1, sow2])
+        self.db.flush()
+
+        cl_msa = Clause(tenant_id="tenant_sow_mult", agreement_id=msa.id, section="Sec 4", topic="PAYMENT_TERMS", content="Net 30.", structured_slots={"net_days": 30}, is_active=True)
+        cl_sow1 = Clause(tenant_id="tenant_sow_mult", agreement_id=sow1.id, section="Sec 2", topic="PAYMENT_TERMS", content="Net 15.", structured_slots={"net_days": 15}, is_active=True)
+        cl_sow2 = Clause(tenant_id="tenant_sow_mult", agreement_id=sow2.id, section="Sec 2", topic="PAYMENT_TERMS", content="Net 45.", structured_slots={"net_days": 45}, is_active=True)
+        self.db.add_all([cl_msa, cl_sow1, cl_sow2])
+
+        rel1 = AgreementRelation(tenant_id="tenant_sow_mult", source_agreement_id=sow1.id, target_agreement_id=msa.id, relation_type="SCHEDULE_OF", status="confirmed")
+        rel2 = AgreementRelation(tenant_id="tenant_sow_mult", source_agreement_id=sow2.id, target_agreement_id=msa.id, relation_type="SCHEDULE_OF", status="confirmed")
+        self.db.add_all([rel1, rel2])
+        self.db.commit()
+
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_sow_mult",
+            counterparty="MultiSowCorp",
+            topic="PAYMENT_TERMS",
+            as_of_date="2024-06-01"
+        )
+        self.assertEqual(res["status"], "ambiguous")
+        self.assertIsNone(res["controlling_clause"])
+        self.assertEqual(res["confidence"], 0.0)
+
+    def test_keyword_fallback_ignores_superseded_agreements(self):
+        """
+        Bug 3: Keyword fallback across superseded agreements.
+        Candidate clauses and keyword fallback must strictly filter on surviving_ag_ids,
+        preventing dead boilerplate from superseded agreements from returning or penalizing confidence.
+        """
+        old_msa = Agreement(
+            tenant_id="tenant_kw",
+            title="Old 2020 Master Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="SuperCorp",
+            effective_date=datetime(2020, 1, 1),
+            status="active"
+        )
+        new_msa = Agreement(
+            tenant_id="tenant_kw",
+            title="New 2024 Restated Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="SuperCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        self.db.add_all([old_msa, new_msa])
+        self.db.flush()
+
+        # Old agreement has governing law clause with text 'governing law'
+        cl_old = Clause(
+            tenant_id="tenant_kw",
+            agreement_id=old_msa.id,
+            section="Section 10",
+            topic="CUSTOM_LAW",  # Not canonical GOVERNING_LAW topic
+            title="Governing Law",
+            content="This agreement is governed by Delaware law.",
+            is_active=True
+        )
+        # New agreement has payment terms but NO governing law clause
+        cl_new = Clause(
+            tenant_id="tenant_kw",
+            agreement_id=new_msa.id,
+            section="Section 3",
+            topic="PAYMENT_TERMS",
+            content="Payment is Net 30.",
+            is_active=True
+        )
+        self.db.add_all([cl_old, cl_new])
+
+        # New MSA completely SUPERSEDES Old MSA
+        rel = AgreementRelation(
+            tenant_id="tenant_kw",
+            source_agreement_id=new_msa.id,
+            target_agreement_id=old_msa.id,
+            relation_type="SUPERSEDES",
+            status="confirmed",
+            effective_date=datetime(2024, 1, 1)
+        )
+        self.db.add(rel)
+        self.db.commit()
+
+        # Query for GOVERNING_LAW: must NOT fall back to old superseded MSA's text
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_kw",
+            counterparty="SuperCorp",
+            topic="GOVERNING_LAW",
+            as_of_date="2024-06-01"
+        )
+        self.assertEqual(res["status"], "topic_not_found")
+        self.assertIsNone(res["controlling_clause"])
+
+    def test_strict_party_isolation_rejects_substring_counterparties(self):
+        """
+        Bug 4: Party isolation is exact normalized equality (norm_a == norm_b).
+        'Acme' must NEVER match 'Acme West Holdings'.
+        """
+        ag = Agreement(
+            tenant_id="tenant_strict_party",
+            title="Acme West Master Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="Acme West Holdings LLC",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        self.db.add(ag)
+        self.db.flush()
+
+        cl = Clause(
+            tenant_id="tenant_strict_party",
+            agreement_id=ag.id,
+            section="Sec 1",
+            topic="PAYMENT_TERMS",
+            content="Net 30.",
+            is_active=True
+        )
+        self.db.add(cl)
+        self.db.commit()
+
+        # Query for "Acme" — must return not_found
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_strict_party",
+            counterparty="Acme",
+            topic="PAYMENT_TERMS",
+            as_of_date="2024-06-01"
+        )
+        self.assertEqual(res["status"], "not_found")
+        self.assertIsNone(res["controlling_clause"])
+
+    def test_clause_level_effective_from_to_dating(self):
+        """
+        Bug 5: Clause-level dating.
+        Clauses have effective_from and effective_to columns and structured_slots bounds.
+        A clause whose effective_to is in the past is excluded even if agreement is active.
+        """
+        ag = Agreement(
+            tenant_id="tenant_cl_date",
+            title="Perpetual Services Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="PerpetualCorp",
+            effective_date=datetime(2020, 1, 1),
+            status="active"
+        )
+        self.db.add(ag)
+        self.db.flush()
+
+        # Clause 1: Expired on 2023-12-31
+        cl_expired = Clause(
+            tenant_id="tenant_cl_date",
+            agreement_id=ag.id,
+            section="Section 4 (Legacy)",
+            topic="PAYMENT_TERMS",
+            content="Promotional Net 60.",
+            structured_slots={"net_days": 60},
+            effective_from=datetime(2020, 1, 1),
+            effective_to=datetime(2023, 12, 31),
+            is_active=True
+        )
+        # Clause 2: Effective from 2024-01-01
+        cl_current = Clause(
+            tenant_id="tenant_cl_date",
+            agreement_id=ag.id,
+            section="Section 4 (Standard)",
+            topic="PAYMENT_TERMS",
+            content="Standard Net 30.",
+            structured_slots={"net_days": 30},
+            effective_from=datetime(2024, 1, 1),
+            is_active=True
+        )
+        self.db.add_all([cl_expired, cl_current])
+        self.db.commit()
+
+        # Query as of 2024-06-01: must resolve to cl_current (Net 30)
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_cl_date",
+            counterparty="PerpetualCorp",
+            topic="PAYMENT_TERMS",
+            as_of_date="2024-06-01"
+        )
+        self.assertEqual(res["status"], "resolved")
+        self.assertEqual(res["controlling_clause"]["id"], cl_current.id)
+        self.assertEqual(res["controlling_clause"]["structured_slots"]["net_days"], 30)
+
+    def test_detect_conflicts_surfaces_divergent_operative_terms(self):
+        """
+        Bug 6: detect_contract_conflicts Step 3 comparing surviving structured slots.
+        Surfaces DIVERGENT_OPERATIVE_TERMS when operative surviving agreements define
+        differing slot values without a relation resolving them.
+        """
+        ag1 = Agreement(
+            tenant_id="tenant_diverge",
+            title="Agreement Alpha",
+            instrument_type="master_services_agreement",
+            counterparty="DivergentCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        ag2 = Agreement(
+            tenant_id="tenant_diverge",
+            title="Agreement Beta",
+            instrument_type="master_services_agreement",
+            counterparty="DivergentCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        self.db.add_all([ag1, ag2])
+        self.db.flush()
+
+        cl1 = Clause(
+            tenant_id="tenant_diverge",
+            agreement_id=ag1.id,
+            section="Sec 2",
+            topic="PAYMENT_TERMS",
+            content="Net 30.",
+            structured_slots={"net_days": 30},
+            is_active=True
+        )
+        cl2 = Clause(
+            tenant_id="tenant_diverge",
+            agreement_id=ag2.id,
+            section="Sec 2",
+            topic="PAYMENT_TERMS",
+            content="Net 90.",
+            structured_slots={"net_days": 90},
+            is_active=True
+        )
+        self.db.add_all([cl1, cl2])
+        self.db.commit()
+
+        conflicts = detect_contract_conflicts(
+            db=self.db,
+            tenant_id="tenant_diverge",
+            counterparty="DivergentCorp",
+            as_of_date="2024-06-01"
+        )
+        conflict_types = [c["conflict_type"] for c in conflicts]
+        self.assertTrue(
+            "DIVERGENT_OPERATIVE_TERMS" in conflict_types or "AMBIGUOUS_CONTROLLING_INSTRUMENT" in conflict_types,
+            f"Expected conflict type not found in {conflict_types}"
+        )
+
+    def test_resolve_controlling_clause_persist_trace_flag(self):
+        """
+        Bug 7: Side-effect free reads.
+        persist_trace=False must write zero rows to ResolutionTraceRecord audit log.
+        """
+        from src.backend.db import ResolutionTraceRecord
+        ag = Agreement(
+            tenant_id="tenant_trace_flag",
+            title="Read Only Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="ReadOnlyCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        self.db.add(ag)
+        self.db.flush()
+
+        cl = Clause(
+            tenant_id="tenant_trace_flag",
+            agreement_id=ag.id,
+            section="Sec 1",
+            topic="PAYMENT_TERMS",
+            content="Net 30.",
+            is_active=True
+        )
+        self.db.add(cl)
+        self.db.commit()
+
+        initial_count = self.db.query(ResolutionTraceRecord).filter(
+            ResolutionTraceRecord.tenant_id == "tenant_trace_flag"
+        ).count()
+        self.assertEqual(initial_count, 0)
+
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_trace_flag",
+            counterparty="ReadOnlyCorp",
+            topic="PAYMENT_TERMS",
+            as_of_date="2024-06-01",
+            persist_trace=False
+        )
+        self.assertEqual(res["status"], "resolved")
+        self.assertIn("resolution_trace", res)
+
+        final_count = self.db.query(ResolutionTraceRecord).filter(
+            ResolutionTraceRecord.tenant_id == "tenant_trace_flag"
+        ).count()
+        self.assertEqual(final_count, 0)
+
+    def test_unconfirmed_proposed_relation_default(self):
+        """
+        Bug 8: Default status 'proposed'.
+        AgreementRelation.status column defaults to 'proposed', and unconfirmed proposed relations
+        do not control the precedence DAG, but appear in proposed_relations_advisory.
+        """
+        msa = Agreement(
+            tenant_id="tenant_prop_def",
+            title="Master Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="ProposedDefCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        amd = Agreement(
+            tenant_id="tenant_prop_def",
+            title="Proposed Amendment",
+            instrument_type="amendment",
+            counterparty="ProposedDefCorp",
+            effective_date=datetime(2024, 2, 1),
+            status="active"
+        )
+        self.db.add_all([msa, amd])
+        self.db.flush()
+
+        cl_msa = Clause(tenant_id="tenant_prop_def", agreement_id=msa.id, section="Sec 4", topic="PAYMENT_TERMS", content="Net 30.", structured_slots={"net_days": 30}, is_active=True)
+        cl_amd = Clause(tenant_id="tenant_prop_def", agreement_id=amd.id, section="Sec 1", topic="PAYMENT_TERMS", content="Net 60.", structured_slots={"net_days": 60}, is_active=True)
+        self.db.add_all([cl_msa, cl_amd])
+
+        # AgreementRelation created WITHOUT status argument -> defaults to "proposed"
+        rel = AgreementRelation(
+            tenant_id="tenant_prop_def",
+            source_agreement_id=amd.id,
+            target_agreement_id=msa.id,
+            relation_type="AMENDS",
+            effective_date=datetime(2024, 2, 1)
+        )
+        self.db.add(rel)
+        self.db.commit()
+
+        self.assertEqual(rel.status, "proposed")
+
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_prop_def",
+            counterparty="ProposedDefCorp",
+            topic="PAYMENT_TERMS",
+            as_of_date="2024-06-01"
+        )
+        # Because proposed relation does not control, amd (amendment without confirmed trail) cannot defeat MSA
+        self.assertEqual(res["status"], "resolved")
+        self.assertEqual(res["controlling_clause"]["agreement_id"], msa.id)
+        self.assertEqual(res["controlling_clause"]["structured_slots"]["net_days"], 30)
+        self.assertTrue(len(res["proposed_relations_advisory"]) >= 1)
+        self.assertEqual(res["proposed_relations_advisory"][0]["relation_id"], rel.id)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

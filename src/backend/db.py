@@ -272,6 +272,8 @@ class Clause(Base):
     summary = Column(Text, nullable=True)                             # 1-sentence commercial micro-digest
     chunk_index = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
+    effective_from = Column(DateTime(timezone=True), nullable=True)   # Specific clause effective start
+    effective_to = Column(DateTime(timezone=True), nullable=True)     # Specific clause sunset / expiration
     clause_uid = Column(String(64), nullable=True, index=True)
     restates_clause_id = Column(Integer, ForeignKey("clauses.id", ondelete="SET NULL"), nullable=True, index=True)
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
@@ -313,7 +315,7 @@ class AgreementRelation(Base):
     source_span = Column(Text, nullable=True)
     reviewer_id = Column(String(100), nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
-    status = Column(String(50), default="confirmed", nullable=False, index=True)  # proposed, confirmed, rejected
+    status = Column(String(50), default="proposed", nullable=False, index=True)  # proposed, confirmed, rejected
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -621,6 +623,8 @@ def init_db(target_engine=None):
             conn.execute(text("ALTER TABLE commercial_clauses_vectors ADD COLUMN IF NOT EXISTS summary TEXT;"))
             conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS tags TEXT;"))
             conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS summary TEXT;"))
+            conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS effective_from TIMESTAMP WITH TIME ZONE;"))
+            conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS effective_to TIMESTAMP WITH TIME ZONE;"))
 
             # Multi-Tenant PostgreSQL Row Level Security (RLS) Policies
             rls_tables = [
