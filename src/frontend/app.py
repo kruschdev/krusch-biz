@@ -406,7 +406,7 @@ with st.sidebar:
                 st.error(f"Connection error: {e}")
 
     st.markdown("---")
-    st.caption("KruschBiz v0.6.0 • Laser-Focused Contract Intelligence")
+    st.caption("KruschBiz v0.1.0-alpha.1 • Sovereign Corporate Intelligence Engine")
 
 # Fetch common entities
 deals = []
