@@ -91,11 +91,14 @@ The single functional justification for running both engines simultaneously is t
 {
   "verdict": "NON_COMPLIANT_TERMS_FOUND",
   "as_of_date": "2024-08-15",
+  "jurisdiction": "CA:Oakland",
+  "coverage_completeness": "partial",
   "findings": [
     {
       "topic": "SECURITY_DEPOSIT",
       "alignment": "contract_less_than_mandatory",
       "enforceability": "VOID_AS_AGAINST_PUBLIC_POLICY",
+      "coverage": "partial",
       "contract_clause": {
         "instrument": "Master Lease 2024",
         "section": "Section 4.1",
