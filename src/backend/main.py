@@ -29,6 +29,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
+from .compliance import (
+    ContractVsStatuteRequest,
+    ContractVsStatuteResponse,
+    evaluate_contract_vs_statute,
+)
 from .config import settings, validate_security_invariants
 from .db import (
     Agreement,
@@ -38,6 +43,7 @@ from .db import (
     CommercialGroundingReport,
     DealEvidence,
     DealMatter,
+    ResolutionTraceRecord,
     SessionLocal,
     get_db,
     init_db,
@@ -765,6 +771,31 @@ def get_contract_conflicts_post(
     return {"counterparty": body.counterparty, "conflicts": conflicts, "total_conflicts": len(conflicts)}
 
 
+@app.post("/conflicts/contract-vs-statute", response_model=ContractVsStatuteResponse)
+@app.post("/api/conflicts/contract-vs-statute", response_model=ContractVsStatuteResponse)
+def check_contract_vs_statute_conflicts(
+    body: ContractVsStatuteRequest,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """
+    The Join Endpoint: Evaluates controlling commercial contract terms (KruschBiz DAG)
+    against mandatory statutory ceilings and floors (KruschLaw Precedence Graph).
+    """
+    try:
+        return evaluate_contract_vs_statute(
+            db_biz=db,
+            request=body,
+            tenant_id=x_tenant_id
+        )
+    except ValueError as val_err:
+        raise HTTPException(status_code=422, detail=str(val_err))
+    except Exception as exc:
+        logger.error(f"Error in evaluate_contract_vs_statute: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Compliance evaluation failed: {exc}")
+
+
 @app.get("/api/resolver/controlling-clause")
 def get_controlling_clause(
     counterparty: str = Query(..., description="Counterparty name"),
@@ -820,6 +851,53 @@ def get_contract_conflicts(
         as_of_date=parsed_date
     )
     return {"counterparty": counterparty, "conflicts": conflicts, "total_conflicts": len(conflicts)}
+
+
+@app.get("/api/agreements/conflicts")
+def get_agreements_conflicts(
+    counterparty: str = Query(..., description="Counterparty name"),
+    as_of_date: str | None = Query(None, description="ISO format date (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Pre-generation conflict report: Scan portfolio for active commercial conflicts."""
+    return get_contract_conflicts(counterparty, as_of_date, db, api_key, x_tenant_id)
+
+
+@app.get("/api/resolution-traces")
+def list_resolution_traces(
+    counterparty: str | None = Query(None, description="Filter by counterparty"),
+    topic: str | None = Query(None, description="Filter by canonical topic"),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Query immutable audit log of commercial precedence graph walks."""
+    query = db.query(ResolutionTraceRecord).filter(ResolutionTraceRecord.tenant_id == x_tenant_id)
+    if counterparty:
+        query = query.filter(ResolutionTraceRecord.counterparty == counterparty)
+    if topic:
+        query = query.filter(ResolutionTraceRecord.topic == topic)
+    records = query.order_by(ResolutionTraceRecord.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": r.id,
+            "tenant_id": r.tenant_id,
+            "counterparty": r.counterparty,
+            "topic": r.topic,
+            "as_of_date": r.as_of_date,
+            "status": r.status,
+            "controlling_agreement_id": r.controlling_agreement_id,
+            "controlling_clause_id": r.controlling_clause_id,
+            "confidence": r.confidence,
+            "resolution_rationale": r.resolution_rationale,
+            "trace_payload": r.trace_payload,
+            "created_at": r.created_at.isoformat() if r.created_at else None
+        }
+        for r in records
+    ]
 
 
 @app.get("/api/resolver/diff")
@@ -939,13 +1017,22 @@ def create_relation(
     x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
 ):
     """Explicitly create an agreement relation edge."""
+    rel_status = "confirmed"
+    if rel_in.notes:
+        try:
+            parsed = json.loads(rel_in.notes)
+            rel_status = parsed.get("status", "confirmed")
+        except Exception:
+            pass
+
     rel = AgreementRelation(
         tenant_id=x_tenant_id,
         source_agreement_id=rel_in.source_agreement_id,
         target_agreement_id=rel_in.target_agreement_id,
         relation_type=rel_in.relation_type,
         clause_scope=rel_in.clause_scope or "ALL",
-        notes=rel_in.notes or json.dumps({"status": "confirmed"})
+        status=rel_status,
+        notes=rel_in.notes or json.dumps({"status": rel_status})
     )
     db.add(rel)
     db.commit()
@@ -954,6 +1041,7 @@ def create_relation(
 
 
 @app.patch("/api/relations/{relation_id}/confirm")
+@app.post("/api/relations/{relation_id}/confirm")
 def confirm_relation(
     relation_id: int,
     db: Session = Depends(get_db),
@@ -968,6 +1056,7 @@ def confirm_relation(
     if not rel:
         raise HTTPException(status_code=404, detail="Relation edge not found.")
 
+    rel.status = "confirmed"
     parsed_notes = {}
     if rel.notes:
         try:
@@ -978,7 +1067,39 @@ def confirm_relation(
     parsed_notes["confirmed_at"] = datetime.now(timezone.utc).isoformat()
     rel.notes = json.dumps(parsed_notes)
     db.commit()
+    db.refresh(rel)
     return {"id": rel.id, "status": "confirmed"}
+
+
+@app.patch("/api/relations/{relation_id}/reject")
+@app.post("/api/relations/{relation_id}/reject")
+def reject_relation(
+    relation_id: int,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Human review rejection of a proposed relation edge."""
+    rel = db.query(AgreementRelation).filter(
+        AgreementRelation.id == relation_id,
+        AgreementRelation.tenant_id == x_tenant_id
+    ).first()
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relation edge not found.")
+
+    rel.status = "rejected"
+    parsed_notes = {}
+    if rel.notes:
+        try:
+            parsed_notes = json.loads(rel.notes)
+        except Exception:
+            pass
+    parsed_notes["status"] = "rejected"
+    parsed_notes["rejected_at"] = datetime.now(timezone.utc).isoformat()
+    rel.notes = json.dumps(parsed_notes)
+    db.commit()
+    db.refresh(rel)
+    return {"id": rel.id, "status": "rejected"}
 
 
 @app.delete("/api/relations/{relation_id}")

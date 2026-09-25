@@ -20,13 +20,14 @@ import hashlib
 import json
 import logging
 import re
+import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from .db import Agreement, AgreementRelation, Clause
+from .db import Agreement, AgreementRelation, Clause, ResolutionTraceRecord
 from .taxonomy import get_slot_val
 
 logger = logging.getLogger("kruschbiz.resolver")
@@ -196,10 +197,12 @@ def get_party_agreements(db: Session, tenant_id: str, counterparty: str) -> list
 def get_transitive_superseded(
     valid_relations: list[AgreementRelation],
     active_ag_ids: set[int],
+    ag_by_id: dict[int, Agreement] | None = None,
     depth_cap: int = 32
 ) -> tuple[set[int], list[tuple[int, str]], bool]:
     """
     Recursively close the SUPERSEDES relation graph with cycle detection.
+    Enforces the invariant: Draft instruments cannot supersede executed instruments.
     Returns (fully_superseded_ag_ids, scoped_superseded_tuples, cycle_detected).
     """
     fully_superseded: set[int] = set()
@@ -227,6 +230,16 @@ def get_transitive_superseded(
 
         for edge in supersedes_by_source.get(current_source, []):
             target = edge.target_agreement_id
+
+            # Invariant: Unexecuted draft cannot supersede executed agreement
+            if ag_by_id:
+                src_ag = ag_by_id.get(current_source)
+                tgt_ag = ag_by_id.get(target)
+                if src_ag and tgt_ag:
+                    if getattr(src_ag, "execution_status", "executed") == "draft" and getattr(tgt_ag, "execution_status", "executed") != "draft":
+                        logger.info(f"Skipping SUPERSEDES edge: draft agreement {src_ag.id} cannot supersede executed {tgt_ag.id}")
+                        continue
+
             if not edge.clause_scope or edge.clause_scope.strip().upper() in ("ALL", "*"):
                 if target not in fully_superseded:
                     fully_superseded.add(target)
@@ -238,6 +251,60 @@ def get_transitive_superseded(
         cycle_detected = True
 
     return fully_superseded, scoped_superseded, cycle_detected
+
+
+def _persist_trace_record(
+    db: Session,
+    tenant_id: str,
+    counterparty: str,
+    topic: str,
+    as_of: Any,
+    result_dict: dict[str, Any]
+) -> None:
+    """
+    Persist an immutable ResolutionTraceRecord to database audit log.
+    Includes evaluated hops, winning clauses, defeated candidates, and rejection rationale.
+    """
+    try:
+        winner = result_dict.get("controlling_clause")
+        winner_ag_id = winner.get("agreement_id") if isinstance(winner, dict) else None
+        winner_cl_id = winner.get("id") if isinstance(winner, dict) else None
+
+        trace_id = str(uuid.uuid4())
+        trace_payload = {
+            "trace_id": trace_id,
+            "as_of_date": str(as_of),
+            "counterparty": counterparty,
+            "topic": topic,
+            "status": result_dict.get("status"),
+            "controlling_clause_id": winner_cl_id,
+            "controlling_agreement_id": winner_ag_id,
+            "confidence": result_dict.get("confidence", 0.0),
+            "resolution_rationale": result_dict.get("resolution_rationale"),
+            "amendment_trail": result_dict.get("amendment_trail", []),
+            "proposed_relations_advisory": result_dict.get("proposed_relations_advisory", []),
+            "conflicting_candidates": result_dict.get("conflicting_candidates", []),
+        }
+        result_dict["resolution_trace"] = trace_payload
+
+        trace_rec = ResolutionTraceRecord(
+            id=trace_id,
+            tenant_id=tenant_id,
+            counterparty=counterparty,
+            topic=topic,
+            as_of_date=str(as_of),
+            status=result_dict.get("status") or "unknown",
+            controlling_agreement_id=winner_ag_id,
+            controlling_clause_id=winner_cl_id,
+            confidence=result_dict.get("confidence", 0.0),
+            resolution_rationale=result_dict.get("resolution_rationale"),
+            trace_payload=trace_payload
+        )
+        db.add(trace_rec)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning(f"Could not persist ResolutionTraceRecord: {exc}")
 
 
 def compute_resolution_confidence(
@@ -287,17 +354,23 @@ def resolve_controlling_clause(
       8. Computes dynamic confidence and returns comprehensive amendment_trail audit artifact.
     """
     as_of = to_utc_date(as_of_date)
+    proposed_relations_advisory: list[dict[str, Any]] = []
+
+    def _finalize_result(result_dict: dict[str, Any]) -> dict[str, Any]:
+        result_dict["proposed_relations_advisory"] = proposed_relations_advisory
+        _persist_trace_record(db, tenant_id, counterparty, topic, as_of, result_dict)
+        return result_dict
 
     # 1. Fetch agreements for counterparty (STRICT ZERO FALLBACK)
     agreements = get_party_agreements(db, tenant_id, counterparty)
     if not agreements:
-        return {
+        return _finalize_result({
             "status": "not_found",
             "controlling_clause": None,
             "amendment_trail": [],
             "resolution_rationale": f"No commercial agreements found for counterparty '{counterparty}'.",
             "confidence": 0.0
-        }
+        })
 
     ag_by_id = {ag.id: ag for ag in agreements}
     ag_ids = list(ag_by_id.keys())
@@ -328,8 +401,21 @@ def resolve_controlling_clause(
 
     valid_relations: list[AgreementRelation] = []
     for rel in relations:
-        # Ignore rejected candidate edges
-        if getattr(rel, "status", "accepted") == "rejected":
+        rel_status = getattr(rel, "status", "accepted")
+        if rel_status == "rejected":
+            continue
+        if rel_status == "proposed":
+            # Invariant: Auto-extracted proposed edges NEVER silently control the precedence DAG!
+            proposed_relations_advisory.append({
+                "relation_id": rel.id,
+                "relation_type": rel.relation_type,
+                "source_agreement_id": rel.source_agreement_id,
+                "target_agreement_id": rel.target_agreement_id,
+                "clause_scope": rel.clause_scope,
+                "confidence": getattr(rel, "confidence", 1.0),
+                "status": "proposed",
+                "notes": rel.notes
+            })
             continue
         if rel.effective_date and to_utc_date(rel.effective_date) > as_of:
             continue
@@ -339,19 +425,20 @@ def resolve_controlling_clause(
     fully_superseded_ag_ids, scoped_superseded, supersedes_cycle = get_transitive_superseded(
         valid_relations=valid_relations,
         active_ag_ids=active_ag_ids,
+        ag_by_id=ag_by_id,
         depth_cap=32
     )
 
     surviving_ag_ids = [aid for aid in active_ag_ids if aid not in fully_superseded_ag_ids]
 
     if not surviving_ag_ids:
-        return {
+        return _finalize_result({
             "status": "all_authorities_superseded",
             "controlling_clause": None,
             "amendment_trail": [],
             "resolution_rationale": f"All agreements for counterparty '{counterparty}' are superseded or expired as of {as_of}.",
             "confidence": 0.0
-        }
+        })
 
     # 5. Fetch candidate clauses matching topic
     is_keyword_fallback = False
@@ -377,13 +464,13 @@ def resolve_controlling_clause(
             is_keyword_fallback = True
 
     if not candidate_clauses:
-        return {
+        return _finalize_result({
             "status": "topic_not_found",
             "controlling_clause": None,
             "amendment_trail": [],
             "resolution_rationale": f"No clauses found addressing topic '{topic}' across agreements for '{counterparty}'.",
             "confidence": 0.0
-        }
+        })
 
     # Index relations by target agreement for fast AMENDS lookup
     amends_by_target: dict[int, list[AgreementRelation]] = {}
@@ -433,6 +520,15 @@ def resolve_controlling_clause(
             for rel in incoming_amendments:
                 if rel.source_agreement_id not in active_ag_ids or rel.source_agreement_id in fully_superseded_ag_ids:
                     continue
+
+                # Invariant: Draft agreement cannot amend executed agreement
+                src_ag = ag_by_id.get(rel.source_agreement_id)
+                tgt_ag = ag_by_id.get(current_clause.agreement_id)
+                if src_ag and tgt_ag:
+                    if getattr(src_ag, "execution_status", "executed") == "draft" and getattr(tgt_ag, "execution_status", "executed") != "draft":
+                        logger.info(f"Skipping AMENDS edge: draft {src_ag.id} cannot amend executed {tgt_ag.id}")
+                        continue
+
                 if not is_scope_match(rel.clause_scope, current_clause, topic):
                     continue
 
@@ -486,6 +582,20 @@ def resolve_controlling_clause(
                 break
 
         if current_clause.agreement_id in surviving_ag_ids:
+            # An amendment cannot stand as an independent peer against a governing agreement
+            # unless reached via a valid relation trail.
+            ag_curr = ag_by_id.get(current_clause.agreement_id)
+            is_amendment_type = ag_curr and (
+                ag_curr.instrument_type in ("amendment", "amendment_addendum", "rider", "addendum")
+                or current_clause.authority_class in ("amendment", "amendment_addendum", "executed_amendment")
+            )
+            has_other_governing = any(
+                ag_by_id[aid].instrument_type not in ("amendment", "amendment_addendum", "rider", "addendum")
+                for aid in surviving_ag_ids if aid in ag_by_id
+            )
+            if is_amendment_type and len(trail) == 0 and has_other_governing:
+                continue
+
             terminal_candidates.append((current_clause, trail, effective_slots))
 
     # Deduplicate terminal candidates by clause ID
@@ -502,14 +612,27 @@ def resolve_controlling_clause(
                 seen_terminal_ids.add(cl.id)
                 unique_terminals.append((cl, tr, sl))
 
+    # Invariant: Unexecuted drafts cannot defeat executed agreements
+    has_executed = any(
+        getattr(ag_by_id.get(cl.agreement_id), "execution_status", "executed") != "draft"
+        for cl, _, _ in unique_terminals
+    )
+    if has_executed:
+        filtered_terminals = [
+            (cl, tr, sl) for cl, tr, sl in unique_terminals
+            if getattr(ag_by_id.get(cl.agreement_id), "execution_status", "executed") != "draft"
+        ]
+        if filtered_terminals:
+            unique_terminals = filtered_terminals
+
     if not unique_terminals:
-        return {
+        return _finalize_result({
             "status": "all_authorities_superseded",
             "controlling_clause": None,
             "amendment_trail": [],
             "resolution_rationale": f"All candidate clauses for topic '{topic}' were superseded or amended into inactive instruments.",
             "confidence": 0.0
-        }
+        })
 
     # 7. Evaluate CARVES_OUT Relations (Narrowing Qualifications)
     carve_out_relations = [r for r in valid_relations if r.relation_type == "CARVES_OUT"]
@@ -575,7 +698,7 @@ def resolve_controlling_clause(
                 f"({winner.section}). No conflicting amendments found."
             )
 
-        return {
+        return _finalize_result({
             "status": "resolved",
             "controlling_clause": {
                 "id": winner.id,
@@ -592,7 +715,7 @@ def resolve_controlling_clause(
             "amendment_trail": trail,
             "resolution_rationale": rationale,
             "confidence": confidence
-        }
+        })
 
     # 9. Multiple Surviving Candidates: Order of Precedence (SOW vs MSA)
     sow_candidate = None
@@ -645,7 +768,7 @@ def resolve_controlling_clause(
                 cycle_detected=False,
                 base_confidence=0.90
             )
-            return {
+            return _finalize_result({
                 "status": "resolved",
                 "controlling_clause": {
                     "id": winner.id,
@@ -665,8 +788,8 @@ def resolve_controlling_clause(
                     f"controls for scoped topic '{topic}' over Master Services Agreement."
                 ),
                 "confidence": confidence
-            }
-        elif topic in MSA_CONTROLLING_TOPICS:
+            })
+        else:
             winner = msa_candidate
             trail = list(msa_trail)
             ag_winner = ag_by_id.get(winner.agreement_id)
@@ -687,7 +810,7 @@ def resolve_controlling_clause(
                 cycle_detected=False,
                 base_confidence=0.90
             )
-            return {
+            return _finalize_result({
                 "status": "resolved",
                 "controlling_clause": {
                     "id": winner.id,
@@ -707,7 +830,7 @@ def resolve_controlling_clause(
                     f"controls for general legal governance ('{topic}') over Statement of Work."
                 ),
                 "confidence": confidence
-            }
+            })
 
     # 10. Concurrently Active Instruments Disagree: Return AMBIGUOUS
     conflicting_candidates_info = []
@@ -723,7 +846,7 @@ def resolve_controlling_clause(
             "content_snippet": cl.content[:150] + "..." if len(cl.content) > 150 else cl.content
         })
 
-    return {
+    return _finalize_result({
         "status": "ambiguous",
         "controlling_clause": None,
         "conflicting_candidates": conflicting_candidates_info,
@@ -733,7 +856,7 @@ def resolve_controlling_clause(
             f"for topic '{topic}' without a governing amendment or precedence edge between them."
         ),
         "confidence": 0.0
-    }
+    })
 
 
 def detect_contract_conflicts(

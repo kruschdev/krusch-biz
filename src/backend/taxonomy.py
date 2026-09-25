@@ -227,7 +227,7 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
         # Check if immediately followed by non-time unit (e.g. kg, users, seats, gb, mb, lbs, nodes)
         after_match = text_lower[net_match.end():net_match.end() + 20]
         is_physical_unit = bool(re.match(r"^\s*(?:kg|users?|seats?|nodes?|servers?|lbs?|units?|threads?|gb|mb|tb)\b", after_match))
-        
+
         start_ctx = max(0, net_match.start() - 60)
         end_ctx = min(len(text_lower), net_match.end() + 60)
         surr = text_lower[start_ctx:end_ctx]
@@ -235,7 +235,7 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
             r"\b(?:invoices?|payments?|days|remit|due|undisputed|terms|billing|charges|payable)\b",
             surr
         )) or bool(re.search(r"\bpay\b", surr))
-        
+
         if is_payment_ctx and not is_physical_unit:
             span_str = text[net_match.start():net_match.end()]
             slots["net_days"] = make_typed_slot(
@@ -247,7 +247,7 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
                 pattern_id="net_days_standard",
                 confidence=0.99
             )
-    
+
     if "net_days" not in slots:
         within_days_match = re.search(
             r"within\s+(?:\w+\s*\((\d{1,3})\)|(\d{1,3}))\s*days\s+of\s+(?:the\s+)?invoice",

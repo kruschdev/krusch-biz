@@ -118,7 +118,7 @@ def attempt_json_repair(raw_str: str) -> dict[str, Any] | None:
     last_brace = cleaned.rfind('}')
     if last_brace > 0:
         cleaned = cleaned[:last_brace + 1]
-    
+
     # Try parsing
     try:
         return json.loads(cleaned)
@@ -151,7 +151,7 @@ def heuristic_tag_commercial_chunk(
 
     combined_text = f"{filename} {locator or ''} {content}"
     _, slots = extract_structured_slots(content)
-    
+
     # Topic priority: Slot signature > Keyword count > Default
     slot_topic = classify_topic_from_slots(slots)
     topic = slot_topic or classify_topic(combined_text)

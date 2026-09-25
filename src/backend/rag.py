@@ -838,7 +838,7 @@ def verify_commercial_grounding(
             known_clauses_by_sec.setdefault(norm_sec, []).append(c)
             if raw_k != norm_sec:
                 known_clauses_by_sec.setdefault(raw_k, []).append(c)
-            
+
             # Also index sub-section if present, e.g. "section 2.1"
             sec_only = re.search(r'(?:section|clause|§)\s*([\w\.\-]+)', raw_k)
             if sec_only:

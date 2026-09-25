@@ -165,6 +165,7 @@ class Agreement(Base):
     effective_date = Column(DateTime(timezone=True), nullable=True, index=True)
     expiration_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), default="active", nullable=False, index=True)  # active, superseded, terminated, expired
+    execution_status = Column(String(50), default="executed", nullable=False, index=True)  # executed, draft, unknown
     governing_agreement_id = Column(Integer, ForeignKey("agreements.id", ondelete="SET NULL"), nullable=True)
     source_filename = Column(String(255), nullable=True)
     raw_hash = Column(String(64), nullable=True)
@@ -473,6 +474,26 @@ def _audit_log_prevent_update(mapper, connection, target):
 def _audit_log_prevent_delete(mapper, connection, target):
     raise PermissionError("AuditLog records are append-only and strictly immutable.")
 
+
+class ResolutionTraceRecord(Base):
+    """
+    Immutable audit record of every commercial precedence graph walk.
+    Persists evaluated hops, winning clauses, defeated candidates, and rejection rationale.
+    """
+    __tablename__ = "resolution_traces"
+
+    id = Column(String(36), primary_key=True)
+    tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
+    counterparty = Column(String(255), nullable=True, index=True)
+    topic = Column(String(100), nullable=False, index=True)
+    as_of_date = Column(String(50), nullable=False, index=True)
+    status = Column(String(50), nullable=False)  # resolved, ambiguous, not_found, all_authorities_superseded
+    controlling_agreement_id = Column(Integer, nullable=True)
+    controlling_clause_id = Column(Integer, nullable=True)
+    confidence = Column(Float, default=1.0)
+    resolution_rationale = Column(Text, nullable=True)
+    trace_payload = Column(JSONType, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class IngestJob(Base):
