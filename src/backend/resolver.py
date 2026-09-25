@@ -800,21 +800,6 @@ def resolve_controlling_clause(
                 })
 
     if not candidate_clauses:
-        topic_kw = topic.replace("_", " ").lower()
-        kw_candidates = db.query(Clause).filter(
-            Clause.tenant_id == tenant_id,
-            Clause.agreement_id.in_(surviving_ag_ids),
-            Clause.is_active.is_(True),
-            or_(
-                Clause.content.ilike(f"%{topic_kw}%"),
-                Clause.title.ilike(f"%{topic_kw}%")
-            )
-        ).all()
-        candidate_clauses = [c for c in kw_candidates if is_clause_temporally_valid(c, as_of)]
-        if candidate_clauses:
-            is_keyword_fallback = True
-
-    if not candidate_clauses:
         return _finalize_result({
             "status": "topic_not_found",
             "controlling_clause": None,

@@ -901,8 +901,10 @@ def verify_commercial_grounding(
                         known_clauses_by_sec[norm_st] = [winner_c]
 
     claim_records: list[dict[str, Any]] = []
-    # Claim decomposition: split on sentence boundaries, semicolons, and newlines
-    sentences = [s.strip() for s in re.split(r'(?<=[.!?;\n])\s+', analysis_text) if s.strip()]
+    # Claim decomposition: split on sentence boundaries without breaking abbreviations (No., Sec., Art., Inc., etc.)
+    text_to_split = re.sub(r'\b(No|Sec|Art|Inc|Corp|LLC|Ltd|vs|e\.g|i\.e)\.', r'\1__DOT__', analysis_text)
+    raw_sentences = re.split(r'(?<=[.!?;\n])\s+', text_to_split)
+    sentences = [s.replace('__DOT__', '.').strip() for s in raw_sentences if s.strip()]
 
     total_claims = 0
     supported_claims = 0
@@ -1297,7 +1299,11 @@ def verify_commercial_grounding(
             missing_slot_name = None
             if "net_days" in clause_slots and "net_days" not in sent_slots:
                 # Did sentence make payment claims without stating the required days?
-                if any(w in sent_without_sec for w in ("pay", "payment", "invoice", "remit")) and not re.search(r'\b(?:net\s*\d+|\d+\s*days?)\b', sent_without_sec):
+                if (
+                    any(w in sent_without_sec for w in ("pay", "payment", "invoice", "remit"))
+                    and not re.search(r'\b(?:net\s*\d+|\d+\s*days?)\b', sent_without_sec)
+                    and "late_interest_pct" not in sent_slots
+                ):
                     is_partial = True
                     missing_slot_name = "net_days"
             elif "cap_amount" in clause_slots and "cap_amount" not in sent_slots and sent_amt is None:
@@ -1383,6 +1389,9 @@ def verify_commercial_grounding(
                     "details": f"Clause '{cited_raw}' exists, but text diverges significantly from the asserted terms.",
                     "evidence_span": clause_content[:180] + "..."
                 })
+
+    for rec in claim_records:
+        rec["failure_code"] = rec.get("failure_mode")
 
     if total_claims == 0:
         pass_rate = 100.0
