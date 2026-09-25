@@ -4,12 +4,12 @@
 > *Private corporate contract retrieval, relational contract graph walking, commercial assertion-level grounding verification, and audit-logged executive decision intelligence using on-premise open-weight models and the sovereign KruschNexus ingestion spine.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-green.svg)](https://github.com/kruschdev/krusch-biz)
+[![Version: 0.6.0](https://img.shields.io/badge/Version-0.6.0-green.svg)](https://github.com/kruschdev/krusch-biz)
 [![Python 3.11 | 3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 129 Passing](https://img.shields.io/badge/Tests-129%20Passing-brightgreen.svg)](tests/)
+[![Tests: 145 Passing](https://img.shields.io/badge/Tests-145%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: Passing](https://img.shields.io/badge/CI%20Gates-4%2F4%20Passing-brightgreen.svg)](scripts/eval_retrieval_and_grounding.py)
 
 ---
@@ -43,13 +43,22 @@ Enterprise legal departments, corporate procurement teams, and M&A executives fa
 ## 🚀 Core Capabilities
 
 * 🔒 **Sovereign Air-Gapped Topology**: Default loopback bindings (`127.0.0.1:8086`, `127.0.0.1:8506`), code-level loopback verification, zero external telemetry, and mandatory tenant-bound API keys outside dev.
-* 🕸️ **Relational Contract Graph & Controlling Resolver**:
+* 🕸️ **Confirmed-Edge Precedence Graph & Controlling Resolver**:
   * Explicit database models: `agreements`, `clauses`, and `agreement_relations`.
-  * Candidate relation extractor (`src/backend/relations.py`) scans text for amendment clauses, emitting proposed relations for human review.
-  * Transitive DAG walk (`resolve_controlling_clause`) resolves amendment chains (A → B → C) with cycle detection (`max_depth=32`) and a typed precedence table (`SUPERSEDES`, `AMENDS`, `SCHEDULE_OF`, `CARVES_OUT`, `INCORPORATES`).
+  * **Human-Confirmed Edges Only for Precedence**: Candidate relation extractor (`src/backend/relations.py`) emits relations with `status='proposed'` for review. The controlling DAG resolver (`src/backend/resolver.py`) walks **only confirmed edges** (`status='confirmed'|'accepted'`); unconfirmed proposals never silently dictate terms and are returned as advisories.
+  * **Unexecuted Draft Isolation**: Agreements with `execution_status='draft'` cannot defeat, supersede, or amend executed agreements.
+  * **Document Hierarchy Safeguards**: Master Agreements outrank SOWs/schedules on general governance provisions; schedules outrank Master Agreements strictly on commercial parameters (fees, SLAs).
+  * **Full Resolution Trace Auditing**: Every consult query persists an immutable [`ResolutionTraceRecord`](src/backend/db.py) recording traversed candidate paths, hops evaluated, and discard reasons.
+  * Transitive DAG walk (`resolve_controlling_clause`) resolves multi-hop amendment chains (A → B → C) with cycle detection (`max_depth=32`) and typed precedence (`SUPERSEDES`, `AMENDS`, `SCHEDULE_OF`, `CARVES_OUT`, `INCORPORATES`).
   * Emits an authoritative `amendment_trail` audit artifact and dynamic confidence score.
   * `detect_contract_conflicts(counterparty, as_of_date)` surfaces diverging terms across live operative agreements before LLM synthesis.
   * Stable clause identity (`clause_uid`) hashed from `(instrument_family, canonical_topic, slot_signature)`.
+* ⚖️ **The Join: Contract vs. Statute Compliance Engine**:
+  * `POST /conflicts/contract-vs-statute` (and `/api/conflicts/contract-vs-statute`) links controlling corporate contract clause slots directly against statutory floors and ceilings.
+  * Deterministic rule-based evaluation (no LLM hallucinations): compares contractual provisions against statutory ceilings (e.g., California AB 12 1-month security deposit limit effective 2024-07-01 under Cal. Civ. Code § 1950.5(c)(1)) and statutory floors (e.g., California 24-hour landlord entry notice under Cal. Civ. Code § 1954(a)).
+  * Supports jurisdiction routing (`CA:Oakland`), temporal as-of dates, and surfaces structured compliance findings with exact statutory citations and coverage gap indicators.
+* 📋 **One-Page Orchestrator Specification**:
+  * Governed by [`docs/ORCHESTRATOR_SPEC.md`](docs/ORCHESTRATOR_SPEC.md): standardizes the `matter_ref` ↔ `deal_ref` entity mapping table, shared `as_of_date` query contracts, and 5 non-negotiable DO-NOT invariants across KruschBiz and KruschLaw.
 * 🎯 **Closed Commercial Taxonomy & Open Structured Slots**:
   * 13 canonical commercial topics (`PAYMENT_TERMS`, `LATE_FEE`, `LIABILITY_CAP`, `LIABILITY_CARVE_OUT`, `INDEMNITY`, `SLA_UPTIME`, `SLA_CREDIT`, `DATA_PROTECTION`, `BREACH_NOTIFICATION`, `AUDIT_RIGHTS`, `TERMINATION_CONVENIENCE`, `MOST_FAVORED_NATION`, `GOVERNING_LAW`).
   * Structured slot extraction into JSON columns at ingest with character offset provenance spans (`slot_spans`).
@@ -78,7 +87,9 @@ Enterprise legal departments, corporate procurement teams, and M&A executives fa
 * 🗑️ **Atomic Purge & Immutable Audit Trail**:
   * Multi-table transactional purge (`purge_agreement_transactional`, `purge_deal_matter_transactional`) eliminates orphan records in a single database transaction with typed deal code confirmation.
   * Append-only immutable `AuditLog` enforced by database event listeners rejecting updates and deletions.
-* 🔌 **Focused Model Context Protocol (MCP) Server**: Exposes 4 high-leverage canonical tools (`contract_intelligence`, `manage_deal`, `ingest_contract`, `verify_grounding`) over stdio JSON-RPC without prompt bloat or confusing legacy tool sprawl.
+* 🔌 **Dual MCP Architecture (Canonical Domain Server + Sovereign Gateway Router)**:
+  * **Domain MCP Server** (`src/mcp/server.py`): Exposes 4 high-leverage canonical tools (`contract_intelligence`, `manage_deal`, `ingest_contract`, `verify_grounding`) over stdio JSON-RPC without prompt bloat or legacy tool sprawl.
+  * **Sovereign Gateway MCP Router** (`src/mcp/gateway.py`): Exposes a consolidated single 5-verb cross-repo gateway (`ask_law`, `ask_biz`, `check_compliance`, `ingest`, `purge`) strictly constrained to **<450 prompt tokens** (1,715 chars, ~428 tokens) for local 7B/14B models without context bloat.
 
 
 ---
@@ -262,10 +273,19 @@ KruschBiz provides a native stdio JSON-RPC MCP server (`src/mcp/server.py`) expo
 ## 🧪 Automated Testing & CI Gates
 
 ```bash
-# Run full unit, integration, tagger, security, adversarial grounding, and MCP test suite (129 tests)
+# Run full unit, integration, graph invariant, compliance join, tagger, security, and MCP test suite (145 tests)
 pytest tests
 
-# Run MCP server tests (verifies 4 canonical tools)
+# Run golden precedence graph invariant tests (confirmed-edge walk, draft isolation, hierarchy)
+pytest tests/test_graph_invariants.py -v
+
+# Run The Join tests (Contract vs. Statute compliance evaluation, AB 12, entry floors)
+pytest tests/test_compliance_join.py -v
+
+# Run Gateway MCP router tests (5-verb gateway, <450 token budget, JSON-RPC)
+pytest tests/test_gateway_mcp.py -v
+
+# Run domain MCP server tests (verifies 4 canonical tools)
 pytest tests/test_mcp.py
 
 # Run adversarial grounding test suite (16 adversarial cases)
