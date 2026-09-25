@@ -899,10 +899,8 @@ def export_what_controls_endpoint(
 
     topics = body.topics
     if not topics:
-        agreements = db.query(Agreement).filter(
-            Agreement.tenant_id == x_tenant_id,
-            Agreement.counterparty.ilike(body.counterparty.strip())
-        ).all()
+        from .resolver import get_party_agreements
+        agreements = get_party_agreements(db, x_tenant_id, body.counterparty)
         ag_ids = [ag.id for ag in agreements]
         distinct_topics = db.query(Clause.topic).filter(
             Clause.tenant_id == x_tenant_id,

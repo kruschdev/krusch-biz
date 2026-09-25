@@ -803,10 +803,19 @@ with tab1:
                         slot_pills = format_slot_display(slots)
                         slots_html = "".join(f"<span class='slot-pill'>{s}</span>" for s in slot_pills) if slot_pills else "<span style='color: #94a3b8; font-size: 0.78rem;'>No structured slots</span>"
 
+                        date_info = ""
+                        eff_from = cl_obj.get("effective_from")
+                        eff_to = cl_obj.get("effective_to")
+                        if eff_from or eff_to:
+                            date_info = f"<span style='color: #38bdf8; font-size: 0.76rem; margin-left: 6px;'>[Valid: {eff_from or 'start'} .. {eff_to or 'perpetual'}]</span>"
+
                         trail_html = ""
                         if trail:
                             trail_steps = " ➔ ".join(f"{h.get('from_agreement_title', 'Agreement')} (§{h.get('from_section')}) ➔ <strong>{h.get('to_agreement_title')}</strong> (§{h.get('to_section')})" for h in trail)
                             trail_html = f"<div style='font-size: 0.78rem; color: #a78bfa; margin-top: 4px;'><strong>Amendment Walk:</strong> {trail_steps}</div>"
+
+                        adv_count = len(cldata.get("proposed_relations_advisory", []))
+                        adv_html = f"<div style='font-size: 0.76rem; color: #fbbf24; margin-top: 4px;'>⚠️ {adv_count} unconfirmed proposed relation(s) quarantined from walk.</div>" if adv_count else ""
 
                         st.markdown(f"""
                             <div class="clause-card" style="border-left-color: #10b981; padding: 0.9rem;">
@@ -815,10 +824,23 @@ with tab1:
                                     <span style="color: #10b981; font-weight: 700; font-size: 0.8rem;">🏆 CONTROLLING ({int(conf*100)}%)</span>
                                 </div>
                                 <div style="font-weight: 600; color: #f1f5f9; font-size: 0.92rem; margin: 4px 0;">
-                                    📄 {cl_obj.get('agreement_title')} <span style="color: #94a3b8; font-weight: 400;">(§ {cl_obj.get('section', 'N/A')})</span>
+                                    📄 {cl_obj.get('agreement_title')} <span style="color: #94a3b8; font-weight: 400;">(§ {cl_obj.get('section', 'N/A')})</span>{date_info}
                                 </div>
                                 <div style="margin: 4px 0;">{slots_html}</div>
                                 {trail_html}
+                                {adv_html}
+                            </div>
+                        """, unsafe_allow_html=True)
+                    elif st_val == "GRAPH_CYCLE":
+                        st.markdown(f"""
+                            <div class="clause-card" style="border-left-color: #ef4444; padding: 0.9rem; background: rgba(239, 68, 68, 0.08);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <div class="topic-pill" style="border-color: #ef4444; color: #f87171;">{top}</div>
+                                    <span style="color: #ef4444; font-weight: 700; font-size: 0.8rem;">🚨 GRAPH CYCLE (0.0 CONFIDENCE)</span>
+                                </div>
+                                <div style="font-size: 0.82rem; color: #fca5a5; margin-top: 4px;">
+                                    {cldata.get('resolution_rationale')}
+                                </div>
                             </div>
                         """, unsafe_allow_html=True)
                     elif st_val == "ambiguous":
@@ -1234,6 +1256,8 @@ with tab2:
                         st.success(f"Controlling Status: {st_val} (Confidence: {int(conf * 100)}%)")
                     elif st_val == "AMBIGUOUS":
                         st.error(f"Controlling Status: {st_val} (Confidence: 0.0%)")
+                    elif st_val == "GRAPH_CYCLE":
+                        st.error("Controlling Status: 🚨 GRAPH_CYCLE DEFECT (Confidence: 0.0%)")
                     else:
                         st.info(f"Controlling Status: {st_val}")
 
@@ -1245,12 +1269,16 @@ with tab2:
                         slot_pills = format_slot_display(slots)
                         slots_html = "".join(f"<span class='slot-pill'>{s}</span>" for s in slot_pills) if slot_pills else "None"
 
+                        eff_info = cl.get('effective_date', 'N/A')
+                        if cl.get('effective_from') or cl.get('effective_to'):
+                            eff_info += f" | Clause Window: {cl.get('effective_from') or 'start'} .. {cl.get('effective_to') or 'perpetual'}"
+
                         st.markdown(f"""
                             <div class="clause-card" style="border-left-color: #10b981;">
                                 <div class="clause-header">🏆 Winning Authority: {cl.get('agreement_title')} ({cl.get('section')})</div>
                                 <div class="clause-meta">
                                     🏢 Counterparty: <strong>{resolver_cp}</strong> |
-                                    📅 Effective: <strong>{cl.get('effective_date', 'N/A')}</strong> |
+                                    📅 Effective: <strong>{eff_info}</strong> |
                                     Status: <span style="color: #10b981;">ACTIVE CONTROLLING</span>
                                 </div>
                                 <div class="clause-body">{cl.get('content')}</div>
@@ -1275,6 +1303,15 @@ with tab2:
                         st.markdown("#### ⚡ Conflicting Candidate Provisions")
                         for cand in candidates:
                             st.warning(f"**{cand.get('agreement_title')}** (§ {cand.get('section')}): `{cand.get('structured_slots')}`")
+
+                    advisories = rdata.get("proposed_relations_advisory", [])
+                    if advisories:
+                        st.markdown("#### ⚠️ Proposed Relations Advisory (Quarantined)")
+                        for adv in advisories:
+                            st.info(
+                                f"**Quarantined Proposal (ID {adv.get('relation_id')})**: `{adv.get('relation_type')}` "
+                                f"[Scope: `{adv.get('clause_scope')}`] — *Quarantined from DAG walk until reviewed & confirmed above.*"
+                            )
                 else:
                     st.error(f"Resolver failed: {res.status_code} - {res.text}")
             except Exception as e:

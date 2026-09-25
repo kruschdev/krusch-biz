@@ -208,6 +208,20 @@ class TestAPI(unittest.TestCase):
         resp = self.client.get("/api/resolver/diff?agreement_a_id=9999&agreement_b_id=9998")
         self.assertEqual(resp.status_code, 404)
 
+    def test_10_what_controls_export_endpoint(self):
+        resp = self.client.post("/api/resolver/what-controls-export", json={
+            "counterparty": "VendorCorp",
+            "as_of_date": "2026-06-01"
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["counterparty"], "VendorCorp")
+        self.assertEqual(data["as_of_date"], "2026-06-01")
+        self.assertIn("markdown", data)
+        self.assertIn("GENERAL COUNSEL CONTROLLING TERMS MEMORANDUM", data["markdown"])
+        self.assertTrue(data["topics_evaluated"] >= 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
