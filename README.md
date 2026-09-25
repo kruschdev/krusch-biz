@@ -52,11 +52,6 @@ Enterprise legal departments, corporate procurement teams, and M&A executives fa
   * Transitive DAG walk (`resolve_controlling_clause`) resolves multi-hop amendment chains (A → B → C) with cycle detection (`max_depth=32`) and typed precedence (`SUPERSEDES`, `AMENDS`, `SCHEDULE_OF`, `CARVES_OUT`, `INCORPORATES`).
   * Emits an authoritative `amendment_trail` audit artifact and dynamic confidence score.
   * `detect_contract_conflicts(counterparty, as_of_date)` surfaces diverging terms across live operative agreements before LLM synthesis.
-  * Stable clause identity (`clause_uid`) hashed from `(instrument_family, canonical_topic, slot_signature)`.
-* ⚖️ **The Join: Contract vs. Statute Compliance Engine**:
-  * `POST /conflicts/contract-vs-statute` (and `/api/conflicts/contract-vs-statute`) links controlling corporate contract clause slots directly against statutory floors and ceilings.
-  * Deterministic rule-based evaluation (no LLM hallucinations): compares contractual provisions against statutory ceilings (e.g., California AB 12 1-month security deposit limit effective 2024-07-01 under Cal. Civ. Code § 1950.5(c)(1)) and statutory floors (e.g., California 24-hour landlord entry notice under Cal. Civ. Code § 1954(a)).
-  * Supports jurisdiction routing (`CA:Oakland`), temporal as-of dates, and surfaces structured compliance findings with exact statutory citations and coverage gap indicators.
 * 📋 **One-Page Orchestrator Specification**:
   * Governed by [`docs/ORCHESTRATOR_SPEC.md`](docs/ORCHESTRATOR_SPEC.md): standardizes the `matter_ref` ↔ `deal_ref` entity mapping table, shared `as_of_date` query contracts, and 5 non-negotiable DO-NOT invariants across KruschBiz and KruschLaw.
 * 🎯 **Closed Commercial Taxonomy & Open Structured Slots**:
@@ -232,7 +227,6 @@ KruschBiz exposes a clean, sovereign REST API adhering strictly to loopback-only
 * `GET /api/relations`: Query relation edges filtered by status (`proposed`, `confirmed`, `rejected`) and agreement.
 * `PATCH /api/relations/{relation_id}`: Human-in-the-loop review endpoint to confirm, reject, or edit proposed relation types, scopes, and dates.
 * `DELETE /api/relations/{relation_id}`: Delete an erroneous relation edge.
-* `POST /api/conflicts/contract-vs-statute`: The Join: evaluate contractual slots against statutory floors and ceilings.
 * `GET /api/evaluation/adversarial`: Retrieve the live 4-metric adversarial scorecard across 7 multi-document families.
 
 ---
@@ -333,7 +327,7 @@ For cross-domain fleet coordination without prompt context bloat, KruschBiz also
 * **Exact 5 Verbs**:
   1. `ask_law`: Sovereign California statutory search, multi-hop precedence resolution, and tenant defense checklists (delegated to KruschLaw).
   2. `ask_biz`: Sovereign corporate contract intelligence, relational deal graph walk, and clause retrieval.
-  3. `check_compliance`: Direct conflict analysis ("The Join") evaluating contract slots against statutory floors/ceilings (e.g., AB 12 deposit caps).
+  3. `check_compliance`: Conflict analysis evaluating contract slots against statutory floors/ceilings (e.g., AB 12 deposit caps).
   4. `ingest`: Sovereign document ingestion with MIME magic byte verification and natural section boundary chunking.
   5. `purge`: Verifiable cryptographic deletion with SHA-256 tombstone audit receipts.
 * **Token Budget**: Strictly constrained to **<450 prompt tokens** (~1,715 characters dense JSON) across all 5 verb definitions.
@@ -419,32 +413,6 @@ pytest tests/eval/test_adversarial_corpus.py -v
 
 ---
 
-## ⚖️ Cross-Engine Compliance Benchmark: The Join (`POST /conflicts/contract-vs-statute`)
-
-KruschBiz integrates directly with KruschLaw to execute deterministic statutory compliance cross-examinations. Rather than delegating compliance analysis to probabilistic LLMs, **The Join** compares normalized contract slots resolved via the KruschBiz Precedence Graph against non-waivable statutory floors, ceilings, and prohibitions resolved via the KruschLaw Authority Graph.
-
-```bash
-# Execute the 1-command compliance benchmark suite (<50ms)
-python3 scripts/eval_contract_vs_statute_join.py
-```
-
-### Evaluated Statutory Conflict Pairs:
-| Benchmark ID | Test Scenario | Controlling Statute | Mandate Type | Deterministic Verdict |
-|---|---|---|---|---|
-| `TC-01` | **Post-AB 12 Security Deposit Violation** (2.0 mo demanded post-2024-07-01) | Cal. Civ. Code § 1950.5(c)(1) | Statutory Ceiling (1.0 mo) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
-| `TC-02` | **Pre-AB 12 Security Deposit Compliance** (2.0 mo demanded pre-2024-07-01) | Cal. Civ. Code § 1950.5(c) (Prior) | Statutory Ceiling (2.0 mo) | `aligned` (`ENFORCEABLE`) |
-| `TC-03` | **Sub-Statutory Landlord Entry Notice** (12 hrs vs 24 hr floor) | Cal. Civ. Code § 1954(d)(1) | Statutory Floor (24.0 hrs) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
-| `TC-04` | **More Generous Entry Notice** (48 hrs vs 24 hr floor) | Cal. Civ. Code § 1954(d)(1) | Statutory Floor (24.0 hrs) | `contract_more_generous` (`ENFORCEABLE`) |
-| `TC-05` | **Extended Deposit Return Timeline** (45 days vs 21-day ceiling) | Cal. Civ. Code § 1950.5(g)(1) | Statutory Ceiling (21 days) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
-| `TC-06` | **Expedited Deposit Return Timeline** (14 days vs 21-day ceiling) | Cal. Civ. Code § 1950.5(g)(1) | Statutory Ceiling (21 days) | `contract_more_generous` (`ENFORCEABLE`) |
-| `TC-07` | **Prohibited Habitability Waiver** (repair-and-deduct disclaimer) | Cal. Civ. Code § 1942.1 | Statutory Prohibition | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
-| `TC-08` | **Prohibited Retaliation Waiver** (retaliation defense disclaimer) | Cal. Civ. Code § 1942.5(h) | Statutory Prohibition | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
-| `TC-09` | **Excessive Late Fee Liquidated Damages** (15% vs 5% ceiling) | Cal. Civ. Code § 1671(d) | Statutory Ceiling (5.0%) | `contract_less_than_mandatory` (`VOID_AS_AGAINST_PUBLIC_POLICY`) |
-| `TC-10` | **Commercial Lease Deposit Flexibility** (3.0 mo base rent) | Cal. Civ. Code § 1950.7(f) | Permissive Waiver | `aligned` (`ENFORCEABLE`) |
-| `TC-11` | **Untracked Statutory Topic Coverage Gap** (`MUNICIPAL_SIDEWALK`) | None (Corpus Hole) | Coverage Gap | `coverage_gap` (`UNSPECIFIED`) |
-
----
-
 ## 🔒 Security Architecture & Local-First Guarantees
 
 KruschBiz enforces defense-in-depth security to protect confidential commercial contracts:
@@ -477,9 +445,6 @@ pytest tests
 
 # Run golden precedence graph invariant tests (confirmed-edge walk, draft isolation, hierarchy)
 pytest tests/test_graph_invariants.py -v
-
-# Run The Join tests (Contract vs. Statute compliance evaluation, AB 12, entry floors)
-pytest tests/test_compliance_join.py -v
 
 # Run Gateway MCP router tests (5-verb gateway, <450 token budget, JSON-RPC)
 pytest tests/test_gateway_mcp.py -v
