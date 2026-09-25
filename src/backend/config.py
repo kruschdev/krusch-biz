@@ -115,9 +115,11 @@ def is_loopback_or_private_host(url_or_host: str) -> bool:
 
 def validate_security_invariants(s: Settings) -> None:
     """Enforce API key requirement outside development, loopback binding, and loopback Ollama hosts unless ALLOW_LAN is set."""
-    if s.APP_ENV != "development" and not s.API_KEY:
+    # Invariant: Disallow empty, whitespace, or default placeholder API keys outside development
+    disallowed_keys = ("", "default", "changeme", "secret", "kruschbiz_secret", "replace_me")
+    if s.APP_ENV != "development" and (not s.API_KEY or not s.API_KEY.strip() or s.API_KEY.strip().lower() in disallowed_keys):
         raise RuntimeError(
-            "Security Violation: API_KEY is strictly required outside development environment (APP_ENV != 'development')."
+            "Security Violation: A non-default API_KEY is strictly required outside development environment (APP_ENV != 'development')."
         )
     if (s.HOST == "0.0.0.0" or not is_loopback_or_private_host(s.HOST)) and not s.ALLOW_LAN:
         raise RuntimeError(

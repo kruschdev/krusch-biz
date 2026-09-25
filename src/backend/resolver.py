@@ -288,21 +288,48 @@ def get_transitive_superseded(
         if r.relation_type == "SUPERSEDES":
             supersedes_by_source.setdefault(r.source_agreement_id, []).append(r)
 
-    # Queue starts with active surviving sources
+    # First, detect cycles among SUPERSEDES relations using DFS
+    adj: dict[int, list[int]] = {}
+    for r in valid_relations:
+        if r.relation_type == "SUPERSEDES":
+            adj.setdefault(r.source_agreement_id, []).append(r.target_agreement_id)
+
+    visited_dfs: set[int] = set()
+    rec_stack: set[int] = set()
+
+    def dfs_cycle(u: int) -> bool:
+        visited_dfs.add(u)
+        rec_stack.add(u)
+        for v in adj.get(u, []):
+            if v == u:  # self loop
+                return True
+            if v in rec_stack:
+                return True
+            if v not in visited_dfs:
+                if dfs_cycle(v):
+                    return True
+        rec_stack.remove(u)
+        return False
+
+    for node in list(adj.keys()):
+        if node not in visited_dfs:
+            if dfs_cycle(node):
+                cycle_detected = True
+                break
+
+    # Transitive traversal to find fully/scoped superseded agreements
     queue = list(active_ag_ids)
-    visited_sources = set()
     depth = 0
 
     while queue and depth < depth_cap:
         depth += 1
         current_source = queue.pop(0)
-        if current_source in visited_sources:
-            cycle_detected = True
-            continue
-        visited_sources.add(current_source)
 
         for edge in supersedes_by_source.get(current_source, []):
             target = edge.target_agreement_id
+            if target == current_source:
+                cycle_detected = True
+                continue
 
             # Invariant: Unexecuted draft cannot supersede executed agreement
             if ag_by_id:
@@ -476,7 +503,7 @@ def resolve_controlling_clause(
 
     valid_relations: list[AgreementRelation] = []
     for rel in relations:
-        rel_status = getattr(rel, "status", "accepted")
+        rel_status = getattr(rel, "status", "confirmed")
         if rel_status == "rejected":
             continue
         if rel_status == "proposed":
@@ -491,6 +518,8 @@ def resolve_controlling_clause(
                 "status": "proposed",
                 "notes": rel.notes
             })
+            continue
+        if rel_status not in ("confirmed", "accepted"):
             continue
         if rel.effective_date and to_utc_date(rel.effective_date) > as_of:
             continue
@@ -611,6 +640,10 @@ def resolve_controlling_clause(
 
             found_next = False
             for rel in incoming_amendments:
+                if rel.source_agreement_id == rel.target_agreement_id:
+                    amends_cycle_detected = True
+                    break
+
                 if rel.source_agreement_id not in active_ag_ids or rel.source_agreement_id in fully_superseded_ag_ids:
                     continue
 
@@ -679,6 +712,10 @@ def resolve_controlling_clause(
                     break
                 elif matching_amending_clause and matching_amending_clause.id in visited_clauses:
                     amends_cycle_detected = True
+
+            if depth >= 32 and found_next:
+                amends_cycle_detected = True
+                break
 
             if not found_next:
                 break
@@ -882,13 +919,13 @@ def resolve_controlling_clause(
     sow_slots = {}
     msa_slots = {}
 
-    schedule_relations = [r for r in valid_relations if r.relation_type == "SCHEDULE_OF"]
+    schedule_relations = [r for r in valid_relations if r.relation_type in ("SCHEDULE_OF", "STATEMENT_OF_WORK")]
 
     for cl, tr, sl in unique_terminals:
         ag = ag_by_id.get(cl.agreement_id)
         if not ag:
             continue
-        is_sow = ag.instrument_type == "statement_of_work" or "SOW" in ag.title.upper()
+        is_sow = ag.instrument_type in ("statement_of_work", "schedule") or "SOW" in ag.title.upper() or "SCHEDULE" in ag.title.upper()
         for sr in schedule_relations:
             if sr.source_agreement_id == ag.id:
                 is_sow = True

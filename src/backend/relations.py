@@ -529,13 +529,52 @@ def extract_candidate_relations(
     return candidates
 
 
-def accept_relation_edge(
+def propose_relation_edge(
+    db: Session,
+    source_agreement_id: int,
+    target_agreement_id: int,
+    relation_type: str,
+    clause_scope: str = "ALL",
+    confidence: float = 1.0,
+    span: str | None = None,
+    notes: str | None = None,
+    tenant_id: str = "org_default"
+) -> dict[str, Any]:
+    """
+    Explicitly propose a candidate relation edge with status='proposed'.
+    Advisory only; will NOT be traversed by the precedence resolver until confirmed.
+    """
+    rel = AgreementRelation(
+        tenant_id=tenant_id,
+        source_agreement_id=source_agreement_id,
+        target_agreement_id=target_agreement_id,
+        relation_type=relation_type,
+        clause_scope=clause_scope,
+        confidence=confidence,
+        span=span,
+        notes=notes,
+        status="proposed"
+    )
+    db.add(rel)
+    db.commit()
+    db.refresh(rel)
+    logger.info(f"Proposed AgreementRelation #{rel.id} ({rel.relation_type}): {source_agreement_id} -> {target_agreement_id}")
+    return {
+        "status": "success",
+        "relation_id": rel.id,
+        "new_status": "proposed",
+        "relation_type": rel.relation_type
+    }
+
+
+def confirm_relation_edge(
     db: Session,
     relation_id: int,
     tenant_id: str = "org_default"
 ) -> dict[str, Any]:
     """
-    Human-in-the-loop review: Accept a proposed relation edge, making it operative in graph walks.
+    Human-in-the-loop review: Confirm a proposed relation edge, making it operative in graph walks.
+    Status transitions to 'confirmed'.
     """
     rel = db.query(AgreementRelation).filter(
         AgreementRelation.id == relation_id,
@@ -544,15 +583,19 @@ def accept_relation_edge(
     if not rel:
         raise ValueError(f"AgreementRelation #{relation_id} not found for tenant '{tenant_id}'.")
 
-    rel.status = "accepted"
+    rel.status = "confirmed"
     db.commit()
-    logger.info(f"Accepted AgreementRelation #{relation_id} ({rel.relation_type}): {rel.source_agreement_id} -> {rel.target_agreement_id}")
+    logger.info(f"Confirmed AgreementRelation #{relation_id} ({rel.relation_type}): {rel.source_agreement_id} -> {rel.target_agreement_id}")
     return {
         "status": "success",
         "relation_id": rel.id,
-        "new_status": "accepted",
+        "new_status": "confirmed",
         "relation_type": rel.relation_type
     }
+
+
+# Backwards compatibility alias
+accept_relation_edge = confirm_relation_edge
 
 
 def reject_relation_edge(
@@ -562,6 +605,7 @@ def reject_relation_edge(
 ) -> dict[str, Any]:
     """
     Human-in-the-loop review: Reject a proposed relation edge. It is marked rejected and ignored by resolver.
+    Status transitions to 'rejected'.
     """
     rel = db.query(AgreementRelation).filter(
         AgreementRelation.id == relation_id,
@@ -579,3 +623,4 @@ def reject_relation_edge(
         "new_status": "rejected",
         "relation_type": rel.relation_type
     }
+

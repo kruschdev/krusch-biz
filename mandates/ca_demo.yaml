@@ -1,0 +1,57 @@
+# ==============================================================================
+# MANDATES / CA_DEMO.YAML
+# Demonstration Ruleset Only. NOT A COMPLIANCE PRODUCT.
+# Sovereign multi-jurisdiction compliance engine lives in sibling project `krusch-bizlaw`.
+# ==============================================================================
+
+version: "1.0.0-demo"
+jurisdiction: "CA"
+description: "Sample California residential lease statutory ceilings and floors for demonstration only."
+disclaimer: "NOT LEGAL ADVICE. NOT A PRODUCTION COMPLIANCE PRODUCT."
+
+mandates:
+  SECURITY_DEPOSIT:
+    citation: "Cal. Civ. Code § 1950.5(c)(1)"
+    mandate_type: "STATUTORY_CEILING"
+    pre_ab12_ceiling: 2.0
+    post_ab12_ceiling: 1.0
+    ab12_effective_date: "2024-07-01"
+    slot_key: "deposit_cap_months"
+    unit: "months_rent"
+    statutory_text: "A landlord may not demand or receive security in an amount exceeding one month's rent (AB 12, effective July 1, 2024)."
+    non_waivable: true
+
+  ENTRY_NOTICE:
+    citation: "Cal. Civ. Code § 1954(d)(1)"
+    mandate_type: "STATUTORY_FLOOR"
+    minimum_hours: 24.0
+    slot_key: "entry_notice_hours"
+    unit: "hours"
+    statutory_text: "The landlord shall give the tenant reasonable written notice of the landlord's intent to enter, with 24 hours presumed reasonable."
+    non_waivable: true
+
+  DEPOSIT_RETURN:
+    citation: "Cal. Civ. Code § 1950.5(g)(1)"
+    mandate_type: "STATUTORY_CEILING"
+    max_return_days: 21.0
+    slot_key: "deposit_return_days"
+    unit: "days"
+    statutory_text: "No later than 21 calendar days after the tenant has vacated the premises, the landlord shall furnish a copy of an itemized statement along with the remaining portion of the security deposit."
+    non_waivable: true
+
+  LATE_FEE:
+    citation: "Cal. Civ. Code § 1671(d)"
+    mandate_type: "STATUTORY_CEILING"
+    max_late_pct: 5.0
+    slot_key: "late_fee_pct"
+    unit: "percent_rent"
+    statutory_text: "Liquidated damages for late payment of rent in residential tenancies are void unless representing reasonable estimate of administrative loss (capped at 5% absent evidentiary proof)."
+    non_waivable: true
+
+  COMMERCIAL_SECURITY_DEPOSIT:
+    citation: "Cal. Civ. Code § 1950.7"
+    mandate_type: "FREEDOM_OF_CONTRACT"
+    slot_key: "commercial_deposit_waiver"
+    unit: "waiver_flag"
+    statutory_text: "In commercial leases, parties may contractually agree to terms different from Section 1950.7 or waive statutory deposit return provisions (Civ. Code § 1950.7(f))."
+    non_waivable: false

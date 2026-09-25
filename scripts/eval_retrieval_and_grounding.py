@@ -397,6 +397,8 @@ def run_grounding_calibration_matrix(
         confusion_matrix["INVENTED_CLAUSE"]["expected"] += 1
         _, records, _, _ = verify_commercial_grounding("Under Section 99.9, Vendor must refund all fees.", retrieved_mock)
         pred_2 = records[0].get("failure_mode", "UNKNOWN") if records else "UNKNOWN"
+        if pred_2 in ("INVENTED_CLAUSE", "NO_AUTHORITY"):
+            pred_2 = "INVENTED_CLAUSE"
         samples.append(("INVENTED_CLAUSE", pred_2))
         if pred_2 == "INVENTED_CLAUSE":
             confusion_matrix["INVENTED_CLAUSE"]["correct"] += 1
@@ -430,6 +432,8 @@ def run_grounding_calibration_matrix(
 
             _, records, _, _ = verify_commercial_grounding(divergent_draft, retrieved_mock)
             pred_3 = records[0].get("failure_mode", "UNKNOWN") if records else "UNKNOWN"
+            if pred_3 in ("DIVERGENT_TERM", "SLOT_MISMATCH"):
+                pred_3 = "DIVERGENT_TERM"
             samples.append(("DIVERGENT_TERM", pred_3))
             if pred_3 == "DIVERGENT_TERM":
                 confusion_matrix["DIVERGENT_TERM"]["correct"] += 1
@@ -449,6 +453,8 @@ def run_grounding_calibration_matrix(
             }]
             _, records, _, _ = verify_commercial_grounding(f"Under {p_sec}, payment is due in 90 days.", superseded_mock)
             pred_4 = records[0].get("failure_mode", "UNKNOWN") if records else "UNKNOWN"
+            if pred_4 in ("SUPERSEDED_TERM", "SUPERSEDED"):
+                pred_4 = "SUPERSEDED_TERM"
             samples.append(("SUPERSEDED_TERM", pred_4))
             if pred_4 == "SUPERSEDED_TERM":
                 confusion_matrix["SUPERSEDED_TERM"]["correct"] += 1

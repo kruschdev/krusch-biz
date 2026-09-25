@@ -455,6 +455,24 @@ class TestComplianceJoin(unittest.TestCase):
         self.assertEqual(f["alignment"], "contract_less_than_mandatory")
         self.assertEqual(f["enforceability"], "VOID_AS_AGAINST_PUBLIC_POLICY")
 
+    def test_10_unsupported_jurisdiction_returns_unsupported(self):
+        """Verify that an unknown or non-CA jurisdiction returns UNSUPPORTED_JURISDICTION."""
+        payload = {
+            "counterparty": "Pacific Crest Properties LLC",
+            "jurisdiction": "NY:NewYork",
+            "as_of_date": "2024-08-15",
+            "topics": ["SECURITY_DEPOSIT"]
+        }
+        resp = self.client.post("/conflicts/contract-vs-statute", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        self.assertEqual(data["verdict"], "UNSUPPORTED_JURISDICTION")
+        self.assertEqual(data["coverage_completeness"], "none")
+        self.assertEqual(len(data["findings"]), 1)
+        self.assertIn("UNSUPPORTED_JURISDICTION", data["findings"][0]["explanation"])
+        self.assertIn("ca_demo.yaml", data["findings"][0]["explanation"])
+
 
 if __name__ == "__main__":
     unittest.main()

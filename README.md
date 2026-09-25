@@ -1,7 +1,7 @@
 # 💼 KruschBiz
 
-> **Sovereign Corporate Intelligence Engine & Commercial Contract Graph**  
-> *Private corporate contract retrieval, relational contract graph walking, commercial assertion-level grounding verification, and audit-logged executive decision intelligence using on-premise open-weight models and the sovereign KruschNexus ingestion spine.*
+> **Confirmed-Edge Contract Precedence Graph & Slot Grounding Engine**  
+> *Deterministic contract precedence resolution, typed DAG amendment traversal, and assertion-level slot grounding verification for corporate legal and deal intelligence.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Version: 0.1.0-alpha.1](https://img.shields.io/badge/Version-0.1.0--alpha.1-blue.svg)](https://github.com/kruschdev/krusch-biz)
@@ -9,517 +9,113 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 162 Passing](https://img.shields.io/badge/Tests-162%20Passing-brightgreen.svg)](tests/)
+[![Tests: 172 Passing](https://img.shields.io/badge/Tests-172%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: 4/4 Passing](https://img.shields.io/badge/CI%20Gates-4%2F4%20Passing-brightgreen.svg)](scripts/eval_adversarial_corpus.py)
 
 ---
 
-> [!WARNING]
-> **Research Prototype & Corporate Governance Scope (Read Before Evaluating)**:  
-> KruschBiz is an open-source technical prototype exploring sovereign on-premise corporate intelligence and retrieval-augmented generation. It is **NOT** a law firm, does **NOT** provide legal advice, and does **NOT** replace certified legal counsel or corporate auditors.
-> - **Semantic Similarity ≠ Governing Obligation**: Cosine retrieval identifies textually similar provisions; it does not determine binding precedence, execution status, or legal enforceability. KruschBiz resolves this via explicit graph edges (`AMENDS`, `SUPERSEDES`, `INCORPORATES`, `SCHEDULE_OF`, `CARVES_OUT`) and a recursive controlling-document resolver.
-> - **Execution Status & Amendments**: While KruschBiz tracks temporal dates, amendments, and superseded relations within its local graph, operators must ensure fully executed agreements are ingested.
-> - **Confidentiality & Storage Boundary**: Default port bindings (`127.0.0.1`) restrict services strictly to loopback. Deal room exhibits and retrieved clauses remain entirely on-premise. Sovereign trade secret protection requires operator-enforced host storage encryption (LUKS / FileVault) and network isolation.
-> - **Mandatory Human Verification**: All generated drafts are explicitly marked `review_required: true` and `provisional_work_product: true`. Outputs must be independently verified by admitted counsel and corporate officers prior to execution or reliance.
+## 🎯 Product Boundary & Focus
+
+**Billing, invoicing, and OCR live elsewhere.**
+
+KruschBiz is built for one job:
+1. **Determining the controlling contractual instrument and clause** across complex multi-document families, chronological amendment chains, and schedule carve-outs.
+2. **Auditing and grounding generated commercial claims** against the controlling text using typed slot primitives and a canonical 7-mode failure taxonomy.
+
+Operational sludge (accounts receivable aging, OCR ingestion, invoice templates) has been permanently excised to sibling packages. Deep theoretical background on why standard vector search collapses on commercial agreements is detailed in [`docs/why_krusch_biz_differs_from_business_rag.md`](docs/why_krusch_biz_differs_from_business_rag.md). Comprehensive graph model and algorithm details are documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
-## 🏛️ Why KruschBiz?
+## ⚡ Core Architectural Invariants
 
-Enterprise legal departments, corporate procurement teams, and M&A executives face an existential dilemma:
-1. **Public Cloud LLMs & SaaS Vector DBs**: Expose confidential deal terms, proprietary pricing, trade secrets, employee records, and acquisition targets to third-party cloud sub-processors and potential training pools—violating non-disclosure agreements (NDAs) and corporate governance mandates.
-2. **Generic RAG Loss of Hierarchy**: Standard vector pipelines chunk contracts into arbitrary 500-token blocks, stripping physical page numbers, clause hierarchies, and amendment relations. A 2021 expired amendment can easily outrank a controlling 2025 Master Services Agreement.
-3. **Plausible Hallucinations**: Standard LLM generation frequently hallucinates terms (e.g. asserting "Net 45" when the contract specifies "Net 30", or inventing phantom section numbers).
-
-**KruschBiz** solves this with:
-- **Relational Contract Graph**: Explicit instrument nodes (`agreements`), clause nodes (`clauses`), and typed relation edges (`AMENDS`, `SUPERSEDES`, `INCORPORATES`, `SCHEDULE_OF`, `CARVES_OUT`).
-- **Controlling Document Resolver**: Recursive graph-walking algorithm with cycle detection and typed precedence that determines controlling instruments and clauses given `(counterparty, topic, as_of_date)`.
-- **Closed Taxonomy & Structured Slot Extraction**: Extracts canonical commercial slots (`net_days`, `late_interest_pct`, `uptime_pct`, `cap_period_months`, `payment_notice_days`, `breach_notice_days`, `termination_notice_days`) with exact character offset spans (`slot_spans`) directly into JSON columns at ingest.
-- **Assertion-Level Proposition Grounding Scanner**: Verifies generated claims using citation existence in controlling sets, normalized slot primitives, currency/basis checks, negation/carve-out guards, and token span containment.
-- **Air-Gapped Sovereign Ingestion Spine**: Standalone parser and chunker with pre-spool file magic bytes validation and chunk DOS limits.
-
----
-
-## 🚀 Core Capabilities
-
-* 🔒 **Sovereign Air-Gapped Topology**: Default loopback bindings (`127.0.0.1:8086`, `127.0.0.1:8506`), code-level loopback verification, zero external telemetry, and mandatory tenant-bound API keys outside dev.
-* 🕸️ **Confirmed-Edge Precedence Graph & Controlling Resolver**:
-  * Explicit database models: `agreements`, `clauses`, and `agreement_relations`.
-  * **Human-Confirmed Edges Only for Precedence**: Candidate relation extractor (`src/backend/relations.py`) emits relations with `status='proposed'` for review. The controlling DAG resolver (`src/backend/resolver.py`) walks **only confirmed edges** (`status='confirmed'|'accepted'`); unconfirmed proposals never silently dictate terms and are returned as advisories.
-  * **Unexecuted Draft Isolation**: Agreements with `execution_status='draft'` cannot defeat, supersede, or amend executed agreements.
-  * **Document Hierarchy Safeguards**: Master Agreements outrank SOWs/schedules on general governance provisions; schedules outrank Master Agreements strictly on commercial parameters (fees, SLAs).
-  * **Full Resolution Trace Auditing**: Every consult query persists an immutable [`ResolutionTraceRecord`](src/backend/db.py) recording traversed candidate paths, hops evaluated, and discard reasons.
-  * Transitive DAG walk (`resolve_controlling_clause`) resolves multi-hop amendment chains (A → B → C) with cycle detection (`max_depth=32`) and typed precedence (`SUPERSEDES`, `AMENDS`, `SCHEDULE_OF`, `CARVES_OUT`, `INCORPORATES`).
-  * Emits an authoritative `amendment_trail` audit artifact and dynamic confidence score.
-  * `detect_contract_conflicts(counterparty, as_of_date)` surfaces diverging terms across live operative agreements before LLM synthesis.
-* 📋 **One-Page Orchestrator Specification**:
-  * Governed by [`docs/ORCHESTRATOR_SPEC.md`](docs/ORCHESTRATOR_SPEC.md): standardizes the `matter_ref` ↔ `deal_ref` entity mapping table, shared `as_of_date` query contracts, and 5 non-negotiable DO-NOT invariants across KruschBiz and KruschLaw.
-* 🎯 **Closed Commercial Taxonomy & Open Structured Slots**:
-  * 13 canonical commercial topics (`PAYMENT_TERMS`, `LATE_FEE`, `LIABILITY_CAP`, `LIABILITY_CARVE_OUT`, `INDEMNITY`, `SLA_UPTIME`, `SLA_CREDIT`, `DATA_PROTECTION`, `BREACH_NOTIFICATION`, `AUDIT_RIGHTS`, `TERMINATION_CONVENIENCE`, `MOST_FAVORED_NATION`, `GOVERNING_LAW`).
-  * Structured slot extraction into JSON columns at ingest with character offset provenance spans (`slot_spans`).
-* 🛡️ **Layered Assertion Grounding & Failure Taxonomy**:
-  * Multi-tier verification pipeline (`src/backend/rag.py`):
-    1. **Citation Resolve**: Cited instrument and section must exist in the *retrieved controlling set*, rejecting `WRONG_INSTRUMENT`.
-    2. **Slot Value Normalization**: Type-safe comparison of normalized slot primitives (`30` vs `30.0` vs `"Net 30"` vs `"thirty (30)"`).
-    3. **Numerical Unit & Basis Verification**: Catches currency mismatches (€ vs $) and interest frequency divergence (monthly vs APR).
-    4. **Negation & Carve-Out Guard**: Catches dropped exceptions (e.g. asserting uncapped liability or dropping Gross Negligence carve-outs) as `NEGATED_OBLIGATION`.
-    5. **Partial Support Detection**: Emits `PARTIAL_SUPPORT` when topic matches but numerical values are unsubstantiated.
-    6. **Token Span Containment**: Substantive token containment rather than loose bag-of-words overlap.
-* 🛑 **Agent Refusal Guardrails**:
-  * `CANNOT_DRAFT_WITHOUT_AUTHORITIES`: Refuses drafting when zero relevant authorities exist in the graph.
-  * `REFUSAL_ALL_AUTHORITIES_SUPERSEDED`: Refuses drafting if all retrieved authorities are superseded or terminated.
-  * `CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE`: Strictly refuses drafting on constant mock vectors if embeddings are offline.
-* 🌲 **Sovereign Document Ingestion**:
-  * Pre-spool magic byte verification (`%PDF-`, `PK\x03\x04`, `\xd0\xcf\x11\xe0`) rejecting executable binaries (`MZ`, `\x7fELF`) before disk spooling.
-  * Standalone parser adapter supporting PDF, DOCX, TXT, MD, CSV with natural legal boundary chunking.
-  * Max chunk DOS guardrail (`MAX_INGEST_CHUNKS_PER_DOC = 500`).
-  * Transactional `IngestJob` state machine (`queued → parsing → extracting_slots → embedding → indexed | failed`).
-* 🏢 **Multi-Tenant Isolation**: Key-bound tenant authentication (`tenant_id:key_secret`) strictly rejecting `X-Tenant-ID` header spoofing (HTTP 403) and cross-tenant IDOR access (HTTP 404).
-* ✂️ **Excised Commercial Ops & Pure Precedence Focus**:
-  * Non-core operations (invoicing, accounts receivable aging, heuristic OCR, and DraftPro templates) have been permanently excised from the default engine to guarantee zero bloat, strict latency boundaries, and an uncompromising focus on relational contract precedence, graph walking, and proposition grounding.
-* 🏷️ **Commercial Ensemble Chunk Tagging & Micro-Digests**: Integrated commercial chunk tagger (`src.backend.tagger`) performing an ensemble merge of deterministic contractual slot tags (`net-30`, `uptime-99.9pct`, `cap-12mo`, `sec-12`) with local Ollama (`qwen2.5-coder:7b`) with LRU caching, JSON repair, and slot priority.
-* 🔍 **Unified Commercial Retrieval Scorer**: Single Python scorer across SQLite and Postgres combining dense vector cosine similarity with lexical BM25 cover density, tag boosts, and a structural `superseded_penalty` ensuring controlling clauses always outrank superseded terms.
-* 🗑️ **Atomic Purge & Immutable Audit Trail**:
-  * Multi-table transactional purge (`purge_agreement_transactional`, `purge_deal_matter_transactional`) eliminates orphan records in a single database transaction with typed deal code confirmation.
-  * Append-only immutable `AuditLog` enforced by database event listeners rejecting updates and deletions.
-* 🔌 **Dual MCP Architecture (Canonical Domain Server + Sovereign Gateway Router)**:
-  * **Domain MCP Server** (`src/mcp/server.py`): Exposes 4 high-leverage canonical tools (`contract_intelligence`, `manage_deal`, `ingest_contract`, `verify_grounding`) over stdio JSON-RPC without prompt bloat or legacy tool sprawl.
-  * **Sovereign Gateway MCP Router** (`src/mcp/gateway.py`): Exposes a consolidated single 5-verb cross-repo gateway (`ask_law`, `ask_biz`, `check_compliance`, `ingest`, `purge`) strictly constrained to **<450 prompt tokens** (1,715 chars, ~428 tokens) for local 7B/14B models without context bloat.
-
+* **Confirmed-Edge Invariant**: Relation extraction proposes edges with `status='proposed'`. The controlling document resolver walks **only confirmed edges** (`status='confirmed'`). Unconfirmed proposals never silently alter controlling terms and are returned strictly as advisories.
+* **DAG Precedence Resolver**: Transitive DAG walk (`resolve_controlling_clause`) resolves multi-hop amendment chains (A → B → C) chronologically by effective date, with DFS recursion-stack cycle detection, self-loop prevention, and a depth cap (`depth < 32`).
+* **Unexecuted Draft Isolation**: Agreements with `execution_status='draft'` cannot defeat, supersede, or amend executed agreements in precedence resolution.
+* **Document Hierarchy Safeguards**: Master Agreements outrank SOWs/schedules on general governance (liability, indemnification, governing law); schedules outrank Master Agreements strictly on commercial parameters (fees, SLAs, deliverables).
+* **7 Canonical Grounding Failure Codes**: Verification audits generated assertions against controlling text and categorizes failures into:
+  `WRONG_INSTRUMENT`, `SLOT_MISMATCH`, `UNIT_MISMATCH`, `NEGATED_OBLIGATION`, `PARTIAL_SUPPORT`, `SUPERSEDED`, and `NO_AUTHORITY`.
+* **Closed Commercial Taxonomy & Slot Spans**: 13 canonical commercial topics (`PAYMENT_TERMS`, `LIABILITY_CAP`, `FEES`, etc.) with quantitative slots (`net_days`, `cap_amount`, `late_interest_pct`) extracted with exact character offset spans (`slot_spans`) and a frozen 32-character `clause_uid` hash.
+* **Air-Gapped Sovereign Security**: Loopback-bound (`127.0.0.1:8086`, `127.0.0.1:8506`), boot-check failure on non-loopback or placeholder API keys outside development, single `tenant_id:key_secret` auth story rejecting header spoofing (HTTP 403), and pre-spool MIME magic-byte validation rejecting executable binaries (`MZ`, `\x7fELF`, Mach-O) and HTML-disguised PDFs.
+* **Transactional Purge & Append-Only Audit**: Atomically cleans deal and agreement records with zero orphan rows across all tables. Audit log records reject `UPDATE` and `DELETE` at the database engine level via SQLAlchemy event listeners.
+* **Dual MCP Architecture**:
+  * **Canonical Domain MCP** (`src/mcp/server.py`): Exactly **4 high-leverage tools** (`contract_intelligence`, `manage_deal`, `ingest_contract`, `verify_grounding`).
+  * **Sovereign Gateway MCP** (`src/mcp/gateway.py`): Exactly **5 cross-domain verbs** (`ask_law`, `ask_biz`, `check_compliance`, `ingest`, `purge`) strictly constrained to <450 prompt tokens (~428 tokens).
 
 ---
 
-## 🏷️ Commercial Ensemble Chunk Tagging & Dual-Path Semantic Recall
+## 📊 Empirical Evaluation & CI Scorecard
 
-KruschBiz features a specialized commercial chunk tagging and retrieval pipeline tailored for corporate agreements, SOWs, and M&A due diligence exhibits.
+Evaluation results are tracked and regenerated by CI in [`data/eval/scorecard.json`](data/eval/scorecard.json):
 
-```
-                           Raw Contract Chunk
-                                   │
-                   ┌───────────────┴───────────────┐
-                   ▼                               ▼
-      Deterministic Slot Extraction     Local LLM Semantic Tagger
-     (net-30, uptime-99.9pct, cap, sec)  (Ollama qwen2.5-coder:7b @ 15s)
-                   │                               │
-          Exact Slot Anchor Tags          Semantic Concepts &
-      (e.g., `net-30`, `uptime-99.9pct`)   1-Sentence Micro-Digest
-                   │                               │
-                   └───────────────┬───────────────┘
-                                   ▼
-                         Ensemble Tag Union
-                   (Deduplicated, Normalized, Grounded)
-                                   │
-                                   ▼
-                   PostgreSQL 16 + pgvector Storage
-             (DealEvidence & CommercialClauseVector Schemas)
-                                   │
-                                   ▼
-                      Dual-Path Retrieval Pipeline
-    (Dense Vector Cosine + BM25 Lexical RRF + 20% Tag Boost + Topic Filter)
-```
-
-### 1. The Commercial Ensemble Tagging Standard
-Commercial agreements combine rigid numerical metrics (payment periods, availability commitments, damage caps) with nuanced qualitative obligations (confidentiality, IP assignments, indemnity triggers). An LLM-only tagger frequently captures the abstract concept (e.g. `payment-terms`) but drops the controlling numeric anchor (`net-30`).
-
-KruschBiz resolves this via **Ensemble Tagging** (`src/backend/tagger.py`):
-1. **Deterministic Slot Extraction**: High-precision regex extracts quantitative business metrics:
-   - Payment terms: `net-30`, `net-45`, `net-60`, `net-90`
-   - Availability SLOs: `uptime-99.9pct`, `uptime-99.95pct`, `uptime-99.99pct`
-   - Liability caps: `cap-12mo`, `cap-fees-paid`
-   - Structural section numbers: `sec-12`, `sec-4.2`
-2. **Local LLM Semantic Tagging**: Local Ollama `qwen2.5-coder:7b` extracts 3–5 lowercase domain tags and a 1-sentence executive micro-digest.
-3. **Ensemble Union**: Merges deterministic slot tags with LLM semantic tags, ensuring critical numbers are **never lost**.
-4. **Deterministic Fallback**: If Ollama times out or the GPU node is saturated, the system uses extractive first-sentence digests and slot anchors with zero cloud leakage.
-
-### 2. Schema Enrichment
-* **`DealEvidence`** (`deal_evidence`): Populated with `tags` (JSON array of strings), `summary` (1-sentence digest), and `topic` (canonical commercial doctrine).
-* **`CommercialClauseVector`** (`commercial_clause_vectors`): Enriched with `tags`, `summary`, and `topic`.
-* **`Clause`** (`clauses`): Added `tags` and `summary`.
-
-### 3. Dual-Path Retrieval & Exact Tag Boosting
-When retrieving deal exhibits or searching operative agreements (`src/backend/rag.py`):
-* **Dual Retrieval (`retrieve_deal_evidence`)**: Performs dense vector search (`bge-large`, 1024-dim) combined with BM25 lexical full-text ranking.
-* **Exact Tag Boost**: Chunks containing tags matching the inquiry receive an immediate **+20% score boost** (`score * 1.20`), guaranteeing that explicit slot queries (e.g., `net-30` or `uptime-99.9pct`) rank at the top.
-* **Topic & Tag Filtering (`retrieve_clauses`)**: Direct relational SQL filtering by `topic` and `tag` before ranking.
-
----
-
-## 🖥️ User Interface & Visual Walkthrough
-
-KruschBiz features an on-premise, cyber-executive interface styled in deep navy and titanium slate with gold-amber accents. Engineered for corporate legal departments, procurement teams, and M&A analysts, the interface provides high-contrast React-Aria navigation tabs, deterministic feedback states, and full visibility into contractual graph precedence.
-
----
-
-### Tab 1: 🏛️ The Deal Room
-> **Operational Transaction Overview, Operative Controlling Terms & Proposition Grounding Audit**
-
-The **Deal Room** serves as the central operational command center for active transactions, corporate counterparties, and matter exhibits. It enables operators to consult controlling terms as of any temporal date, audit assertion-level grounding, and generate exportable General Counsel memos.
-
-![Tab 1: The Deal Room](docs/images/tab1_deal_room.png)
-
-* **Key Features**:
-  * **Operative Controlling Term Consultation**: Queries `(counterparty, topic, as_of_date)` to resolve governing terms across multi-year agreement portfolios.
-  * **Uncertainty Alert Banner**: When unconfirmed proposed relation edges exist in the deal room, displays an amber `⚠️ CONTROLLING CLAUSE UNCERTAIN; N proposed relation link(s) pending human review` warning across briefs and consultations to prevent premature reliance.
-  * **Assertion Grounding Scanner**: Verifies draft propositions against retrieved controlling authorities, flagging invented clauses, divergent numbers, or superseded language.
-  * **One-Page Memo Generation**: Emits an authoritative "What Controls as of DATE" briefing with complete amendment lineage trails.
-
----
-
-### Tab 2: 🔗 Relation Review Queue & Precedence Graph (The Core Product)
-> **Human-in-the-Loop Relation Confirmation, Body-Level Spans & Precedence DAG Walk**
-
-The **Relation Review Queue** is the foundational core of KruschBiz. Rather than allowing unverified heuristic edges to silently dictate controlling terms, the system extracts candidate relations with `status='proposed'` and presents them in an actionable review queue.
-
-![Tab 2: Relation Review Queue & Precedence Graph](docs/images/tab2_relation_review.png)
-
-* **Key Features**:
-  * **First-Class Proposed Relation Cards**: Side-by-side inspection of source and target instruments, effective dates, and relationship types (`AMENDS`, `SUPERSEDES`, `INCORPORATES`, `CARVES_OUT`).
-  * **Triggering Source Text Span**: Surfaces the exact contractual sentence (from body text, conflict clauses, or preambles) that triggered the relationship extraction.
-  * **One-Click Actions**: Single-click `Accept` (confirms edge for DAG resolver), `Reject` (removes invalid edge), or `Edit` (adjusts relation type, date, or scope).
-  * **Precedence DAG Walk**: Visualizes confirmed transitive amendment chains (A → B → C) and cycle-safe graph traversals.
-  * **Side-by-Side Instrument Diffing**: Inspects divergent language between base master agreements and operative amendments.
-
----
-
-### Tab 3: 🌲 Sovereign Ingest & Deep Extraction
-> **Pre-Spool MIME Magic Verification, 5-Stage Ingest Pipeline & Structured Slot Explorer**
-
-The **Sovereign Ingestion** suite processes incoming commercial agreements entirely on-premise without third-party cloud leaks or external sub-processors.
-
-![Tab 3: Sovereign Ingest & Deep Extraction](docs/images/tab3_sovereign_ingest.png)
-
-* **Key Features**:
-  * **Pre-Spool Magic Byte Verification**: Inspects file headers (`%PDF-`, `PK\x03\x04`, `\xd0\xcf\x11\xe0`) before spooling to disk, rejecting executable binaries (`MZ`, `\x7fELF`) before processing.
-  * **5-Stage State Machine Pipeline**: Visual tracking of `queued → parsing → extracting_slots → embedding → indexed`.
-  * **Structured Commercial Slot Extraction**: Automatically extracts quantitative metrics (`net_days`, `late_interest_pct`, `uptime_pct`, `cap_period_months`, `breach_notice_days`, `termination_notice_days`) with exact character offset provenance spans (`slot_spans`).
-  * **Ensemble Tagging & Micro-Digests**: Merges deterministic slot anchors (`net-30`, `uptime-99.9pct`) with local Ollama semantic tags into PostgreSQL 16 + pgvector.
-
----
-
-### Tab 4: 🛡️ Adversarial Multi-Document Scorecard
-> **Empirical Verification Across 7 Adversarial Contract Families & 4 Uncoupled Metrics**
-
-The **Adversarial Scorecard** provides verifiable proof of algorithmic rigor, executing deterministic evaluations against complex, real-world multi-document contract traps.
-
-![Tab 4: Adversarial Multi-Document Scorecard](docs/images/tab4_adversarial_scorecard.png)
-
-* **Key Features**:
-  * **Live 4-Metric Benchmark**:
-    * **Relation Extraction F1 (100.0%)**: Precision and recall across body-level `AMENDS`, `SUPERSEDES`, `INCORPORATES`, and `CARVES_OUT` links.
-    * **Controlling Clause As-Of Accuracy (100.0%)**: Accuracy of transitive DAG walks resolving the governing clause as of historical and present dates.
-    * **Slot Extraction Exact-Match (100.0%)**: Exact normalized match on quantitative slots from controlling clauses.
-    * **Proposition Grounding Accuracy (100.0%)**: 6-way assertion verification rejecting hallucinations and stale terms.
-  * **7 Adversarial Contract Families**: Covers verbose master agreements, surgical 1-sentence restatements, conflicting SOWs, express carve-outs, unmarked side letters, and merger clause conflicts.
-  * **One-Click Execution**: Interactive button calling `GET /api/evaluation/adversarial` to re-verify all CI gates in real time.
-
----
-
-## 🌐 Core REST API & Relation Management
-
-KruschBiz exposes a clean, sovereign REST API adhering strictly to loopback-only bindings:
-
-* `GET /api/deals`: List active deal rooms and transaction portfolios.
-* `GET /api/deals/{deal_id}/evidence`: Enriched deal exhibits with tags, summary, and canonical topics.
-* `GET /api/clauses`: Clause search with topic, tag, and as-of date temporal filtering.
-* `POST /api/consult`: Transitive precedence DAG walk determining controlling clauses for `(counterparty, topic, as_of_date)`.
-* `POST /api/resolver/what-controls-export`: Generate comprehensive 1-page "What Controls as of DATE" GC legal memo and audit artifact across commercial topics.
-* `POST /api/verify`: Assertion-level proposition grounding scanner returning a 6-way verification taxonomy.
-* `GET /api/relations`: Query relation edges filtered by status (`proposed`, `confirmed`, `rejected`) and agreement.
-* `PATCH /api/relations/{relation_id}`: Human-in-the-loop review endpoint to confirm, reject, or edit proposed relation types, scopes, and dates.
-* `DELETE /api/relations/{relation_id}`: Delete an erroneous relation edge.
-* `GET /api/evaluation/adversarial`: Retrieve the live 4-metric adversarial scorecard across 7 multi-document families.
-
----
-
-## 🏗️ Architecture
-
-```
-                                ┌────────────────────────────────┐       ┌────────────────────────────────┐
-                                │     KruschBiz Web Dashboard    │       │     IDE Agents / Subagents     │
-                                │  (Streamlit / 127.0.0.1:8506)  │       │ (Claude / Antigravity / Wind)  │
-                                │  *Executive Navy/Gold Styling* │       │  *4 Canonical Tools (~650 tok)*│
-                                └──────────────┬─────────────────┘       └──────────────┬─────────────────┘
-                                               │ REST (CORS Restricted)                 │ Stdio JSON-RPC
-                                               │                         ┌──────────────▼─────────────────┐
-                                               │                         │      KruschBiz MCP Server      │
-                                               │                         │      (src/mcp/server.py)       │
-                                               │                         └──────────────┬─────────────────┘
-                                               │                                        │ In-process / RPC
-                                ┌──────────────▼────────────────────────────────────────▼─┐
-                                │                   KruschBiz Backend                     │
-                                │              (FastAPI / 127.0.0.1:8086)                 │
-                                │         *Relational Graph, Resolver & Grounding*        │
-                                └───┬──────────────────────┬──────────────────────────┬───┘
-                                    │                      │                          │
-                     SQL / pgvector │                      │ Nexus Spine / Ingest     │ Local HTTP
-                                    │                      │ Standalone               │
-         ┌──────────────────────────▼───┐              ┌───▼───────────┐  ┌───────────▼──────────────┐
-         │   PostgreSQL 16 + pgvector   │              │  Nexus Adapter│  │     Local Ollama Node    │
-         │ (Contract Clauses & Evidence)│              │ Ingest Spine  │  │  ├─ bge-large (Embed)    │
-         │        127.0.0.1:5436        │              │ (PDF/DOCX/MD) │  │  └─ qwen2.5:14b / 7b     │
-         └──────────────────────────────┘              └───────────────┘  └──────────────────────────┘
-```
-
----
-
-## 💻 Hardware Requirements & Model Matrix
-
-| Profile | Recommended Model | Minimum Hardware | Expected Speed | Suitable Use Case |
+| Evaluation Gate | Dataset / Scope | Primary Metric | Target | Result |
 |---|---|---|---|---|
-| **CPU / Lightweight** | `qwen2.5:7b` + `bge-large` | 16GB System RAM (8 threads) | ~10–18 tok/s | Air-gapped laptops, small office CPU nodes, rapid exploration |
-| **GPU / Standard** | `qwen2.5:14b` + `bge-large` | 12GB+ VRAM (RTX 3060/4070, Apple Silicon 16GB+) | ~35–55 tok/s | High-precision commercial synthesis, SLA & liability risk spotting |
-| **Workstation / Heavy** | `qwen2.5:32b` + `bge-large` | 24GB+ VRAM (RTX 3090/4090, Apple Silicon 36GB+) | ~20–30 tok/s | Complex M&A due diligence, multi-contract conflict analysis |
-
-To configure models, update `.env`:
-```env
-OLLAMA_LLM_MODEL=qwen2.5:14b
-OLLAMA_EMBED_MODEL=bge-large
-```
+| **Gate 1: Synthetic Smoke** | Smoke test fixtures (N=25) | Recall@5 | ≥ 85.0% | **92.0%** (MRR 0.853) |
+| **Gate 2: Unmocked Embedding** | Deterministic `bge-large` vectors (N=25) | Pure Vector Recall@5 | ≥ 90.0% | **92.0%** (MRR 0.860) |
+| **Gate 3: Held-Out Contracts** | Redacted real-world agreements (N=12) | Held-Out Recall@5 | ≥ 95.0% | **100.0%** (MRR 0.958) |
+| | | Superseded Inversions | 0 inversions | **0 inversions** |
+| **Gate 4: Calibration Matrix** | Grounding assertions (N=48) | Macro F1 | ≥ 75.0% | **96.41%** (Acc 91.67%) |
+| **Adversarial Multi-Doc Pack** | 7 complex multi-document families | Relation F1 | ≥ 85.0% | **100.0%** |
+| | (Silent overrides, carve-outs, side letters) | Controlling Clause Acc | ≥ 95.0% | **100.0%** (13/13) |
+| | | Proposition Grounding | ≥ 95.0% | **100.0%** (28/28) |
+| **The Ugly Real Pack** | Real-world 7-instrument stress test | Temporal Matrix | 6/6 phases | **6/6 passed** |
+| | (Stale MSA + Restated MSA + 3 Amds + Draft Amd + SOW Fee) | | | |
 
 ---
 
-## ⚡ Quickstart
+## ⚖️ Scope & Compliance Disclaimer
+
+> **KruschBiz is not a compliance product.**
+>
+> Full statutory compliance, regulatory precedence, and legislative analysis live in sibling packages ([`krusch-law`](../krusch-law) and [`krusch-bizlaw`](../krusch-bizlaw)). The demo ruleset in [`mandates/ca_demo.yaml`](mandates/ca_demo.yaml) is provided strictly as a technical demonstration of cross-domain join mechanics. Queries specifying jurisdictions other than California return `UNSUPPORTED_JURISDICTION` with an advisory pointing to `krusch-bizlaw`.
+>
+> KruschBiz outputs are provisional technical analysis and do **NOT** constitute legal advice.
+
+---
+
+## 🚀 Quickstart
 
 ### Prerequisites
-* [Docker](https://docs.docker.com/get-docker/) & Docker Compose
-* Local [Ollama](https://ollama.com/) instance:
-  ```bash
-  ollama pull bge-large
-  ollama pull qwen2.5:14b
-  ```
+- Python 3.11 or 3.12
+- Local Ollama instance with `bge-large` (embeddings) and `qwen2.5-coder:7b` (tagger/LLM)
+- SQLite (local development) or PostgreSQL 16 + pgvector (production)
 
-### 1. Clone & Configure
+### 1. Installation
 ```bash
 git clone https://github.com/kruschdev/krusch-biz.git
 cd krusch-biz
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
 
+### 2. Configure Environment
+```bash
 cp .env.example .env
+# Default settings bind strictly to loopback (127.0.0.1)
 ```
 
-### 2. Launch Stack
+### 3. Run Test Suite
 ```bash
-docker compose up --build -d
+pytest tests -v
 ```
 
-Verify endpoints:
-* **Frontend UI**: [http://localhost:8506](http://localhost:8506)
-* **Backend API Docs**: [http://localhost:8086/docs](http://localhost:8086/docs)
-* **Health & Diagnostics**: [http://localhost:8086/health](http://localhost:8086/health)
-
----
-
-## 🔌 Model Context Protocol (MCP) Integration
-
-KruschBiz provides a native stdio JSON-RPC MCP server (`src/mcp/server.py`) exposing sovereign corporate intelligence tools. To prevent prompt token bloat and routing confusion on local 7B/14B models, tools are strictly focused on **4 high-leverage canonical tools** (~700 prompt tokens, eliminating legacy tool sprawl):
-
-### Canonical 4-Tool Contract (Active Agent Surface)
-| Canonical Tool | Action Verbs | Description |
-|---|---|---|
-| `contract_intelligence` | `search`, `get_clause`, `resolve_controlling`, `detect_conflicts`, `diff_instruments` | Unified query engine for hybrid vector+lexical search, clause inspection, controlling amendment DAG resolution, contract conflict detection, and side-by-side diffing. |
-| `manage_deal` | `log`, `list`, `audit`, `draft_brief` | Securely log confidential transactions with embeddings, enumerate active deals, retrieve proposition grounding audits, and draft memos. |
-| `ingest_contract` | `ingest_file` | Ingest enterprise documents into the sovereign citation spine with MIME magic byte verification and natural legal boundary chunking. |
-| `verify_grounding` | `verify_claims` | Run assertion-level proposition grounding verification against governing contract authorities, returning a 6-way failure taxonomy. |
-
-### 🌐 Sovereign Gateway MCP Router (<450 Prompt Tokens)
-
-For cross-domain fleet coordination without prompt context bloat, KruschBiz also provides the hyper-compact 5-verb Gateway MCP router (`src/mcp/gateway.py`) adhering strictly to [`docs/ORCHESTRATOR_SPEC.md`](docs/ORCHESTRATOR_SPEC.md):
-
-* **Exact 5 Verbs**:
-  1. `ask_law`: Sovereign California statutory search, multi-hop precedence resolution, and tenant defense checklists (delegated to KruschLaw).
-  2. `ask_biz`: Sovereign corporate contract intelligence, relational deal graph walk, and clause retrieval.
-  3. `check_compliance`: Conflict analysis evaluating contract slots against statutory floors/ceilings (e.g., AB 12 deposit caps).
-  4. `ingest`: Sovereign document ingestion with MIME magic byte verification and natural section boundary chunking.
-  5. `purge`: Verifiable cryptographic deletion with SHA-256 tombstone audit receipts.
-* **Token Budget**: Strictly constrained to **<450 prompt tokens** (~1,715 characters dense JSON) across all 5 verb definitions.
-* **Launch Command**:
-  ```bash
-  python -m src.mcp.gateway
-  ```
-
----
-
-## 🎬 One-Command Reproduction Demo: The Amendment Blindspot
-
-Standard vector RAG fails on corporate contract portfolios because verbose legal boilerplate in an original Master Services Agreement repeats domain query tokens 3–5x more frequently than a surgical 1-sentence amending restatement. Consequently, dense cosine and BM25 retrievers consistently rank the **superseded root agreement** over the **controlling amendment**—the *Amendment Blindspot*.
-
-KruschBiz resolves this via **Precedence Graph Walking**:
-
+### 4. Launch Services
 ```bash
-# Run the standalone in-memory side-by-side reproduction demo (<10ms)
-python3 scripts/demo_walk_vs_cosine.py
-```
+# Terminal 1: Backend REST API (Port 8086)
+uvicorn src.backend.main:app --host 127.0.0.1 --port 8086 --reload
 
-### Side-by-Side Comparison Output:
-```
-====================================================================================================
-KRUSCH-BIZ PRECEDENCE ENGINE BENCHMARK: GRAPH WALK VS NAIVE COSINE RAG
-====================================================================================================
-Scenario: Acme Corp - Master Services Agreement (2024-01-15) amended by Amendment No. 1 (2024-06-01)
-Query: 'What is Acme Corp's liability cap and payment term?'
-----------------------------------------------------------------------------------------------------
+# Terminal 2: Streamlit Review UI (Port 8506)
+streamlit run src/frontend/app.py --server.port 8506 --server.address 127.0.0.1
 
-1. NAIVE COSINE / BM25 FLAT RAG:
-   ❌ Selected: 'MSA Section 9 (2024-01-15)' (Score: 0.942)
-   ❌ Extracted Liability Cap: $500,000
-   ❌ Extracted Payment Term: Net 30
-   ⚠️  WHY IT FAILED (The Amendment Blindspot):
-      The original 2024-01-15 MSA contains 180 words of verbose legal boilerplate repeating
-      'liability', 'cap', 'payment', and 'terms' 7 times. The dense embedding and BM25 ranker
-      favored lexical redundancy and length over legal precedence, completely missing the 1-sentence
-      operative amendment executed 5 months later.
-
-2. KRUSCH-BIZ RELATIONAL PRECEDENCE GRAPH WALK:
-   ✅ Controlling Instrument: 'Amendment No. 1 (2024-06-01)'
-   ✅ Lineage: MSA-2024 (SUPERSEDED by AMEND-01) -> AMEND-01 (CONTROLLING)
-   ✅ Controlling Clause: 'Section 2 (Amended Liability & Payment)'
-   ✅ Extracted Liability Cap: $1,000,000
-   ✅ Extracted Payment Term: Net 45
-   🛡️ WHY IT SUCCEEDED:
-      KruschBiz resolved the confirmed 'AMENDS' edge from Amendment No. 1 to MSA-2024.
-      Because the as-of query date (2024-07-01) is after Amendment No. 1's effective date,
-      the graph walk pruned the superseded $500k / Net 30 clause and elevated the operative terms.
-====================================================================================================
+# Terminal 3: Canonical Domain MCP Server (Stdio)
+python -m src.mcp.server
 ```
 
 ---
 
-## 🛡️ Adversarial Multi-Document Evaluation Benchmark
+## 📚 Documentation Directory
 
-KruschBiz is evaluated against an adversarial public fixture corpus of 7 complex multi-document corporate contract families (`data/eval/adversarial_corpus.json`) covering:
-1. Verbose Master Agreements amended by surgical 1-sentence restatements.
-2. Master Agreements conflicting with Statements of Work (SOWs) governed by precedence clauses.
-3. Express carve-out and non-waiver provisions.
-4. Unmarked side letters and addenda lacking explicit section references.
-5. Expired agreements vs operative renewals with overlapping counterparty names.
-6. Similar counterparties with subtle corporate entity suffixes (Inc vs LLC vs Ltd).
-7. Conflicting entire agreement / merger clauses.
-
-The engine is benchmarked across **4 uncoupled, objective metrics** under the **Fixture Verification** evaluation class (deterministic CI validation against `data/eval/adversarial_corpus.json` with recorded SHA-256 fixture hash `6b5d2931...`; distinct from Gate 3 Held-Out evaluations):
-
-| Metric | Target | Measured Score | Evaluation Notes |
-|---|---|---|---|
-| **1. Relation Extraction F1** | > 90.0% | **100.0%** (P: 100%, R: 100%) | Body-level & preamble extraction of `AMENDS`, `SUPERSEDES`, `INCORPORATES`, `CARVES_OUT` across 7 families |
-| **2. Controlling Clause As-Of Accuracy** | > 90.0% | **100.0%** (13/13) | Precedence DAG walk resolving exact governing clauses across past, intermediate, and present as-of dates |
-| **3. Slot Extraction Exact-Match** | > 90.0% | **100.0%** (15/15) | Exact value extraction for `net_days`, `uptime_pct`, `liability_cap`, `late_fee_pct` from controlling text |
-| **4. Proposition Grounding Accuracy** | > 90.0% | **100.0%** (28/28) | Multi-class grounding verification (`VERIFIED`, `DIVERGENT_TERM`, `INVENTED_CLAUSE`, `SUPERSEDED_TERM`) |
-
-```bash
-# Execute adversarial fixture verification suite (publishes live scorecard to data/eval/adversarial_eval_results.json)
-python3 scripts/eval_adversarial_corpus.py
-
-# Run automated pytest verification gates
-pytest tests/eval/test_adversarial_corpus.py -v
-```
-
----
-
-## 🔒 Security Architecture & Local-First Guarantees
-
-KruschBiz enforces defense-in-depth security to protect confidential commercial contracts:
-
-1. **Loopback-Only Service Bindings**:
-   - Backend API defaults strictly to `127.0.0.1:8086`.
-   - Frontend UI defaults strictly to `127.0.0.1:8506`.
-   - Startup hooks verify loopback bindings; public network exposure is blocked by design.
-2. **Pre-Spool MIME Magic Byte Verification**:
-   - Ingestion endpoints inspect binary file headers (`%PDF-`, `PK\x03\x04`, `\xd0\xcf\x11\xe0`) before spooling to disk.
-   - Executable binaries (`MZ`, `\x7fELF`) and unrecognized formats are immediately rejected with HTTP 400.
-3. **Path Traversal & Filename Sanitization**:
-   - Document upload filenames are sanitized using secure basename extraction; directory traversal (`../`) attempts are neutralized.
-4. **Multi-Tenant Isolation & Anti-Spoofing**:
-   - Requests outside development require key-bound tenant authentication (`tenant_id:key_secret`).
-   - Unauthenticated `X-Tenant-ID` header spoofing is rejected with HTTP 403 Forbidden.
-   - All database queries, full-text searches, and graph traversals are tenant-partitioned (`tenant_id == active_tenant`).
-   - Cross-tenant IDOR mutations or deletions return HTTP 404 Not Found.
-   - Comprehensive test suite (`tests/test_tenant_isolation.py`) enforces strict tenant boundary isolation across 8 distinct vectors.
-5. **Air-Gapped Local Inference**:
-   - Zero outbound telemetry or cloud API calls. Embeddings (`bge-large`) and generation (`qwen2.5-coder:14b` / `7b`) execute locally via Ollama or on-prem GPU nodes.
-
----
-
-## 🧪 Automated Testing & CI Gates
-
-```bash
-# Run full unit, integration, graph invariant, compliance join, tagger, security, and tenant isolation test suite (162 tests)
-pytest tests
-
-# Run golden precedence graph invariant tests (confirmed-edge walk, draft isolation, hierarchy)
-pytest tests/test_graph_invariants.py -v
-
-# Run Gateway MCP router tests (5-verb gateway, <450 token budget, JSON-RPC)
-pytest tests/test_gateway_mcp.py -v
-
-# Run domain MCP server tests (verifies 4 canonical tools)
-pytest tests/test_mcp.py
-
-# Run adversarial grounding test suite (16 adversarial cases)
-pytest tests/test_adversarial_grounding.py
-
-# Run security hardening tests (tenant binding, rate limiting, magic bytes, constant vector refusal)
-pytest tests/test_security_hardening.py
-
-# Run multi-tenant isolation tests (8 vectors)
-pytest tests/test_tenant_isolation.py -v
-
-# Run multi-gate empirical evaluation harness (publishes raw scorecard JSON to data/eval/scorecard.json)
-python scripts/eval_retrieval_and_grounding.py
-```
-
----
-
-## 📊 Empirical Evaluation Scorecards
-
-KruschBiz evaluates retrieval and grounding through a multi-gate calibration harness (`scripts/eval_retrieval_and_grounding.py`). Gate 1 serves strictly as a **bootstrap smoke test**, while Gate 3 (Held-Out Redacted Contracts) represents the **primary evaluation gate** on external instruments not present in test fixtures.
-
-### Gate 1: Fixture Corpus (Bootstrap Smoke Test)
-*Evaluated against `data/eval/golden_business_eval.json` (25 seeded corporate test cases).*
-
-| Metric | Target | Measured Score | Evaluation Notes |
-|---|---|---|---|
-| **Recall@1 (Top-1 Accuracy)** | > 75.0% | **80.0%** | Relevant governing clause returned as top hit |
-| **Recall@5 (Top-5 Coverage)** | > 90.0% | **92.0%** | Gold section contained in top 5 retrieved items |
-| **Mean Reciprocal Rank (MRR)** | > 0.800 | **0.853** | Harmonic mean of gold citation retrieval rank |
-| **Distractor / Stale Agreement Leaks** | 0 | **0** | Expired 2021 MSA never outranked 2025 controlling agreement |
-| **Average Query Latency** | < 250 ms | **123.8 ms** | Hybrid search + relational graph hydration |
-
-### Gate 2: Unmocked Embedding Gate (Real `bge-large` 1024-d Vectors)
-*Evaluated with real 1024-dimensional cosine similarity vectors frozen in `data/eval/embeddings/` (no live Ollama required in CI).*
-
-| Metric | Measured Score | Evaluation Notes |
-|---|---|---|
-| **Pure Vector Recall@1** | **80.0%** | Dense cosine vector retrieval top-1 |
-| **Pure Vector Recall@5** | **92.0%** | Dense cosine vector retrieval top-5 |
-| **Pure Vector MRR** | **0.860** | Mean reciprocal rank across all query vectors |
-
-### Gate 3: Held-Out Contracts Gate (Primary Held-Out Evaluation)
-*Evaluated against `data/eval/heldout_contracts.json` (12 held-out redacted commercial contracts with exact claim spans and numeric slots).*
-
-| Metric | Target | Measured Score | Evaluation Notes |
-|---|---|---|---|
-| **Held-Out Recall@1** | > 85.0% | **91.67%** | Top-1 accuracy on unseen commercial agreements |
-| **Held-Out Recall@5** | > 95.0% | **100.0%** | Top-5 coverage across held-out agreements |
-| **Held-Out MRR** | > 0.900 | **0.958** | Mean reciprocal rank on held-out instruments |
-| **Priority Inversions** | 0 | **0** | Superseded instrument never ranked above a controlling one |
-| **Superseded-in-Top-1 Rate** | 0.0% | **0.0%** | Zero superseded clauses mistakenly placed at Rank 1 |
-
-### Grounding Calibration & Confusion Matrix
-*Evaluated across discrete proposition claims using exact span containment, normalized slot primitives, currency/frequency basis verification, and carve-out guards.*
-
-| Category | Tested Propositions | Accurate Classifications | Accuracy Rate | Precision | Recall | F1 |
-|---|---|---|---|---|---|---|
-| **VERIFIED** | 12 | 11 | **91.7%** | **100.0%** | **91.7%** | **95.7%** |
-| **INVENTED_CLAUSE** | 12 | 12 | **100.0%** | **100.0%** | **100.0%** | **100.0%** |
-| **DIVERGENT_TERM** | 11 | 9 | **81.8%** | **100.0%** | **81.8%** | **90.0%** |
-| **SUPERSEDED_TERM** | 1 | 1 | **100.0%** | **100.0%** | **100.0%** | **100.0%** |
-| **Macro Average** | **36** | **33** | **91.67%** | **100.0%** | **93.4%** | **96.4%** |
-
-> [!NOTE]
-> All evaluation runs generate an authentic, verifiable JSON scorecard published to [`data/eval/scorecard.json`](data/eval/scorecard.json).
-
-
----
-
-## 📜 License
-
-KruschBiz is open-source software licensed under the **[MIT License](LICENSE)**.
-
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): Formal graph specification, data schemas, resolver rules, clause UID hashing, and security controls.
+- [`docs/why_krusch_biz_differs_from_business_rag.md`](docs/why_krusch_biz_differs_from_business_rag.md): Deep-dive white paper on the failure modes of generic vector RAG in commercial contracting.
+- [`docs/ORCHESTRATOR_SPEC.md`](docs/ORCHESTRATOR_SPEC.md): Cross-domain orchestrator specification between KruschBiz and KruschLaw.
+- [`mandates/ca_demo.yaml`](mandates/ca_demo.yaml): Demonstration statutory join ruleset with California jurisdiction scoping.

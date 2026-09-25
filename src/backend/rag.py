@@ -926,8 +926,8 @@ def verify_commercial_grounding(
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
                     "cited_authority": cited_raw,
-                    "status": "invented_clause",
-                    "failure_mode": "INVENTED_CLAUSE",
+                    "status": "no_authority",
+                    "failure_mode": "NO_AUTHORITY",
                     "details": f"Cited authority '{cited_raw}' does not exist in the retrieved commercial corpus.",
                     "evidence_span": None
                 })
@@ -979,8 +979,8 @@ def verify_commercial_grounding(
                         "claim_id": f"claim_{total_claims}",
                         "sentence": sentence,
                         "cited_authority": cited_raw,
-                        "status": "ambiguous_citation",
-                        "failure_mode": "AMBIGUOUS_CITATION",
+                        "status": "no_authority",
+                        "failure_mode": "NO_AUTHORITY",
                         "details": f"Ambiguous citation: '{cited_raw}' matches {len(distinct_ags)} distinct agreements in controlling set without instrument qualification.",
                         "evidence_span": None
                     })
@@ -995,8 +995,8 @@ def verify_commercial_grounding(
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
                     "cited_authority": cited_raw,
-                    "status": "superseded_term",
-                    "failure_mode": "SUPERSEDED_TERM",
+                    "status": "superseded",
+                    "failure_mode": "SUPERSEDED",
                     "details": f"Authority '{cited_raw}' is superseded / inoperative (superseded by: {matching_clause.get('superseded_by', 'controlling agreement')}).",
                     "evidence_span": matching_clause.get("content", "")[:180] + "..."
                 })
@@ -1083,8 +1083,8 @@ def verify_commercial_grounding(
                             "claim_id": f"claim_{total_claims}",
                             "sentence": sentence,
                             "cited_authority": cited_raw,
-                            "status": "divergent_term",
-                            "failure_mode": "DIVERGENT_TERM",
+                            "status": "unit_mismatch",
+                            "failure_mode": "UNIT_MISMATCH",
                             "details": f"Currency mismatch: asserted '{sent_curr}' diverges from contract authority '{clause_curr}'.",
                             "evidence_span": clause_content[:180] + "..."
                         })
@@ -1101,8 +1101,8 @@ def verify_commercial_grounding(
                         "claim_id": f"claim_{total_claims}",
                         "sentence": sentence,
                         "cited_authority": cited_raw,
-                        "status": "divergent_term",
-                        "failure_mode": "DIVERGENT_TERM",
+                        "status": "unit_mismatch",
+                        "failure_mode": "UNIT_MISMATCH",
                         "details": f"Rate unit mismatch: asserted {sent_rate}% APR diverges from contract monthly rate ({clause_rate_raw}% per month).",
                         "evidence_span": clause_content[:180] + "..."
                     })
@@ -1135,8 +1135,8 @@ def verify_commercial_grounding(
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
                     "cited_authority": cited_raw,
-                    "status": "divergent_term",
-                    "failure_mode": "DIVERGENT_TERM",
+                    "status": "slot_mismatch",
+                    "failure_mode": "SLOT_MISMATCH",
                     "details": divergence_reason,
                     "evidence_span": clause_content[:180] + "..."
                 })
@@ -1197,8 +1197,8 @@ def verify_commercial_grounding(
                         "claim_id": f"claim_{total_claims}",
                         "sentence": sentence,
                         "cited_authority": cited_raw,
-                        "status": "divergent_term",
-                        "failure_mode": "DIVERGENT_TERM",
+                        "status": "slot_mismatch",
+                        "failure_mode": "SLOT_MISMATCH",
                         "details": f"Numeric claim in '{cited_raw}' requires slot match or span containment; asserted values not found in governing clause.",
                         "evidence_span": clause_content[:180] + "..."
                     })
@@ -1233,8 +1233,8 @@ def verify_commercial_grounding(
                     "claim_id": f"claim_{total_claims}",
                     "sentence": sentence,
                     "cited_authority": cited_raw,
-                    "status": "divergent_term",
-                    "failure_mode": "DIVERGENT_TERM",
+                    "status": "slot_mismatch",
+                    "failure_mode": "SLOT_MISMATCH",
                     "details": f"Clause '{cited_raw}' exists, but text diverges significantly from the asserted terms.",
                     "evidence_span": clause_content[:180] + "..."
                 })
@@ -1262,12 +1262,16 @@ def verify_commercial_grounding(
         "total_claims": total_claims,
         "supported_claims": supported_claims,
         "unsupported_claims": unsupported_claims,
-        "invented_clauses": invented_clauses,
-        "divergent_terms": divergent_terms,
-        "superseded_terms": superseded_terms,
         "wrong_instruments": wrong_instruments,
-        "partial_supports": partial_supports,
+        "slot_mismatches": sum(1 for c in claim_records if c.get("failure_mode") == "SLOT_MISMATCH"),
+        "unit_mismatches": sum(1 for c in claim_records if c.get("failure_mode") == "UNIT_MISMATCH"),
         "negated_obligations": negated_obligations,
+        "partial_supports": partial_supports,
+        "superseded": superseded_terms,
+        "superseded_terms": superseded_terms,
+        "no_authorities": invented_clauses + ambiguous_citations,
+        "invented_clauses": invented_clauses,
+        "divergent_terms": sum(1 for c in claim_records if c.get("failure_mode") in ("SLOT_MISMATCH", "UNIT_MISMATCH")),
         "ambiguous_citations": ambiguous_citations,
         "pass_rate": pass_rate
     }

@@ -52,9 +52,24 @@ def validate_file_magic_bytes(file_path: str, ext: str) -> bool:
     if not os.path.exists(file_path):
         return False
     with open(file_path, "rb") as f:
-        header = f.read(16)
+        header = f.read(512)
+
+    # Invariant: Unconditionally reject executable binaries (MZ, ELF, Mach-O) regardless of declared extension
+    if (
+        header.startswith(b"MZ")
+        or header.startswith(b"\x7fELF")
+        or header.startswith(b"\xfe\xed\xfa\xce")
+        or header.startswith(b"\xcf\xfa\xed\xfe")
+        or header.startswith(b"\xca\xfe\xba\xbe")
+    ):
+        return False
+
     ext = ext.lower()
     if ext == ".pdf":
+        stripped = header.lstrip()
+        # Invariant: Disallow HTML disguised as PDF
+        if stripped.startswith(b"<") or b"<html" in stripped.lower() or b"<!doctype" in stripped.lower():
+            return False
         return header.startswith(b"%PDF-")
     elif ext in (".docx", ".doc"):
         return header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")

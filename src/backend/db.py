@@ -313,7 +313,7 @@ class AgreementRelation(Base):
     source_span = Column(Text, nullable=True)
     reviewer_id = Column(String(100), nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
-    status = Column(String(50), default="accepted", nullable=False, index=True)  # proposed, accepted, rejected
+    status = Column(String(50), default="confirmed", nullable=False, index=True)  # proposed, confirmed, rejected
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -631,9 +631,8 @@ def init_db(target_engine=None):
                 "deal_matters",
                 "deal_evidence",
                 "commercial_grounding_reports",
-                "contracts_portfolio",
-                "invoices",
-                "commercial_audit_log",
+                "resolution_traces",
+                "audit_logs",
                 "ingest_jobs",
             ]
             for tbl in rls_tables:

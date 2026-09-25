@@ -68,35 +68,35 @@ class TestAdversarialGrounding(unittest.TestCase):
         is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["invented_clauses"], 1)
-        self.assertEqual(claims[0]["failure_mode"], "INVENTED_CLAUSE")
+        self.assertEqual(claims[0]["failure_mode"], "NO_AUTHORITY")
 
     def test_02_detect_superseded_agreement_citation(self):
         draft = "Under Section 2021-MSA-4.1, Customer is entitled to Net 90 payment terms."
         is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["superseded_terms"], 1)
-        self.assertEqual(claims[0]["failure_mode"], "SUPERSEDED_TERM")
+        self.assertEqual(claims[0]["failure_mode"], "SUPERSEDED")
 
     def test_03_detect_divergent_payment_terms_slot(self):
         draft = "Pursuant to Section 4.1, Customer shall remit payment within sixty (60) days ('Net 60')."
         is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["divergent_terms"], 1)
-        self.assertEqual(claims[0]["failure_mode"], "DIVERGENT_TERM")
+        self.assertEqual(claims[0]["failure_mode"], "SLOT_MISMATCH")
 
     def test_04_detect_inflated_liability_cap(self):
         draft = "Pursuant to Section 10.1, aggregate cumulative liability is capped at $2,000,000."
         is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["divergent_terms"], 1)
-        self.assertEqual(claims[0]["failure_mode"], "DIVERGENT_TERM")
+        self.assertEqual(claims[0]["failure_mode"], "SLOT_MISMATCH")
 
     def test_05_detect_deflated_uptime_percentage(self):
         draft = "Pursuant to Exhibit B Section 2.1, Vendor guarantees 95.0% uptime availability."
         is_grounded, claims, _, stats = verify_commercial_grounding(draft, self.mock_clauses)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["divergent_terms"], 1)
-        self.assertEqual(claims[0]["failure_mode"], "DIVERGENT_TERM")
+        self.assertEqual(claims[0]["failure_mode"], "SLOT_MISMATCH")
 
     def test_06_verify_authentic_grounded_assertion(self):
         draft = "Pursuant to Section 4.1, Customer shall pay all undisputed invoice amounts within thirty (30) days of invoice date."
@@ -151,6 +151,7 @@ class TestAdversarialGrounding(unittest.TestCase):
         is_grounded, claims, _, stats = verify_commercial_grounding(draft_curr, self.mock_clauses)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["divergent_terms"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "UNIT_MISMATCH")
         self.assertIn("Currency mismatch", claims[0]["details"])
 
         # 2. Rate basis divergence: 18% APR vs 1.5% per month
@@ -168,6 +169,7 @@ class TestAdversarialGrounding(unittest.TestCase):
         is_grounded, claims, _, stats = verify_commercial_grounding(draft_rate, payment_clause_with_rate)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["divergent_terms"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "UNIT_MISMATCH")
         self.assertIn("Rate unit mismatch", claims[0]["details"])
 
     def test_12_detect_dropped_carveout_negation(self):
@@ -211,7 +213,7 @@ class TestAdversarialGrounding(unittest.TestCase):
         draft_bad = "Pursuant to Section 4.1, invoices are payable within Net 60 days."
         is_grounded, claims, _, stats = verify_commercial_grounding(draft_bad, amd_clauses)
         self.assertFalse(is_grounded)
-        self.assertEqual(claims[0]["failure_mode"], "DIVERGENT_TERM")
+        self.assertEqual(claims[0]["failure_mode"], "SLOT_MISMATCH")
 
     def test_14_section_symbol_normalization(self):
         """Verify citation '§4.1' matches clause indexed under 'Section 4.1'."""
@@ -269,7 +271,7 @@ class TestAdversarialGrounding(unittest.TestCase):
         is_grounded, claims, _, stats = verify_commercial_grounding(draft, multi_ag_clauses)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["ambiguous_citations"], 1)
-        self.assertEqual(claims[0]["failure_mode"], "AMBIGUOUS_CITATION")
+        self.assertEqual(claims[0]["failure_mode"], "NO_AUTHORITY")
 
     def test_18_numeric_claim_strict_slot_or_span_rejection(self):
         """Ensure token overlap CANNOT substantiate an unverified numeric claim."""
@@ -290,7 +292,7 @@ class TestAdversarialGrounding(unittest.TestCase):
         is_grounded, claims, _, stats = verify_commercial_grounding(draft, clause)
         self.assertFalse(is_grounded)
         self.assertEqual(stats["divergent_terms"], 1)
-        self.assertEqual(claims[0]["failure_mode"], "DIVERGENT_TERM")
+        self.assertEqual(claims[0]["failure_mode"], "SLOT_MISMATCH")
 
     def test_19_conditional_obligation_negation(self):
         """Detect NEGATED_OBLIGATION when an assertion asserts unconditional coverage dropping express exceptions."""

@@ -131,6 +131,184 @@ class TestSecurityHardening(unittest.TestCase):
 
 
 
+    def test_09_fail_boot_on_empty_and_default_api_keys_outside_dev(self):
+        """Verify that server refuses to boot outside development with empty or default placeholder keys."""
+        for bad_key in ("", "   ", "default", "changeme", "secret", "kruschbiz_secret", "replace_me"):
+            s = Settings(APP_ENV="production", API_KEY=bad_key, HOST="127.0.0.1")
+            with self.assertRaises(RuntimeError) as ctx:
+                validate_security_invariants(s)
+            self.assertIn("API_KEY is strictly required outside development environment", str(ctx.exception))
+
+    def test_10_mime_magic_rejects_mz_elf_and_html_disguised_pdf(self):
+        """Verify that executable magic bytes (MZ, ELF) and HTML disguised as PDF are rejected."""
+        # 1. Windows MZ header disguised as PDF and DOCX
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00")
+            mz_pdf = f.name
+        # 2. Linux ELF header disguised as PDF and TXT
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+            elf_pdf = f.name
+        # 3. HTML disguised as PDF
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"<!DOCTYPE html>\n<html><head><title>Invoice</title></head><body><h1>Fake</h1></body></html>")
+            html_pdf = f.name
+        # 4. Lowercase HTML tag disguised as PDF
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"<html><body><script>malicious()</script></body></html>")
+            script_pdf = f.name
+        # 5. Valid PDF header
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.7 \x25\xe2\xe3\xcf\xd3\n")
+            valid_pdf = f.name
+
+        try:
+            self.assertFalse(validate_file_magic_bytes(mz_pdf, ".pdf"))
+            self.assertFalse(validate_file_magic_bytes(mz_pdf, ".docx"))
+            self.assertFalse(validate_file_magic_bytes(mz_pdf, ".txt"))
+
+            self.assertFalse(validate_file_magic_bytes(elf_pdf, ".pdf"))
+            self.assertFalse(validate_file_magic_bytes(elf_pdf, ".txt"))
+
+            self.assertFalse(validate_file_magic_bytes(html_pdf, ".pdf"))
+            self.assertFalse(validate_file_magic_bytes(script_pdf, ".pdf"))
+
+            self.assertTrue(validate_file_magic_bytes(valid_pdf, ".pdf"))
+        finally:
+            for p in (mz_pdf, elf_pdf, html_pdf, script_pdf, valid_pdf):
+                if os.path.exists(p):
+                    os.remove(p)
+
+    def test_11_audit_log_immutability_update_and_delete_raise_permission_error(self):
+        """Verify that AuditLog records are append-only; UPDATE and DELETE trigger PermissionError."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from src.backend.db import Base, AuditLog
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+
+        log = AuditLog(
+            tenant_id="tenant_sec",
+            action="consult",
+            actor_key_hash="hash_12345",
+            client_ip="127.0.0.1"
+        )
+        session.add(log)
+        session.commit()
+        log_id = log.id
+
+        # 1. Verify UPDATE fails
+        log_fetched = session.query(AuditLog).filter_by(id=log_id).first()
+        log_fetched.actor_key_hash = "tampered_hash"
+        with self.assertRaises(PermissionError) as ctx:
+            session.commit()
+        self.assertIn("AuditLog records are append-only and strictly immutable", str(ctx.exception))
+        session.rollback()
+
+        # 2. Verify DELETE fails
+        log_to_delete = session.query(AuditLog).filter_by(id=log_id).first()
+        session.delete(log_to_delete)
+        with self.assertRaises(PermissionError) as ctx:
+            session.commit()
+        self.assertIn("AuditLog records are append-only and strictly immutable", str(ctx.exception))
+        session.rollback()
+        session.close()
+
+    def test_12_transactional_purge_leaves_zero_rows_across_all_tables(self):
+        """Verify that hard transactional purges leave exactly 0 leftover rows across all related tables."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from datetime import datetime
+        from src.backend.db import (
+            Base, DealMatter, DealEvidence, CommercialGroundingReport,
+            Agreement, Clause, AgreementRelation, CommercialClauseVector,
+            purge_deal_matter_transactional, purge_agreement_transactional
+        )
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        tenant = "tenant_purge_audit"
+
+        # A. Seed Deal Matter and relations
+        deal = DealMatter(
+            tenant_id=tenant,
+            deal_code="DEAL-ZERO-LEFTOVER",
+            title="Acquisition Zero",
+            context_facts="Diligence background facts",
+            company_name="Our Corp",
+            counterparty_name="Target Co",
+            status="active"
+        )
+        session.add(deal)
+        session.flush()
+
+        ev1 = DealEvidence(tenant_id=tenant, deal_id=deal.id, filename="c1.pdf", content="Evidence 1 content")
+        ev2 = DealEvidence(tenant_id=tenant, deal_id=deal.id, filename="c2.pdf", content="Evidence 2 content")
+        rep1 = CommercialGroundingReport(
+            id="rep-12345",
+            tenant_id=tenant,
+            deal_id=deal.id,
+            claims_json="[]",
+            total_claims=0
+        )
+        session.add_all([ev1, ev2, rep1])
+
+        # B. Seed Agreement and relations
+        ag = Agreement(
+            tenant_id=tenant,
+            title="Purge Master Agreement",
+            instrument_type="master_agreement",
+            counterparty="Target Co",
+            effective_date=datetime(2024, 1, 1),
+            execution_status="executed"
+        )
+        session.add(ag)
+        session.flush()
+
+        cl1 = Clause(tenant_id=tenant, agreement_id=ag.id, section="1.1", title="Term", topic="PAYMENT_TERMS", authority_class="governing_agreement", content="Content 1")
+        cl2 = Clause(tenant_id=tenant, agreement_id=ag.id, section="1.2", title="Fee", topic="FEES", authority_class="governing_agreement", content="Content 2")
+        rel1 = AgreementRelation(tenant_id=tenant, source_agreement_id=ag.id, target_agreement_id=ag.id, relation_type="AMENDS", clause_scope="ALL", status="confirmed")
+        vec1 = CommercialClauseVector(
+            tenant_id=tenant,
+            organization="Our Corp",
+            agreement_type="master_agreement",
+            title=ag.title,
+            section="1.1",
+            topic="PAYMENT_TERMS",
+            content="Content 1",
+            authority_class="governing_agreement"
+        )
+        session.add_all([cl1, cl2, rel1, vec1])
+        session.commit()
+
+        # Execute Deal Purge
+        deal_stats = purge_deal_matter_transactional(session, tenant, deal.id)
+        self.assertEqual(deal_stats["deleted"], 1)
+        self.assertEqual(deal_stats["evidence"], 2)
+        self.assertEqual(deal_stats["reports"], 1)
+
+        # Assert 0 leftover rows for deal tables
+        self.assertEqual(session.query(DealMatter).filter_by(tenant_id=tenant).count(), 0)
+        self.assertEqual(session.query(DealEvidence).filter_by(tenant_id=tenant).count(), 0)
+        self.assertEqual(session.query(CommercialGroundingReport).filter_by(tenant_id=tenant).count(), 0)
+
+        # Execute Agreement Purge
+        ag_stats = purge_agreement_transactional(session, tenant, ag.id)
+        self.assertEqual(ag_stats["deleted"], 1)
+
+        # Assert 0 leftover rows for agreement tables
+        self.assertEqual(session.query(Agreement).filter_by(tenant_id=tenant).count(), 0)
+        self.assertEqual(session.query(Clause).filter_by(tenant_id=tenant).count(), 0)
+        self.assertEqual(session.query(AgreementRelation).filter_by(tenant_id=tenant).count(), 0)
+        self.assertEqual(session.query(CommercialClauseVector).filter_by(tenant_id=tenant).count(), 0)
+
+        session.close()
+
 
 if __name__ == "__main__":
     unittest.main()

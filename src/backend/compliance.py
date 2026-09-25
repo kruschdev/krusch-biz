@@ -2,8 +2,11 @@
 src/backend/compliance.py
 =========================
 The Contract-vs-Statute Join Engine (`POST /conflicts/contract-vs-statute`).
+Demonstration ruleset only (mandates/ca_demo.yaml). NOT A COMPLIANCE PRODUCT.
+Sovereign multi-jurisdiction compliance lives in sibling package `krusch-bizlaw`.
+
 Compares controlling contract clause slots (resolved via KruschBiz DAG)
-against mandatory statutory ceilings and floors (resolved via KruschLaw Precedence Graph).
+against mandatory statutory ceilings and floors.
 
 Deterministic slot evaluation over LLM similarity:
   - 'aligned': Contract complies with statutory floor/ceiling.
@@ -199,15 +202,44 @@ def evaluate_contract_vs_statute(
 
     counterparty_query = counterparty or "Default Entity"
 
-    # 3. Parse jurisdiction
+    # 3. Parse jurisdiction & enforce demo ruleset boundary
     city = None
     _state = "CA"
-    if ":" in request.jurisdiction:
-        parts = request.jurisdiction.split(":", 1)
-        _state = parts[0].strip()
+    raw_jur = request.jurisdiction.strip()
+    if ":" in raw_jur:
+        parts = raw_jur.split(":", 1)
+        _state = parts[0].strip().upper()
         city = parts[1].strip()
-    elif "Oakland" in request.jurisdiction:
-        city = "Oakland"
+    elif any(k in raw_jur.upper() for k in ("OAKLAND", "SAN FRANCISCO", "CALIFORNIA", "CA")):
+        _state = "CA"
+        if "Oakland" in raw_jur:
+            city = "Oakland"
+    else:
+        _state = raw_jur.upper()
+
+    if _state not in ("CA", "CALIFORNIA"):
+        finding = ComplianceFinding(
+            topic="ALL",
+            alignment="jurisdiction_mismatch",
+            enforceability="UNSPECIFIED",
+            coverage="none",
+            contract_clause=None,
+            controlling_statute=None,
+            explanation=(
+                f"UNSUPPORTED_JURISDICTION: Jurisdiction '{request.jurisdiction}' is not supported "
+                f"in the ca_demo demo ruleset (mandates/ca_demo.yaml). Not a compliance product. "
+                f"Sovereign multi-jurisdiction compliance is provided by sibling package 'krusch-bizlaw'."
+            ),
+            trace_id=f"trace_join_{uuid.uuid4().hex[:12]}"
+        )
+        return ContractVsStatuteResponse(
+            verdict="UNSUPPORTED_JURISDICTION",
+            as_of_date=request.as_of_date,
+            jurisdiction=request.jurisdiction,
+            counterparty=counterparty_query,
+            coverage_completeness="none",
+            findings=[finding]
+        )
 
     findings: List[ComplianceFinding] = []
     has_non_compliant = False

@@ -336,16 +336,16 @@ def run_adversarial_eval(
             else:
                 failures_log.append({"family_id": fam_id, "type": "PROP_NOT_VERIFIED", "details": f"Expected VERIFIED, got {p1} on: '{target_sentence}'"})
 
-            # 2. INVENTED_CLAUSE case
+            # 2. INVENTED_CLAUSE case (canonical: NO_AUTHORITY)
             prop_cases["INVENTED_CLAUSE"]["expected"] += 1
             _, recs2, _, _ = verify_commercial_grounding("Under Section 99.9, party shall forfeit all rights.", mock_retrieved)
             p2 = recs2[0].get("failure_mode", "UNKNOWN") if recs2 else "UNKNOWN"
-            if p2 == "INVENTED_CLAUSE":
+            if p2 in ("INVENTED_CLAUSE", "NO_AUTHORITY"):
                 prop_cases["INVENTED_CLAUSE"]["correct"] += 1
             else:
-                failures_log.append({"family_id": fam_id, "type": "PROP_NOT_INVENTED", "details": f"Expected INVENTED_CLAUSE, got {p2}"})
+                failures_log.append({"family_id": fam_id, "type": "PROP_NOT_INVENTED", "details": f"Expected INVENTED_CLAUSE/NO_AUTHORITY, got {p2}"})
 
-            # 3. DIVERGENT_TERM case
+            # 3. DIVERGENT_TERM case (canonical: SLOT_MISMATCH)
             if "net_days" in test_cl.structured_slots:
                 actual_days = test_cl.structured_slots["net_days"]
                 val = actual_days.get("value") if isinstance(actual_days, dict) else actual_days
@@ -360,12 +360,12 @@ def run_adversarial_eval(
             prop_cases["DIVERGENT_TERM"]["expected"] += 1
             _, recs3, _, _ = verify_commercial_grounding(divergent_draft, mock_retrieved)
             p3 = recs3[0].get("failure_mode", "UNKNOWN") if recs3 else "UNKNOWN"
-            if p3 == "DIVERGENT_TERM":
+            if p3 in ("DIVERGENT_TERM", "SLOT_MISMATCH"):
                 prop_cases["DIVERGENT_TERM"]["correct"] += 1
             else:
-                failures_log.append({"family_id": fam_id, "type": "PROP_NOT_DIVERGENT", "details": f"Expected DIVERGENT_TERM, got {p3}"})
+                failures_log.append({"family_id": fam_id, "type": "PROP_NOT_DIVERGENT", "details": f"Expected DIVERGENT_TERM/SLOT_MISMATCH, got {p3}"})
 
-            # 4. SUPERSEDED_TERM case
+            # 4. SUPERSEDED_TERM case (canonical: SUPERSEDED)
             mock_superseded = [{
                 "section": test_cl.section,
                 "title": test_cl.title,
@@ -378,10 +378,10 @@ def run_adversarial_eval(
             prop_cases["SUPERSEDED_TERM"]["expected"] += 1
             _, recs4, _, _ = verify_commercial_grounding(f"Under {test_cl.section}, term is operative.", mock_superseded)
             p4 = recs4[0].get("failure_mode", "UNKNOWN") if recs4 else "UNKNOWN"
-            if p4 == "SUPERSEDED_TERM":
+            if p4 in ("SUPERSEDED_TERM", "SUPERSEDED"):
                 prop_cases["SUPERSEDED_TERM"]["correct"] += 1
             else:
-                failures_log.append({"family_id": fam_id, "type": "PROP_NOT_SUPERSEDED", "details": f"Expected SUPERSEDED_TERM, got {p4}"})
+                failures_log.append({"family_id": fam_id, "type": "PROP_NOT_SUPERSEDED", "details": f"Expected SUPERSEDED_TERM/SUPERSEDED, got {p4}"})
 
         family_results.append({
             "family_id": fam_id,

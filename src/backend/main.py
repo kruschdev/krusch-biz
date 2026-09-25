@@ -516,7 +516,7 @@ def hard_delete_deal(
 ):
     """
     Hard purge: Permanently delete deal record, all associated evidence,
-    reports, and invoices in a single atomic transaction.
+    and grounding reports in a single atomic transaction.
     Requires typed confirmation matching the target deal_code.
     """
     deal = db.query(DealMatter).filter(
