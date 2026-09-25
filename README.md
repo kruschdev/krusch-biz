@@ -268,6 +268,22 @@ KruschBiz provides a native stdio JSON-RPC MCP server (`src/mcp/server.py`) expo
 | `ingest_contract` | `ingest_file` | Ingest enterprise documents into the sovereign citation spine with MIME magic byte verification and natural legal boundary chunking. |
 | `verify_grounding` | `verify_claims` | Run assertion-level proposition grounding verification against governing contract authorities, returning a 6-way failure taxonomy. |
 
+### 🌐 Sovereign Gateway MCP Router (<450 Prompt Tokens)
+
+For cross-domain fleet coordination without prompt context bloat, KruschBiz also provides the hyper-compact 5-verb Gateway MCP router (`src/mcp/gateway.py`) adhering strictly to [`docs/ORCHESTRATOR_SPEC.md`](docs/ORCHESTRATOR_SPEC.md):
+
+* **Exact 5 Verbs**:
+  1. `ask_law`: Sovereign California statutory search, multi-hop precedence resolution, and tenant defense checklists (delegated to KruschLaw).
+  2. `ask_biz`: Sovereign corporate contract intelligence, relational deal graph walk, and clause retrieval.
+  3. `check_compliance`: Direct conflict analysis ("The Join") evaluating contract slots against statutory floors/ceilings (e.g., AB 12 deposit caps).
+  4. `ingest`: Sovereign document ingestion with MIME magic byte verification and natural section boundary chunking.
+  5. `purge`: Verifiable cryptographic deletion with SHA-256 tombstone audit receipts.
+* **Token Budget**: Strictly constrained to **<450 prompt tokens** (~1,715 characters dense JSON) across all 5 verb definitions.
+* **Launch Command**:
+  ```bash
+  python -m src.mcp.gateway
+  ```
+
 ---
 
 ## 🎬 One-Command Reproduction Demo: The Amendment Blindspot
