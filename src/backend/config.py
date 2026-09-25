@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     APP_ENV: str = os.getenv("APP_ENV", "development")
     HOST: str = os.getenv("HOST", "127.0.0.1")
     ALLOW_LAN: bool = os.getenv("ALLOW_LAN", "0") in ("1", "true", "True")
-    ENABLE_BUSINESS_OPS: bool = os.getenv("ENABLE_BUSINESS_OPS", "0") in ("1", "true", "True")
 
     # Database (Port 5436 to avoid conflict with KruschLaw 5435 and default 5432)
     DATABASE_URL: str = os.getenv(

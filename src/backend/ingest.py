@@ -806,7 +806,7 @@ def ingest_business_document(
         # 6. Extract Proposed Relational Edges
         job.stage = "extracting_relations"
         db.commit()
-        full_doc_text = " ".join([ch.text for ch in chunks[:5]])
+        full_doc_text = "\n\n".join([ch.text for ch in chunks[:50]])
         source_id = ag_record.id if "ag_record" in locals() and ag_record else None
         proposed_relations = extract_proposed_relations(
             text=full_doc_text,

@@ -297,6 +297,13 @@ class RelationCreate(BaseModel):
     notes: str | None = None
 
 
+class RelationUpdate(BaseModel):
+    clause_scope: str | None = None
+    relation_type: str | None = None
+    target_agreement_id: int | None = None
+    status: str | None = None
+
+
 class ResolverRequest(BaseModel):
     counterparty: str = Field(..., description="Counterparty or vendor name")
     topic: str = Field(..., description="Canonical commercial topic, e.g. 'PAYMENT_TERMS'")
@@ -1102,6 +1109,53 @@ def reject_relation(
     return {"id": rel.id, "status": "rejected"}
 
 
+@app.patch("/api/relations/{relation_id}")
+def update_relation(
+    relation_id: int,
+    rel_update: RelationUpdate,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Edit relation properties (clause_scope, relation_type, target_agreement_id, status)."""
+    rel = db.query(AgreementRelation).filter(
+        AgreementRelation.id == relation_id,
+        AgreementRelation.tenant_id == x_tenant_id
+    ).first()
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relation edge not found.")
+
+    if rel_update.clause_scope is not None:
+        rel.clause_scope = rel_update.clause_scope
+    if rel_update.relation_type is not None:
+        rel.relation_type = rel_update.relation_type
+    if rel_update.target_agreement_id is not None:
+        rel.target_agreement_id = rel_update.target_agreement_id
+    if rel_update.status is not None:
+        rel.status = rel_update.status
+
+    parsed_notes = {}
+    if rel.notes:
+        try:
+            parsed_notes = json.loads(rel.notes)
+        except Exception:
+            pass
+    if rel_update.status is not None:
+        parsed_notes["status"] = rel_update.status
+    parsed_notes["edited_at"] = datetime.now(timezone.utc).isoformat()
+    rel.notes = json.dumps(parsed_notes)
+
+    db.commit()
+    db.refresh(rel)
+    return {
+        "id": rel.id,
+        "status": rel.status,
+        "clause_scope": rel.clause_scope,
+        "relation_type": rel.relation_type,
+        "target_agreement_id": rel.target_agreement_id
+    }
+
+
 @app.delete("/api/relations/{relation_id}")
 def delete_relation(
     relation_id: int,
@@ -1119,6 +1173,40 @@ def delete_relation(
     db.delete(rel)
     db.commit()
     return {"id": relation_id, "status": "deleted"}
+
+
+# --- Adversarial Multi-Document Evaluation Benchmark ---
+
+@app.get("/api/evaluation/adversarial")
+def get_adversarial_evaluation(
+    force_rerun: bool = Query(False, description="Force re-execution of adversarial corpus"),
+    api_key: str | None = Depends(verify_api_key)
+):
+    """
+    Retrieve empirical scorecard for the 7 adversarial multi-document families:
+    1. Relation Extraction F1
+    2. Controlling-Clause Accuracy As-Of Date
+    3. Slot Exact-Match Accuracy
+    4. Proposition Classification Accuracy
+    """
+    results_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data/eval/adversarial_eval_results.json"
+    )
+    if not force_rerun and os.path.exists(results_path):
+        try:
+            with open(results_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed reading cached eval results: {e}")
+
+    try:
+        from scripts.eval_adversarial_corpus import run_adversarial_eval
+        return run_adversarial_eval(output_json_path=results_path, verbose=False)
+    except Exception as exc:
+        logger.error(f"Failed running adversarial evaluation: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Adversarial evaluation failed: {exc}")
+
 
 
 # --- Corporate Intelligence Consult & Memo Generation ---
@@ -1374,12 +1462,3 @@ def seed_fixtures(
     """Seed demo contracts, agreements, and relation graph for the tenant."""
     report = ingest_mock_data(db, tenant_id=x_tenant_id)
     return report
-
-
-if settings.ENABLE_BUSINESS_OPS:
-    try:
-        from src.labs.business_router import router as business_router
-        app.include_router(business_router, prefix="/api/business")
-        logger.info("Quarantined business operations router mounted via ENABLE_BUSINESS_OPS=1.")
-    except Exception as e:
-        logger.warning(f"Could not mount business ops router: {e}")

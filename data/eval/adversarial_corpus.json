@@ -1,0 +1,392 @@
+{
+  "version": "1.0.0",
+  "description": "Adversarial Multi-Document Family Benchmark for KruschBiz Precedence Graph, Relation Extraction, Slot Extraction, and Assertion Grounding",
+  "families": [
+    {
+      "family_id": "family_01_verbose_msa_short_amendment",
+      "name": "Verbose MSA + One-Sentence Amendment Trap",
+      "counterparty": "CloudScale AI Corp",
+      "documents": [
+        {
+          "doc_id": "doc_msa_01",
+          "filename": "CloudScale_Master_Services_Agreement_2024.txt",
+          "title": "Master Services Agreement",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-01-15",
+          "execution_status": "executed",
+          "text": "MASTER SERVICES AGREEMENT\n\nThis Master Services Agreement ('Agreement') is entered into as of January 15, 2024, by and between CloudScale AI Corp ('Vendor') and Acme Enterprise Corp ('Customer').\n\nRECITALS\nWHEREAS, Vendor provides cloud intelligence infrastructure services;\nWHEREAS, Customer desires to procure said services pursuant to the terms herein;\n\nOPERATIVE PROVISIONS\n\nSection 1. Definitions.\n'Services' means cloud infrastructure.\n\nSection 4. Payment Terms.\nSection 4.1 Invoicing and Payment. Vendor shall invoice Customer monthly. All invoices shall be paid Net 30 days from the date of the invoice. Late payments shall accrue interest at 1.5% per month.\n\nSection 8. Limitation of Liability.\nSection 8.1 Liability Cap. In no event shall aggregate liability exceed the fees paid or payable in the twelve (12) months preceding the claim.\n\nSection 12. Governing Law.\nThis Agreement shall be governed by the laws of California."
+        },
+        {
+          "doc_id": "doc_amend_01",
+          "filename": "Amendment_No_1.txt",
+          "title": "Amendment No. 1 to Master Services Agreement",
+          "instrument_type": "amendment",
+          "effective_date": "2024-06-01",
+          "execution_status": "executed",
+          "text": "AMENDMENT NO. 1\n\nThis Amendment No. 1 to that certain Master Services Agreement dated January 15, 2024 ('Agreement') is entered into by and between CloudScale AI Corp and Acme Enterprise Corp, effective June 1, 2024.\n\nSection 4.1 is hereby amended and replaced to read as follows:\n'All invoices shall be paid Net 60 days from date of receipt by Customer. Delinquent amounts shall accrue interest at 1.0% per month.'\n\nExcept as expressly modified by this Amendment, all other terms of the Agreement remain in full force and effect."
+        }
+      ],
+      "expected_relations": [
+        {
+          "source_doc_id": "doc_amend_01",
+          "target_doc_id": "doc_msa_01",
+          "relation_type": "AMENDS",
+          "clause_scope": "Section 4.1"
+        }
+      ],
+      "test_queries": [
+        {
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2024-03-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Master Services Agreement",
+          "expected_section": "Section 4.1",
+          "expected_slots": {
+            "net_days": 30,
+            "late_interest_pct": 1.5
+          }
+        },
+        {
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2024-07-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Amendment No. 1 to Master Services Agreement",
+          "expected_section": "Section 4.1",
+          "expected_slots": {
+            "net_days": 60,
+            "late_interest_pct": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "family_id": "family_02_sow_silent_override_payment",
+      "name": "Statement of Work with Hierarchy Conflict Clause",
+      "counterparty": "OmniCorp Solutions Inc",
+      "documents": [
+        {
+          "doc_id": "doc_msa_02",
+          "filename": "OmniCorp_Master_Services_Agreement.txt",
+          "title": "OmniCorp Master Services Agreement",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-02-01",
+          "execution_status": "executed",
+          "text": "MASTER SERVICES AGREEMENT\n\nBy and between OmniCorp Solutions Inc and Acme Corp dated February 1, 2024.\n\nSection 3. Invoicing.\nAll fees shall be invoiced monthly in arrears and paid Net 45 days.\n\nSection 7. Limitation of Liability.\nTotal aggregate liability shall not exceed $1,000,000.\n\nSection 11. Confidentiality.\nEach party agrees to hold proprietary data in strict confidence."
+        },
+        {
+          "doc_id": "doc_sow_02",
+          "filename": "OmniCorp_SOW_Deployment_Phase1.txt",
+          "title": "Statement of Work No. 1 - Enterprise Deployment",
+          "instrument_type": "statement_of_work",
+          "effective_date": "2024-04-01",
+          "execution_status": "executed",
+          "text": "STATEMENT OF WORK NO. 1\n\nThis Statement of Work No. 1 is entered into pursuant to that certain Master Services Agreement dated February 1, 2024 by and between OmniCorp Solutions Inc and Acme Corp.\n\nSection 5. Fees and Payment.\nIn the event of any conflict or inconsistency between this SOW and the Master Agreement, this SOW shall govern and control. Customer shall pay all invoices Net 15 days.\n\nSection 9. Scope of Deliverables.\nVendor shall deliver Phase 1 deployment by June 30, 2024."
+        }
+      ],
+      "expected_relations": [
+        {
+          "source_doc_id": "doc_sow_02",
+          "target_doc_id": "doc_msa_02",
+          "relation_type": "SCHEDULE_OF",
+          "clause_scope": "ALL"
+        }
+      ],
+      "test_queries": [
+        {
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2024-05-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Statement of Work No. 1 - Enterprise Deployment",
+          "expected_section": "Section 5",
+          "expected_slots": {
+            "net_days": 15
+          }
+        },
+        {
+          "topic": "LIMITATION_OF_LIABILITY",
+          "as_of_date": "2024-05-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "OmniCorp Master Services Agreement",
+          "expected_section": "Section 7",
+          "expected_slots": {
+            "cap_amount": 1000000.0
+          }
+        }
+      ]
+    },
+    {
+      "family_id": "family_03_carveout_schedule_split",
+      "name": "Carve-Out Split Across Section and Schedule",
+      "counterparty": "DataFlow Networks LLC",
+      "documents": [
+        {
+          "doc_id": "doc_msa_03",
+          "filename": "DataFlow_Cloud_Platform_Agreement.txt",
+          "title": "Cloud Platform Agreement",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-03-01",
+          "execution_status": "executed",
+          "text": "CLOUD PLATFORM AGREEMENT\n\nBetween DataFlow Networks LLC and Acme Corp, effective March 1, 2024.\n\nSection 8. Limitation of Liability.\nSection 8.1 Cap. In no event shall either party's aggregate liability exceed the fees paid or payable in the twelve (12) months preceding the claim, except as set forth in Schedule C.\n\nSection 14. Exhibits and Schedules.\nSchedule C attached hereto is incorporated herein by reference."
+        },
+        {
+          "doc_id": "doc_sched_03",
+          "filename": "DataFlow_Schedule_C_Security_Addendum.txt",
+          "title": "Schedule C - Data Security Addendum",
+          "instrument_type": "exhibit",
+          "effective_date": "2024-03-01",
+          "execution_status": "executed",
+          "text": "SCHEDULE C\nDATA SECURITY ADDENDUM\n\nThis Schedule C is incorporated by reference into that certain Cloud Platform Agreement between DataFlow Networks LLC and Acme Corp.\n\nSection C.1 Liability Carve-Out.\nExcept as expressly modified by this Schedule C, Section 8.1 remains in effect. Notwithstanding Section 8.1 of the Agreement, liability for Data Protection Breaches shall not be subject to the 12-month cap and shall be capped at $5,000,000."
+        }
+      ],
+      "expected_relations": [
+        {
+          "source_doc_id": "doc_sched_03",
+          "target_doc_id": "doc_msa_03",
+          "relation_type": "INCORPORATES",
+          "clause_scope": "ALL"
+        }
+      ],
+      "test_queries": [
+        {
+          "topic": "LIMITATION_OF_LIABILITY",
+          "as_of_date": "2024-04-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Cloud Platform Agreement",
+          "expected_section": "Section 8.1",
+          "expected_slots": {
+            "cap_period_months": 12
+          }
+        }
+      ]
+    },
+    {
+      "family_id": "family_04_side_letter_no_amendment_in_title",
+      "name": "Side Letter Agreement with No Amendment in Title",
+      "counterparty": "Nexus Core Systems Inc",
+      "documents": [
+        {
+          "doc_id": "doc_msa_04",
+          "filename": "Nexus_Enterprise_License_Agreement.txt",
+          "title": "Nexus Enterprise License Agreement",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-01-01",
+          "execution_status": "executed",
+          "text": "ENTERPRISE LICENSE AGREEMENT\n\nBetween Nexus Core Systems Inc and Acme Corp.\n\nSection 9. Service Level Agreement.\nVendor warrants that the service availability shall achieve 99.0% uptime during each calendar month.\n\nSection 15. Amendments.\nThis Agreement may be modified by written instrument signed by both parties."
+        },
+        {
+          "doc_id": "doc_letter_04",
+          "filename": "Letter_Agreement_regarding_Service_Levels.txt",
+          "title": "Letter Agreement regarding Service Levels",
+          "instrument_type": "letter_agreement",
+          "effective_date": "2024-05-01",
+          "execution_status": "executed",
+          "text": "LETTER AGREEMENT\n\nDear Acme Corp,\nThis Letter Agreement confirms our mutual agreement to modify that certain Nexus Enterprise License Agreement dated January 1, 2024.\n\nSection 9 is hereby amended to read: 'Vendor warrants that the service availability shall achieve 99.9% uptime during each calendar month. In the event of failure, Customer shall receive a 10% credit.'\n\nAll other terms continue unchanged."
+        }
+      ],
+      "expected_relations": [
+        {
+          "source_doc_id": "doc_letter_04",
+          "target_doc_id": "doc_msa_04",
+          "relation_type": "AMENDS",
+          "clause_scope": "Section 9"
+        }
+      ],
+      "test_queries": [
+        {
+          "topic": "SLA_UPTIME",
+          "as_of_date": "2024-03-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Nexus Enterprise License Agreement",
+          "expected_section": "Section 9",
+          "expected_slots": {
+            "uptime_pct": 99.0
+          }
+        },
+        {
+          "topic": "SLA_UPTIME",
+          "as_of_date": "2024-06-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Letter Agreement regarding Service Levels",
+          "expected_section": "Section 9",
+          "expected_slots": {
+            "uptime_pct": 99.9,
+            "credit_pct": 10.0
+          }
+        }
+      ]
+    },
+    {
+      "family_id": "family_05_expired_amendment_vs_effective_date",
+      "name": "Sequential Amendments with Restatement Supersession",
+      "counterparty": "Alpha Global Logistics",
+      "documents": [
+        {
+          "doc_id": "doc_msa_05",
+          "filename": "Alpha_Global_Logistics_Agreement.txt",
+          "title": "Logistics Master Agreement",
+          "instrument_type": "master_agreement",
+          "effective_date": "2023-01-01",
+          "execution_status": "executed",
+          "text": "LOGISTICS MASTER AGREEMENT\n\nBy and between Alpha Global Logistics and Acme Corp, effective January 1, 2023.\n\nSection 6. Payment.\nCustomer agrees to pay all undisputed invoices Net 30 days."
+        },
+        {
+          "doc_id": "doc_amend1_05",
+          "filename": "Alpha_Amendment_No_1.txt",
+          "title": "Amendment No. 1 to Logistics Master Agreement",
+          "instrument_type": "amendment",
+          "effective_date": "2023-06-01",
+          "execution_status": "executed",
+          "text": "AMENDMENT NO. 1\n\nThis Amendment No. 1 amends the Logistics Master Agreement dated January 1, 2023.\nSection 6 is hereby amended: All invoices shall be paid Net 60 days."
+        },
+        {
+          "doc_id": "doc_amend2_05",
+          "filename": "Alpha_Second_Amended_Agreement.txt",
+          "title": "Second Amendment and Restated Payment Provisions",
+          "instrument_type": "amendment",
+          "effective_date": "2024-01-01",
+          "execution_status": "executed",
+          "text": "SECOND AMENDMENT\n\nThis Second Amendment supersedes and replaces in its entirety that certain Amendment No. 1 to Logistics Master Agreement dated June 1, 2023.\n\nSection 6 of the Agreement is hereby amended to read: 'Customer agrees to pay all undisputed invoices Net 45 days.'"
+        }
+      ],
+      "expected_relations": [
+        {
+          "source_doc_id": "doc_amend1_05",
+          "target_doc_id": "doc_msa_05",
+          "relation_type": "AMENDS",
+          "clause_scope": "Section 6"
+        },
+        {
+          "source_doc_id": "doc_amend2_05",
+          "target_doc_id": "doc_amend1_05",
+          "relation_type": "SUPERSEDES",
+          "clause_scope": "ALL"
+        },
+        {
+          "source_doc_id": "doc_amend2_05",
+          "target_doc_id": "doc_msa_05",
+          "relation_type": "AMENDS",
+          "clause_scope": "Section 6"
+        }
+      ],
+      "test_queries": [
+        {
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2023-03-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Logistics Master Agreement",
+          "expected_section": "Section 6",
+          "expected_slots": {
+            "net_days": 30
+          }
+        },
+        {
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2023-09-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Amendment No. 1 to Logistics Master Agreement",
+          "expected_section": "Section 6",
+          "expected_slots": {
+            "net_days": 60
+          }
+        },
+        {
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2024-04-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Second Amendment and Restated Payment Provisions",
+          "expected_section": "Section 6",
+          "expected_slots": {
+            "net_days": 45
+          }
+        }
+      ]
+    },
+    {
+      "family_id": "family_06_two_similar_counterparties",
+      "name": "Disambiguation of Similar Corporate Entities",
+      "counterparty": "Acme Logistics Americas Inc",
+      "documents": [
+        {
+          "doc_id": "doc_cp1_06",
+          "filename": "Acme_Logistics_Americas_Agreement.txt",
+          "title": "Americas Regional Services Agreement",
+          "counterparty_name": "Acme Logistics Americas Inc",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-01-01",
+          "execution_status": "executed",
+          "text": "AMERICAS REGIONAL SERVICES AGREEMENT\n\nBetween Acme Logistics Americas Inc and Customer.\n\nSection 4. Payment Terms.\nInvoices shall be payable Net 30 days."
+        },
+        {
+          "doc_id": "doc_cp2_06",
+          "filename": "Acme_Logistics_Global_Agreement.txt",
+          "title": "Global Distribution Agreement",
+          "counterparty_name": "Acme Logistics Global Ltd",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-01-01",
+          "execution_status": "executed",
+          "text": "GLOBAL DISTRIBUTION AGREEMENT\n\nBetween Acme Logistics Global Ltd and Customer.\n\nSection 4. Payment Terms.\nInvoices shall be payable Net 90 days."
+        }
+      ],
+      "expected_relations": [],
+      "test_queries": [
+        {
+          "counterparty": "Acme Logistics Americas Inc",
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2024-06-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Americas Regional Services Agreement",
+          "expected_section": "Section 4",
+          "expected_slots": {
+            "net_days": 30
+          }
+        },
+        {
+          "counterparty": "Acme Logistics Global Ltd",
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2024-06-01",
+          "expected_status": "resolved",
+          "expected_agreement_title": "Global Distribution Agreement",
+          "expected_section": "Section 4",
+          "expected_slots": {
+            "net_days": 90
+          }
+        }
+      ]
+    },
+    {
+      "family_id": "family_07_conflicting_entire_agreement",
+      "name": "Competing Active Peer Instruments Without Governing Precedence",
+      "counterparty": "Beta Software Systems",
+      "documents": [
+        {
+          "doc_id": "doc_peer1_07",
+          "filename": "Beta_Software_License.txt",
+          "title": "Beta Software License Agreement",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-01-01",
+          "execution_status": "executed",
+          "text": "BETA SOFTWARE LICENSE AGREEMENT\n\nBetween Beta Software Systems and Acme Corp.\n\nSection 5. Fees.\nCustomer shall pay all license fees Net 30 days.\n\nSection 14. Entire Agreement.\nThis Agreement constitutes the complete and exclusive agreement between the parties."
+        },
+        {
+          "doc_id": "doc_peer2_07",
+          "filename": "Beta_Service_Order.txt",
+          "title": "Beta Competing Service Order",
+          "instrument_type": "master_agreement",
+          "effective_date": "2024-01-01",
+          "execution_status": "executed",
+          "text": "BETA SERVICE ORDER\n\nBetween Beta Software Systems and Acme Corp.\n\nSection 5. Fees.\nCustomer shall pay all service charges Net 60 days.\n\nSection 10. Entire Agreement.\nThis Service Order constitutes the entire agreement regarding the services."
+        }
+      ],
+      "expected_relations": [],
+      "test_queries": [
+        {
+          "topic": "PAYMENT_TERMS",
+          "as_of_date": "2024-06-01",
+          "expected_status": "ambiguous",
+          "expected_agreement_title": null,
+          "expected_section": null
+        }
+      ]
+    }
+  ]
+}

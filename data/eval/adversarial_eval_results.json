@@ -1,0 +1,142 @@
+{
+  "timestamp_utc": "2026-09-25T04:20:44.631263+00:00",
+  "elapsed_seconds": 63.723,
+  "total_families": 7,
+  "metrics": {
+    "relation_extraction": {
+      "precision": 100.0,
+      "recall": 100.0,
+      "f1": 100.0,
+      "true_positives": 7,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    "controlling_clause_accuracy_as_of_date": {
+      "accuracy_pct": 100.0,
+      "total_queries": 13,
+      "correct_queries": 13
+    },
+    "slot_exact_match": {
+      "accuracy_pct": 100.0,
+      "total_slots": 15,
+      "matched_slots": 15
+    },
+    "proposition_classification": {
+      "accuracy_pct": 100.0,
+      "total_cases": 28,
+      "correct_cases": 28,
+      "confusion_matrix": {
+        "VERIFIED": {
+          "expected": 7,
+          "correct": 7
+        },
+        "INVENTED_CLAUSE": {
+          "expected": 7,
+          "correct": 7
+        },
+        "DIVERGENT_TERM": {
+          "expected": 7,
+          "correct": 7
+        },
+        "SUPERSEDED_TERM": {
+          "expected": 7,
+          "correct": 7
+        }
+      }
+    }
+  },
+  "families": [
+    {
+      "family_id": "family_01_verbose_msa_short_amendment",
+      "name": "Verbose MSA + One-Sentence Amendment Trap",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 4,
+      "slots_matched": 4
+    },
+    {
+      "family_id": "family_02_sow_silent_override_payment",
+      "name": "Statement of Work with Hierarchy Conflict Clause",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_03_carveout_schedule_split",
+      "name": "Carve-Out Split Across Section and Schedule",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 1,
+      "queries_correct": 1,
+      "slots_total": 1,
+      "slots_matched": 1
+    },
+    {
+      "family_id": "family_04_side_letter_no_amendment_in_title",
+      "name": "Side Letter Agreement with No Amendment in Title",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 3,
+      "slots_matched": 3
+    },
+    {
+      "family_id": "family_05_expired_amendment_vs_effective_date",
+      "name": "Sequential Amendments with Restatement Supersession",
+      "documents_count": 3,
+      "relations_expected": 3,
+      "relations_tp": 3,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 3,
+      "queries_correct": 3,
+      "slots_total": 3,
+      "slots_matched": 3
+    },
+    {
+      "family_id": "family_06_two_similar_counterparties",
+      "name": "Disambiguation of Similar Corporate Entities",
+      "documents_count": 2,
+      "relations_expected": 0,
+      "relations_tp": 0,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_07_conflicting_entire_agreement",
+      "name": "Competing Active Peer Instruments Without Governing Precedence",
+      "documents_count": 2,
+      "relations_expected": 0,
+      "relations_tp": 0,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 1,
+      "queries_correct": 1,
+      "slots_total": 0,
+      "slots_matched": 0
+    }
+  ],
+  "failures": []
+}

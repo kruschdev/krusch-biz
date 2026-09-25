@@ -61,6 +61,17 @@ MSA_CONTROLLING_TOPICS = {
     "DISPUTE_RESOLUTION",
 }
 
+TOPIC_ALIASES: dict[str, list[str]] = {
+    "SLA_UPTIME": ["SLA_UPTIME", "SLA_PERFORMANCE"],
+    "SLA_PERFORMANCE": ["SLA_PERFORMANCE", "SLA_UPTIME"],
+    "LIMITATION_OF_LIABILITY": ["LIMITATION_OF_LIABILITY", "LIABILITY_CAP"],
+    "LIABILITY_CAP": ["LIABILITY_CAP", "LIMITATION_OF_LIABILITY"],
+    "INDEMNITY": ["INDEMNITY", "INDEMNIFICATION"],
+    "INDEMNIFICATION": ["INDEMNIFICATION", "INDEMNITY"],
+    "TERMINATION": ["TERMINATION", "TERMINATION_CONVENIENCE"],
+    "TERMINATION_CONVENIENCE": ["TERMINATION_CONVENIENCE", "TERMINATION"],
+}
+
 
 def normalize_party_name(name: str | None) -> str:
     """Normalize corporate legal name for strict deterministic matching."""
@@ -442,11 +453,12 @@ def resolve_controlling_clause(
 
     # 5. Fetch candidate clauses matching topic
     is_keyword_fallback = False
+    topic_candidates = TOPIC_ALIASES.get(topic, [topic])
     candidate_clauses = db.query(Clause).filter(
         Clause.tenant_id == tenant_id,
         Clause.agreement_id.in_(ag_ids),
         Clause.is_active.is_(True),
-        Clause.topic == topic
+        Clause.topic.in_(topic_candidates)
     ).all()
 
     if not candidate_clauses:
@@ -478,10 +490,19 @@ def resolve_controlling_clause(
         if rel.relation_type == "AMENDS":
             amends_by_target.setdefault(rel.target_agreement_id, []).append(rel)
 
-    # Map clauses by agreement
+    # Deduplicate candidate clauses per agreement before graph traversal:
+    # Prefer substantive clauses (with structured slots or longer content) over empty section headings
+    deduped_candidates: list[Clause] = []
     clauses_by_ag: dict[int, list[Clause]] = {}
     for c in candidate_clauses:
         clauses_by_ag.setdefault(c.agreement_id, []).append(c)
+    for ag_id, c_list in clauses_by_ag.items():
+        if len(c_list) == 1:
+            deduped_candidates.append(c_list[0])
+        else:
+            c_list.sort(key=lambda c: (len(c.structured_slots or {}), len(c.content or "")), reverse=True)
+            deduped_candidates.append(c_list[0])
+    candidate_clauses = deduped_candidates
 
     # 6. Clause Graph Traversal with Slot Inheritance & Depth Cap
     terminal_candidates: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
@@ -514,11 +535,28 @@ def resolve_controlling_clause(
             incoming_amendments = list(amends_by_target.get(current_ag_id, []))
 
             # Order by effective date ascending to step forward temporally
-            incoming_amendments.sort(key=lambda r: to_utc_date(r.effective_date) if r.effective_date else date.min)
+            def _rel_eff_date(r: AgreementRelation) -> date:
+                if r.effective_date:
+                    return to_utc_date(r.effective_date)
+                src_ag = ag_by_id.get(r.source_agreement_id)
+                if src_ag and src_ag.effective_date:
+                    return to_utc_date(src_ag.effective_date)
+                return date.min
+
+            incoming_amendments.sort(key=_rel_eff_date)
 
             found_next = False
             for rel in incoming_amendments:
                 if rel.source_agreement_id not in active_ag_ids or rel.source_agreement_id in fully_superseded_ag_ids:
+                    continue
+
+                # Check if amending source is scoped superseded for this topic
+                is_src_scoped_out = False
+                for sup_ag_id, sup_scope in scoped_superseded:
+                    if rel.source_agreement_id == sup_ag_id and is_scope_match(sup_scope, current_clause, topic):
+                        is_src_scoped_out = True
+                        break
+                if is_src_scoped_out:
                     continue
 
                 # Invariant: Draft agreement cannot amend executed agreement
@@ -582,6 +620,15 @@ def resolve_controlling_clause(
                 break
 
         if current_clause.agreement_id in surviving_ag_ids:
+            # Check if current_clause was scoped superseded
+            is_curr_scoped_out = False
+            for sup_ag_id, sup_scope in scoped_superseded:
+                if current_clause.agreement_id == sup_ag_id and is_scope_match(sup_scope, current_clause, topic):
+                    is_curr_scoped_out = True
+                    break
+            if is_curr_scoped_out:
+                continue
+
             # An amendment cannot stand as an independent peer against a governing agreement
             # unless reached via a valid relation trail.
             ag_curr = ag_by_id.get(current_clause.agreement_id)
@@ -625,6 +672,21 @@ def resolve_controlling_clause(
         if filtered_terminals:
             unique_terminals = filtered_terminals
 
+    # Deduplicate candidate clauses belonging to the same agreement:
+    # Prefer clauses with non-empty structured slots or longer substantive content over empty section headers
+    by_ag: dict[int, list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]]] = {}
+    for item in unique_terminals:
+        by_ag.setdefault(item[0].agreement_id, []).append(item)
+
+    deduped_by_ag: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
+    for ag_id, cl_list in by_ag.items():
+        if len(cl_list) == 1:
+            deduped_by_ag.append(cl_list[0])
+        else:
+            cl_list.sort(key=lambda it: (len(it[2]), len(it[0].content or "")), reverse=True)
+            deduped_by_ag.append(cl_list[0])
+    unique_terminals = deduped_by_ag
+
     if not unique_terminals:
         return _finalize_result({
             "status": "all_authorities_superseded",
@@ -634,39 +696,39 @@ def resolve_controlling_clause(
             "confidence": 0.0
         })
 
-    # 7. Evaluate CARVES_OUT Relations (Narrowing Qualifications)
-    carve_out_relations = [r for r in valid_relations if r.relation_type == "CARVES_OUT"]
-    if len(unique_terminals) > 1 and carve_out_relations:
-        # Check if one candidate is a CARVES_OUT of the other
+    # 7. Evaluate CARVES_OUT and INCORPORATES Relations (Narrowing Qualifications & Schedules)
+    subordinate_relations = [r for r in valid_relations if r.relation_type in ("CARVES_OUT", "INCORPORATES")]
+    if len(unique_terminals) > 1 and subordinate_relations:
+        # Check if one candidate is a CARVES_OUT or INCORPORATED schedule/exhibit of the other
         pruned_terminals: list[tuple[Clause, list[dict[str, Any]], dict[str, Any]]] = []
         for cl, tr, sl in unique_terminals:
-            is_carving_source = False
-            for cr in carve_out_relations:
-                if cr.source_agreement_id == cl.agreement_id:
-                    # cl carves out of target
-                    is_carving_source = True
-                    # Find the target terminal candidate to attach carve-out
+            is_subordinate_source = False
+            for sr in subordinate_relations:
+                if sr.source_agreement_id == cl.agreement_id:
+                    # cl is from the carve-out / incorporated schedule instrument
+                    is_subordinate_source = True
+                    # Find the target terminal candidate to attach carve-out / schedule qualification
                     for target_cl, target_tr, target_sl in unique_terminals:
-                        if target_cl.agreement_id == cr.target_agreement_id:
+                        if target_cl.agreement_id == sr.target_agreement_id:
                             target_tr.append({
-                                "relation": "CARVES_OUT",
-                                "scope": cr.clause_scope or "ALL",
+                                "relation": sr.relation_type,
+                                "scope": sr.clause_scope or "ALL",
                                 "from_agreement_id": cl.agreement_id,
-                                "from_agreement_title": ag_by_id[cl.agreement_id].title if cl.agreement_id in ag_by_id else "Carve-Out Instrument",
+                                "from_agreement_title": ag_by_id[cl.agreement_id].title if cl.agreement_id in ag_by_id else "Schedule / Carve-Out Instrument",
                                 "from_section": cl.section,
                                 "to_agreement_id": target_cl.agreement_id,
                                 "to_agreement_title": ag_by_id[target_cl.agreement_id].title if target_cl.agreement_id in ag_by_id else "Governing Agreement",
                                 "to_section": target_cl.section,
-                                "effective_date": str(cr.effective_date) if cr.effective_date else None,
+                                "effective_date": str(sr.effective_date) if sr.effective_date else None,
                             })
                             # Attach carve-out slot
                             co_val = target_sl.get("carve_outs") or []
                             if isinstance(co_val, list):
-                                co_val.append(f"Carve-out in {cl.section}: {cl.content[:80]}")
+                                co_val.append(f"{sr.relation_type} in {cl.section}: {cl.content[:80]}")
                                 target_sl["carve_outs"] = co_val
                             break
                     break
-            if not is_carving_source:
+            if not is_subordinate_source:
                 pruned_terminals.append((cl, tr, sl))
 
         if pruned_terminals:

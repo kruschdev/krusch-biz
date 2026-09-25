@@ -250,9 +250,14 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
 
     if "net_days" not in slots:
         within_days_match = re.search(
-            r"within\s+(?:\w+\s*\((\d{1,3})\)|(\d{1,3}))\s*days\s+of\s+(?:the\s+)?invoice",
+            r"(?:within|paid\s+within|due\s+within)\s+(?:\w+\s*\((\d{1,3})\)|(\d{1,3}))\s*(?:calendar\s+|business\s+)?days(?:\s+of|\s+after|\s+following)?\s+(?:the\s+|receipt\s+of\s+(?:an?\s+)?)?invoices?",
             text_lower
         )
+        if not within_days_match:
+            within_days_match = re.search(
+                r"within\s+(?:\w+\s*\((\d{1,3})\)|(\d{1,3}))\s*days\s+of\s+(?:the\s+)?invoice",
+                text_lower
+            )
         if within_days_match:
             days_str = within_days_match.group(1) or within_days_match.group(2)
             span_str = text[within_days_match.start():within_days_match.end()]
@@ -414,16 +419,35 @@ def extract_structured_slots(text: str, topic: str | None = None) -> tuple[str, 
         slots["notice_days"] = slots["delinquency_notice_days"]
 
     # 6. TRIGGER DISCRIMINATION: Monetary Amounts (Liability Caps vs Retainers / Fees)
-    cap_months_match = re.search(r"(\d{1,2})\s*months\s+(?:of\s+)?(?:fees|paid|preceding)", text_lower)
+    cap_months_match = re.search(r"(?:(\d{1,2})|\b(twelve|six|three|twenty-four)\b)\s*(?:\((\d{1,2})\)\s*)?months\s+(?:of\s+)?(?:fees|paid|preceding)", text_lower)
     if cap_months_match:
-        span_str = text[cap_months_match.start():cap_months_match.end()]
-        slots["cap_period_months"] = make_typed_slot(
-            value=int(cap_months_match.group(1)),
-            unit="months",
+        m_val = cap_months_match.group(3) or cap_months_match.group(1)
+        if not m_val and cap_months_match.group(2):
+            w_map = {"twelve": 12, "six": 6, "three": 3, "twenty-four": 24}
+            m_val = str(w_map.get(cap_months_match.group(2), 12))
+        if m_val:
+            span_str = text[cap_months_match.start():cap_months_match.end()]
+            slots["cap_period_months"] = make_typed_slot(
+                value=int(m_val),
+                unit="months",
+                raw_span=span_str,
+                char_start=cap_months_match.start(),
+                char_end=cap_months_match.end(),
+                pattern_id="cap_period_months",
+                confidence=0.96
+            )
+
+    # 6b. Cap Scope ("fees in the aggregate")
+    m_agg = re.search(r"fees\s+in\s+the\s+aggregate|in\s+the\s+aggregate", text_lower)
+    if m_agg and any(w in text_lower for w in ("liability", "damages", "cap", "exceed", "aggregate liability")):
+        span_str = text[m_agg.start():m_agg.end()]
+        slots["cap_scope"] = make_typed_slot(
+            value="fees_in_aggregate",
+            unit="scope",
             raw_span=span_str,
-            char_start=cap_months_match.start(),
-            char_end=cap_months_match.end(),
-            pattern_id="cap_period_months",
+            char_start=m_agg.start(),
+            char_end=m_agg.end(),
+            pattern_id="cap_scope_fees_aggregate",
             confidence=0.95
         )
 

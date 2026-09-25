@@ -81,6 +81,11 @@ def extract_candidate_relations(
             r"entered\s+into\s+as\s+an\s+amendment\s+to\s+(?:the\s+)?([a-z0-9\s]+?)(?=\s+dated|\.|\;|\,)",
             "preamble_amendment_entered",
             0.92
+        ),
+        (
+            r"(?:agreement\s+to\s+modify|modifies|modifying)\s+(?:that\s+certain\s+)?([a-z0-9\s]+?)(?=\s+dated|\s+by|\.|\;|\,)",
+            "preamble_agreement_to_modify",
+            0.93
         )
     ]
     for pattern, rule_name, conf in amend_patterns:
@@ -146,9 +151,9 @@ def extract_candidate_relations(
             0.92
         ),
         (
-            r"incorporated\s+by\s+reference\s+into\s+(?:this\s+)?([a-z0-9\s]+?)(?=\.|\;|\,)",
+            r"incorporated\s+(?:herein\s+)?by\s+reference\s+into\s+(?:this\s+)?(?:that\s+certain\s+)?([a-z0-9\s]+?)(?=\.|\;|\,|\s+between|\s+dated)",
             "preamble_incorporated_into",
-            0.90
+            0.92
         )
     ]
     for pattern, rule_name, conf in incorporates_patterns:
@@ -238,7 +243,120 @@ def extract_candidate_relations(
             break
 
     # -------------------------------------------------------------------------
-    # 2. Filename Cues (Fallback & Reinforcement)
+    # 2. Body-Level Text Regex Patterns (Full Text Search)
+    # -------------------------------------------------------------------------
+    full_text_lower = text.lower()
+
+    # 2a. Explicit Clause Amendments: "Section X is hereby amended", "agrees to amend Section X"
+    body_amend_matches = list(re.finditer(
+        r"(?:section|clause|article|§)\s*([\d\.\-]+)\s+(?:of\s+the\s+agreement\s+)?is\s+(?:hereby\s+)?(?:amended|modified|amended\s+and\s+restated|deleted\s+in\s+its\s+entirety\s+and\s+replaced\s+with)",
+        full_text_lower
+    ))
+    if not body_amend_matches:
+        body_amend_matches = list(re.finditer(
+            r"the\s+parties\s+(?:hereby\s+)?agree\s+to\s+amend\s+(?:section|clause|article|§)\s*([\d\.\-]+)",
+            full_text_lower
+        ))
+
+    for bm in body_amend_matches[:3]:  # Capture up to top 3 explicit clause amendments
+        sec_num = bm.group(1)
+        sp_start = max(0, bm.start() - 15)
+        sp_end = min(len(text), bm.end() + 60)
+        detected_cues.append({
+            "relation_type": "AMENDS",
+            "target_hint": "Agreement",
+            "clause_scope": f"Section {sec_num}",
+            "span": text[sp_start:sp_end].strip(),
+            "char_start": bm.start(),
+            "char_end": bm.end(),
+            "confidence": 0.94,
+            "extractor": "body_regex",
+            "rule": "body_section_is_hereby_amended"
+        })
+
+    # 2b. SOW Conflict & Hierarchy Clauses: "in the event of conflict between this SOW and the MSA, this SOW controls"
+    sow_conflict_match = re.search(
+        r"(?:in\s+the\s+event\s+of\s+(?:any\s+)?conflict\s+(?:or\s+inconsistency\s+)?between\s+this\s+(?:sow|statement\s+of\s+work|order\s+form|schedule)\s+and\s+(?:the\s+)?(?:master\s+agreement|msa|agreement),\s+(?:the\s+terms\s+of\s+)?this\s+(?:sow|statement\s+of\s+work|order\s+form|schedule)\s+shall\s+(?:control|govern|prevail))",
+        full_text_lower
+    )
+    if not sow_conflict_match:
+        sow_conflict_match = re.search(
+            r"this\s+(?:sow|statement\s+of\s+work)\s+controls?\s+(?:over\s+the\s+msa\s+)?in\s+the\s+event\s+of\s+conflict",
+            full_text_lower
+        )
+    if sow_conflict_match:
+        sp_start = max(0, sow_conflict_match.start() - 15)
+        sp_end = min(len(text), sow_conflict_match.end() + 40)
+        detected_cues.append({
+            "relation_type": "SCHEDULE_OF",
+            "target_hint": "Master Agreement",
+            "clause_scope": "ALL",
+            "span": text[sp_start:sp_end].strip(),
+            "char_start": sow_conflict_match.start(),
+            "char_end": sow_conflict_match.end(),
+            "confidence": 0.96,
+            "extractor": "body_regex",
+            "rule": "sow_conflict_controls_clause"
+        })
+
+    # 2c. Scope Qualifiers & Carve-Outs: "except as modified by", "save and except as provided in"
+    carve_mod_match = re.search(
+        r"except\s+as\s+(?:expressly\s+)?modified\s+by\s+(?:this\s+)?([a-z0-9\s\.\-]+?)(?:\.|\;|\,)",
+        full_text_lower
+    )
+    if not carve_mod_match:
+        carve_mod_match = re.search(
+            r"save\s+and\s+except\s+as\s+(?:specifically\s+)?provided\s+in\s+([a-z0-9\s\.\-]+?)(?:\.|\;|\,)",
+            full_text_lower
+        )
+    if carve_mod_match:
+        target_hint_val = carve_mod_match.group(1).strip()
+        # Self-referential boilerplate ("except as modified by this Amendment" or "except as modified by this Schedule C")
+        # should not generate false external carve-outs
+        target_norm = target_hint_val.lower().replace("_", " ")
+        fn_norm = filename.lower().replace("_", " ")
+        is_self_ref = (
+            target_norm in ("amendment", "agreement", "sow", "contract", "section", "clause")
+            or target_norm in fn_norm
+            or (len(target_norm) > 4 and any(t in fn_norm for t in target_norm.split() if len(t) > 3))
+        )
+        if not is_self_ref:
+            sp_start = max(0, carve_mod_match.start() - 15)
+            sp_end = min(len(text), carve_mod_match.end() + 30)
+            detected_cues.append({
+                "relation_type": "CARVES_OUT",
+                "target_hint": target_hint_val,
+                "clause_scope": "ALL",
+                "span": text[sp_start:sp_end].strip(),
+                "char_start": carve_mod_match.start(),
+                "char_end": carve_mod_match.end(),
+                "confidence": 0.89,
+                "extractor": "body_regex",
+                "rule": "body_except_as_modified"
+            })
+
+    # 2d. Schedule & Exhibit Incorporation: "Exhibit A attached hereto is incorporated herein"
+    exhibit_inc_match = re.search(
+        r"(?:schedule|exhibit|addendum|appendix)\s*([a-z0-9\.\-]+)\s+(?:attached\s+hereto\s+)?(?:is|shall\s+be)\s+(?:hereby\s+)?(?:attached\s+and\s+)?incorporated\s+(?:herein\s+)?by\s+reference",
+        full_text_lower
+    )
+    if exhibit_inc_match:
+        sp_start = max(0, exhibit_inc_match.start() - 15)
+        sp_end = min(len(text), exhibit_inc_match.end() + 30)
+        detected_cues.append({
+            "relation_type": "INCORPORATES",
+            "target_hint": f"Exhibit {exhibit_inc_match.group(1)}",
+            "clause_scope": f"Exhibit {exhibit_inc_match.group(1)}",
+            "span": text[sp_start:sp_end].strip(),
+            "char_start": exhibit_inc_match.start(),
+            "char_end": exhibit_inc_match.end(),
+            "confidence": 0.91,
+            "extractor": "body_regex",
+            "rule": "body_exhibit_incorporated"
+        })
+
+    # -------------------------------------------------------------------------
+    # 3. Filename Cues (Fallback & Reinforcement)
     # -------------------------------------------------------------------------
     fn_amend = re.search(r"amendment[_\s]*(?:no\.?|#)?[_\s]*(\d+|[a-z]+)?[_\s]*(?:to|of)[_\s]*([a-z0-9_\s\-]+?)(?:\.[a-z0-9]+)?$", fn_lower)
     if fn_amend:
@@ -273,7 +391,7 @@ def extract_candidate_relations(
         })
 
     # -------------------------------------------------------------------------
-    # 3. Clause Scope Detection (e.g. "Section 4.1", "ALL")
+    # 4. Clause Scope Detection (e.g. "Section 4.1", "ALL")
     # -------------------------------------------------------------------------
     clause_scope = "ALL"
     scope_span = ""
@@ -326,19 +444,21 @@ def extract_candidate_relations(
                 best_score = score
                 best_target = ag
 
-        # Require reasonable confidence score match or default to single MSA if unambiguous
-        if not best_target and len(existing_agreements) == 1 and existing_agreements[0].id != source_ag_id:
-            best_target = existing_agreements[0]
+        # Require reasonable confidence score match or default to single other agreement if unambiguous
+        candidates_other = [a for a in existing_agreements if (source_ag_id is None or a.id != source_ag_id)]
+        if not best_target and len(candidates_other) == 1:
+            best_target = candidates_other[0]
             best_score = 1
 
+        effective_clause_scope = cue.get("clause_scope") or clause_scope
         if best_target and best_score >= 1:
-            dedup_key = (source_ag_id, best_target.id, rel_type, clause_scope)
-            if dedup_key in seen_dedup:
+            rel_dedup_key = (source_ag_id, best_target.id, rel_type)
+            if rel_dedup_key in seen_dedup:
                 continue
-            seen_dedup.add(dedup_key)
+            seen_dedup.add(rel_dedup_key)
 
             combined_span = cue.get("span", "")
-            if scope_span and scope_span not in combined_span and clause_scope != "ALL":
+            if scope_span and scope_span not in combined_span and effective_clause_scope != "ALL":
                 combined_span = f"{combined_span}. {scope_span}"
 
             candidate_edge = {
@@ -346,7 +466,7 @@ def extract_candidate_relations(
                 "target_agreement_id": best_target.id,
                 "target_agreement_title": best_target.title,
                 "relation_type": rel_type,
-                "clause_scope": clause_scope,
+                "clause_scope": effective_clause_scope,
                 "extractor": cue.get("extractor", "regex"),
                 "confidence": cue.get("confidence", 0.85),
                 "span": combined_span,
@@ -386,6 +506,25 @@ def extract_candidate_relations(
                     candidate_edge["status"] = existing_rel.status
 
             candidates.append(candidate_edge)
+
+    # -------------------------------------------------------------------------
+    # 5. Negative Evidence Generation
+    # -------------------------------------------------------------------------
+    if not candidates:
+        negative_record = {
+            "source_agreement_id": source_ag_id,
+            "target_agreement_id": None,
+            "target_agreement_title": None,
+            "relation_type": "NEGATIVE_EVIDENCE",
+            "clause_scope": "ALL",
+            "extractor": "heuristic_exhaustion",
+            "confidence": 1.0,
+            "span": "Evaluated document for amendment, supersession, SOW, and carve-out cues; none detected.",
+            "source_excerpt": "Evaluated document for amendment, supersession, SOW, and carve-out cues; none detected.",
+            "status": "confirmed_negative",
+            "notes": f"Scanned against {len(existing_agreements)} existing agreements for tenant; no superseding relations detected. Instrument defaults to standalone root."
+        }
+        candidates.append(negative_record)
 
     return candidates
 

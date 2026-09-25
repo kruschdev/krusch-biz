@@ -1384,6 +1384,19 @@ Operational parameters demand strict enforcement of service delivery benchmarks.
 
     is_grounded, claims, advisory, stats = verify_commercial_grounding(analysis_text, clauses)
 
+    proposed_count = 0
+    if db is not None:
+        try:
+            from .db import AgreementRelation
+            proposed_count = db.query(AgreementRelation).filter(
+                AgreementRelation.tenant_id == tenant_id,
+                AgreementRelation.status == "proposed"
+            ).count()
+        except Exception:
+            pass
+
+    stats["proposed_links_pending"] = proposed_count
+
     if db is not None and deal_id is not None:
         try:
             report = CommercialGroundingReport(
@@ -1404,7 +1417,11 @@ Operational parameters demand strict enforcement of service delivery benchmarks.
         except Exception as e:
             logger.warning(f"Failed to persist grounding report for deal {deal_id}: {e}")
 
-    full_output = f"{analysis_text}\n\n{advisory}\n\n---\n*{COMMERCIAL_DISCLAIMER}*"
+    banner = ""
+    if proposed_count > 0:
+        banner = f"> ⚠️ **CONTROLLING CLAUSE UNCERTAIN; {proposed_count} proposed relation link(s) pending human review.**\n\n"
+
+    full_output = f"{banner}{analysis_text}\n\n{advisory}\n\n---\n*{COMMERCIAL_DISCLAIMER}*"
     return full_output, stats, claims
 
 

@@ -282,6 +282,16 @@ st.markdown("""
     .audit-divergent { color: #f59e0b; font-weight: 600; }
     .audit-invented { color: #ef4444; font-weight: 600; }
     .audit-superseded { color: #f97316; font-weight: 600; }
+
+    /* Uncertainty Warning Banner */
+    .uncertainty-banner {
+        background: rgba(245, 158, 11, 0.12);
+        border: 2px solid rgba(245, 158, 11, 0.6);
+        border-radius: 12px;
+        padding: 1.15rem 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 0 20px rgba(245, 158, 11, 0.15);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -334,7 +344,7 @@ with st.sidebar:
                 st.error(f"Connection error: {e}")
 
     st.markdown("---")
-    st.caption("KruschBiz v0.2.0 • Laser-Focused Contract Intelligence")
+    st.caption("KruschBiz v0.6.0 • Laser-Focused Contract Intelligence")
 
 # Fetch common entities
 deals = []
@@ -359,13 +369,12 @@ except Exception:
     pass
 
 
-# 5-Tab Streamlined Executive Architecture
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+# 4-Tab Core Precedence Architecture
+tab1, tab2, tab3, tab4 = st.tabs([
     "🏛️ The Deal Room",
-    "⚖️ Controlling Resolver & Precedence Graph",
-    "🌲 Sovereign Ingest & Relation Extraction",
-    "🛡️ Grounding Evaluation Scorecard",
-    "🧪 Labs (Commercial Ops & Explorer)"
+    "🔗 Relation Review Queue & Precedence Graph",
+    "🌲 Sovereign Ingest & Deep Extraction",
+    "🛡️ Adversarial Multi-Document Scorecard"
 ])
 
 
@@ -396,7 +405,7 @@ with tab1:
 
     st.markdown("---")
 
-    # 2. Proposed Relation Edges Awaiting Review
+    # 2. Controlling Clause Uncertainty Banner
     try:
         rel_resp = httpx.get(
             f"{BACKEND_URL}/api/relations",
@@ -407,40 +416,24 @@ with tab1:
         if rel_resp.status_code == 200:
             proposed_edges = rel_resp.json()
             if proposed_edges:
-                st.markdown("### ⚠️ Proposed Agreement Relations Pending Review")
-                st.info("The sovereign ingestion pipeline extracted the following proposed edges from document preambles and cues. Review and confirm to activate in the controlling DAG graph walk.")
-
-                for pe in proposed_edges:
-                    with st.container():
-                        st.markdown(f"""
-                            <div class="edge-card">
-                                <div class="edge-header">
-                                    <span>🔗 <strong>{pe.get('source_title')}</strong> ➔ <span class="badge-pill">{pe.get('relation_type')}</span> ➔ <strong>{pe.get('target_title')}</strong></span>
-                                    <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">Scope: {pe.get('clause_scope', 'ALL')} • Confidence: {int(pe.get('confidence', 0.9)*100)}%</span>
-                                </div>
-                                <div class="edge-excerpt">
-                                    💬 <em>"{pe.get('source_excerpt') or 'Preamble cue detected during ingestion'}"</em>
-                                </div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        b1, b2, _ = st.columns([1, 1, 4])
-                        if b1.button(f"✅ Confirm Edge #{pe['id']}", key=f"btn_conf_{pe['id']}"):
-                            cf_res = httpx.patch(f"{BACKEND_URL}/api/relations/{pe['id']}/confirm", headers=get_auth_headers())
-                            if cf_res.status_code == 200:
-                                st.success(f"Confirmed relation #{pe['id']}. Graph updated.")
-                                st.rerun()
-                            else:
-                                st.error(f"Confirmation failed: {cf_res.text}")
-                        if b2.button(f"❌ Reject #{pe['id']}", key=f"btn_rej_{pe['id']}"):
-                            rj_res = httpx.delete(f"{BACKEND_URL}/api/relations/{pe['id']}", headers=get_auth_headers())
-                            if rj_res.status_code == 200:
-                                st.warning(f"Rejected relation #{pe['id']}.")
-                                st.rerun()
-                            else:
-                                st.error(f"Rejection failed: {rj_res.text}")
-                st.markdown("---")
+                p_cnt = len(proposed_edges)
+                st.markdown(f"""
+                    <div class="uncertainty-banner">
+                        <div style="font-weight: 800; font-size: 1.05rem; color: #fbbf24; display: flex; align-items: center; gap: 8px;">
+                            <span>⚠️</span> <span>CONTROLLING CLAUSE UNCERTAIN; {p_cnt} proposed relation link(s) pending human review.</span>
+                        </div>
+                        <div style="font-size: 0.88rem; color: #e2e8f0; margin-top: 6px; line-height: 1.5;">
+                            Precedence traversal strictly enforces zero silent assumptions: unconfirmed <code>AMENDS</code>, <code>SUPERSEDES</code>, or <code>INCORPORATES</code> links are excluded from the controlling DAG walk until approved.
+                            Open <strong>Tab 2 (Relation Review Queue & Precedence Graph)</strong> to accept, reject, or edit pending links.
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.caption("✅ All relation edges confirmed. Precedence graph is deterministic.")
     except Exception:
         pass
+
+    st.markdown("---")
 
     # 3. Controlling Terms Cards per Topic
     st.markdown("### 📋 Operative Controlling Terms per Topic")
@@ -713,9 +706,96 @@ with tab1:
 
 
 # ===========================================================================
-# TAB 2: ⚖️ Controlling Resolver & Precedence Graph
+# TAB 2: 🔗 Relation Review Queue & Precedence Graph
 # ===========================================================================
 with tab2:
+    st.subheader("🔗 Relation Review Queue & Precedence Graph")
+    st.caption("The core product: Inspect, accept, reject, and edit extracted relation edges with ground-truth triggering spans, then traverse the verified controlling DAG.")
+
+    # Section 1: First-Class Relation Review Queue
+    st.markdown("### ⚠️ Proposed Relation Review Queue")
+    st.write("Candidate precedence links discovered from full-text body amendment clauses, SOW conflict overrides, schedule incorporations, and preamble cues:")
+
+    try:
+        rel_resp = httpx.get(
+            f"{BACKEND_URL}/api/relations",
+            params={"status": "proposed"},
+            headers=get_auth_headers(),
+            timeout=5.0
+        )
+        if rel_resp.status_code == 200:
+            proposed_edges = rel_resp.json()
+            if proposed_edges:
+                st.info(f"📋 **{len(proposed_edges)} proposed relation(s) pending human review.** The DAG traversal engine ignores unconfirmed edges to prevent silent assumption creep.")
+
+                for pe in proposed_edges:
+                    p_id = pe["id"]
+                    with st.container():
+                        st.markdown(f"""
+                            <div class="edge-card" style="border-left: 4px solid #f59e0b;">
+                                <div class="edge-header">
+                                    <span>🔗 <strong>{pe.get('source_title')}</strong> ➔ <span class="badge-pill">{pe.get('relation_type')}</span> ➔ <strong>{pe.get('target_title')}</strong></span>
+                                    <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">Scope: <code>{pe.get('clause_scope', 'ALL')}</code> • Confidence: {int(pe.get('confidence', 0.9)*100)}%</span>
+                                </div>
+                                <div class="edge-excerpt">
+                                    💬 <em>"{pe.get('source_excerpt') or 'Body amendment or preamble cue detected during ingestion'}"</em>
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                        c_act1, c_act2, c_act3 = st.columns([1, 1, 2])
+                        with c_act1:
+                            if st.button(f"✅ Accept #{p_id}", key=f"q_btn_conf_{p_id}", use_container_width=True):
+                                cf_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}/confirm", headers=get_auth_headers())
+                                if cf_res.status_code == 200:
+                                    st.success(f"Confirmed relation #{p_id}. Graph updated.")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Confirmation failed: {cf_res.text}")
+                        with c_act2:
+                            if st.button(f"❌ Reject #{p_id}", key=f"q_btn_rej_{p_id}", use_container_width=True):
+                                rj_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}/reject", headers=get_auth_headers())
+                                if rj_res.status_code == 200:
+                                    st.warning(f"Rejected relation #{p_id}.")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Rejection failed: {rj_res.text}")
+                        with c_act3:
+                            with st.expander(f"✏️ Edit & Adjust #{p_id}"):
+                                with st.form(f"edit_rel_form_{p_id}"):
+                                    e_type = st.selectbox(
+                                        "Relation Type:",
+                                        ["AMENDS", "SUPERSEDES", "INCORPORATES", "CARVES_OUT", "SCHEDULE_OF"],
+                                        index=["AMENDS", "SUPERSEDES", "INCORPORATES", "CARVES_OUT", "SCHEDULE_OF"].index(pe.get("relation_type", "AMENDS")) if pe.get("relation_type") in ["AMENDS", "SUPERSEDES", "INCORPORATES", "CARVES_OUT", "SCHEDULE_OF"] else 0,
+                                        key=f"edit_type_{p_id}"
+                                    )
+                                    e_scope = st.text_input("Clause Scope (e.g. 'Section 4.1' or 'ALL'):", value=pe.get("clause_scope") or "ALL", key=f"edit_scope_{p_id}")
+                                    e_tgt = st.number_input("Target Agreement ID:", min_value=1, value=int(pe.get("target_agreement_id") or 1), step=1, key=f"edit_tgt_{p_id}")
+                                    e_confirm = st.checkbox("Confirm and activate upon save", value=True, key=f"edit_conf_{p_id}")
+                                    e_sub = st.form_submit_button("Save & Update Relation")
+                                    if e_sub:
+                                        payload = {
+                                            "relation_type": e_type,
+                                            "clause_scope": e_scope,
+                                            "target_agreement_id": int(e_tgt),
+                                            "status": "confirmed" if e_confirm else "proposed"
+                                        }
+                                        ed_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}", json=payload, headers=get_auth_headers(), timeout=10.0)
+                                        if ed_res.status_code == 200:
+                                            st.success(f"Updated relation #{p_id}!")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"Update failed: {ed_res.text}")
+            else:
+                st.success("✅ **Zero pending relation reviews.** All extracted relations are confirmed and active in the controlling DAG.")
+        else:
+            st.error(f"Failed to query relations: {rel_resp.status_code}")
+    except Exception as re_err:
+        st.warning(f"Could not load review queue: {re_err}")
+
+    st.markdown("---")
+
+    # Section 2: Controlling Document Resolver
     st.subheader("⚖️ Controlling Document Resolver & Contract Graph Walker")
     st.write(
         "Walk amendments, SOWs, and master agreements across the directed acyclic graph (DAG) to resolve the single **controlling clause** for a commercial topic."
@@ -1060,7 +1140,7 @@ with tab3:
 
                     # If proposed relations extracted, alert the user
                     if rep.get("relations_extracted", 0) > 0:
-                        st.info("💡 Proposed relation edges were extracted from preambles or filename cues! Review them under Tab 1 (The Deal Room).")
+                        st.info("💡 Proposed relation edges were extracted! Review and confirm them under Tab 2 (Relation Review Queue & Precedence Graph).")
                 else:
                     st.error(f"Ingest failed: {resp.status_code} - {resp.text}")
             except Exception as e:
@@ -1079,7 +1159,7 @@ with tab3:
         [3. chunking]   ➔ Page-True Span Locators & Character Offsets
                │
                ▼
-        [4. extracting_relations] ➔ Discover AMENDS / SCHEDULE_OF / SUPERSEDES from Preambles
+        [4. extracting_relations] ➔ Discover AMENDS / SCHEDULE_OF / SUPERSEDES from Full-Text Body & Cues
                │
                ▼
         [5. tagging]    ➔ Discriminative Canonical Topics & Typed Structured Slots
@@ -1092,222 +1172,190 @@ with tab3:
         ```
     """)
 
+    st.markdown("---")
+    st.subheader("🔍 Deep Extraction Explorer (Nexus Spans & Structured Slots)")
+    st.write("Inspect extracted clauses with page-true character offsets, raw trigger spans, and typed slot values:")
+
+    c_org_filter, c_top_filter = st.columns(2)
+    with c_org_filter:
+        browse_org = st.text_input("Filter by Organization / Counterparty:", value="", key="browse_org_in")
+    with c_top_filter:
+        browse_topic = st.selectbox(
+            "Filter by Topic:",
+            options=["ALL", "PAYMENT_TERMS", "LATE_FEE", "LIABILITY_CAP", "LIMITATION_OF_LIABILITY", "INDEMNITY", "SLA_UPTIME", "DATA_PROTECTION", "TERMINATION_CONVENIENCE", "GOVERNING_LAW"],
+            key="browse_topic_in"
+        )
+
+    cl_params = {"limit": 10}
+    if browse_org:
+        cl_params["organization"] = browse_org
+    if browse_topic and browse_topic != "ALL":
+        cl_params["topic"] = browse_topic
+
+    try:
+        cl_resp = httpx.get(f"{BACKEND_URL}/api/clauses", params=cl_params, headers=get_auth_headers(), timeout=5.0)
+        if cl_resp.status_code == 200:
+            browse_clauses = cl_resp.json()
+            if browse_clauses:
+                for bc in browse_clauses:
+                    with st.container():
+                        st.markdown(f"""
+                            <div class="clause-card" style="border-left-color: #38bdf8;">
+                                <div class="clause-header">📄 {bc.get('title') or 'Clause'} (§ {bc.get('section', 'General')})</div>
+                                <div class="clause-meta">
+                                    🏢 Org: <strong>{bc.get('organization', 'N/A')}</strong> |
+                                    🏷️ Topic: <strong>{bc.get('topic', 'GENERAL')}</strong> |
+                                    Page: <strong>{bc.get('page_number', 1)}</strong>
+                                </div>
+                                <div class="clause-body">{bc.get('content')}</div>
+                                <div class="why-ranked-box">
+                                    <strong>Structured Slots:</strong> {bc.get('structured_slots')}
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("No matching clauses found.")
+    except Exception as b_err:
+        st.warning(f"Could not load clauses: {b_err}")
+
 
 # ===========================================================================
-# TAB 4: 🛡️ Grounding Evaluation Scorecard
+# TAB 4: 🛡️ Adversarial Multi-Document Scorecard
 # ===========================================================================
 with tab4:
-    st.subheader("🛡️ Audit Trail & Empirical Scorecards")
+    st.subheader("🛡️ Adversarial Multi-Document Scorecard")
+    st.caption("Empirical verification across 7 adversarial multi-document contract families with 4 uncoupled metrics.")
 
     try:
         health_res = httpx.get(f"{BACKEND_URL}/health", timeout=5.0)
         if health_res.status_code == 200:
             hdata = health_res.json()
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Service Status", hdata.get("status", "unknown").upper())
+            c1.metric("Engine Health", hdata.get("status", "unknown").upper())
             c2.metric("Database Connected", "YES" if hdata.get("database_connected") else "NO")
-            c3.metric("Embedding Model", hdata.get("embedding_model"))
-            c4.metric("LLM Model", hdata.get("llm_model"))
+            c3.metric("Local Embeddings", hdata.get("embedding_model"))
+            c4.metric("Local Inference", hdata.get("llm_model"))
     except Exception as he:
         st.error(f"Health check failed: {he}")
 
     st.markdown("---")
-    st.subheader("🎯 Grounding Calibration Confusion Matrix & Precision / Recall / F1")
-    st.write("Empirical calibration metrics across held-out contracts and adversarial red-team failure modes:")
 
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Macro Precision", "100.0%", "0 False Positives")
-    m2.metric("Macro Recall", "95.5%", "High Sensitivity")
-    m3.metric("Macro F1", "97.5%", "Balanced Score")
-    m4.metric("Overall Accuracy", "94.44%", "34 / 36 Assertions")
-    m5.metric("Priority Inversions", "0", "0 Hallucinated Overrides")
+    # 1. Metric Fetching & Top Controls
+    c_hdr, c_rerun = st.columns([3, 1])
+    with c_hdr:
+        st.write("Live empirical verification across the public fixture pack of full multi-document families:")
+    with c_rerun:
+        do_rerun = st.button("🔄 Re-Run Adversarial Benchmark", type="primary", use_container_width=True)
 
-    st.markdown("#### 📊 Per-Failure-Mode Verification Breakdown")
-    cal_data = [
-        {"Failure Mode": "VERIFIED", "Description": "Valid assertion grounded in active controlling clause", "Precision": "100.0%", "Recall": "100.0%", "F1": "100.0%", "Sample": "12 / 12"},
-        {"Failure Mode": "INVENTED_CLAUSE", "Description": "Hallucinated proposition absent from operative corpus", "Precision": "100.0%", "Recall": "100.0%", "F1": "100.0%", "Sample": "12 / 12"},
-        {"Failure Mode": "DIVERGENT_TERM", "Description": "Contradicts numeric slot or structured trigger value", "Precision": "100.0%", "Recall": "81.8%", "F1": "90.0%", "Sample": "9 / 11"},
-        {"Failure Mode": "SUPERSEDED_TERM", "Description": "Cites obsolete provision amended out of effect", "Precision": "100.0%", "Recall": "100.0%", "F1": "100.0%", "Sample": "1 / 1"},
-    ]
-    st.dataframe(cal_data, use_container_width=True)
+    eval_data = None
+    try:
+        url = f"{BACKEND_URL}/api/evaluation/adversarial"
+        if do_rerun:
+            url += "?force_rerun=true"
+        ev_res = httpx.get(url, timeout=60.0)
+        if ev_res.status_code == 200:
+            eval_data = ev_res.json()
+            if do_rerun:
+                st.success("Adversarial benchmark re-execution completed.")
+        else:
+            st.warning(f"Could not load evaluation data: {ev_res.status_code}")
+    except Exception as ex:
+        st.warning(f"Evaluation communication error: {ex}")
 
-    st.markdown("---")
-    st.subheader("📈 Published CI Evaluation Gates")
-    st.write("Honest reporting separating the **Fixture Corpus (Bootstrap)** from **Held-Out Redacted Contracts**.")
+    if eval_data:
+        m_dict = eval_data.get("metrics", {})
+        rel_m = m_dict.get("relation_extraction", {})
+        ctrl_m = m_dict.get("controlling_clause_accuracy_as_of_date", {})
+        slot_m = m_dict.get("slot_exact_match", {})
+        prop_m = m_dict.get("proposition_classification", {})
 
-    g1_col, g2_col, g3_col = st.columns(3)
-    with g1_col:
-        st.markdown("#### 1. Fixture Gate (Seed Corpus)")
-        st.metric("Recall@1", "84.0%")
-        st.metric("Recall@5", "92.0%")
-        st.metric("MRR", "0.873")
-        st.metric("Distractor Leaks", "0")
+        # The 4 Uncoupled Production Metrics
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1.metric(
+            "1. Relation Extraction F1",
+            f"{rel_m.get('f1', 0.0)}%",
+            f"P={rel_m.get('precision', 0.0)}% • R={rel_m.get('recall', 0.0)}%"
+        )
+        col_m2.metric(
+            "2. Controlling Clause Accuracy",
+            f"{ctrl_m.get('accuracy_pct', 0.0)}%",
+            f"{ctrl_m.get('correct_queries', 0)} / {ctrl_m.get('total_queries', 0)} As-Of Queries"
+        )
+        col_m3.metric(
+            "3. Slot Exact-Match",
+            f"{slot_m.get('accuracy_pct', 0.0)}%",
+            f"{slot_m.get('matched_slots', 0)} / {slot_m.get('total_slots', 0)} Typed Slots"
+        )
+        col_m4.metric(
+            "4. Proposition Grounding",
+            f"{prop_m.get('accuracy_pct', 0.0)}%",
+            f"{prop_m.get('correct_cases', 0)} / {prop_m.get('total_cases', 0)} Classifications"
+        )
 
-    with g2_col:
-        st.markdown("#### 2. Unmocked Vectors (bge-large)")
-        st.metric("Pure Vector R@1", "80.0%")
-        st.metric("Pure Vector R@5", "92.0%")
-        st.metric("Pure Vector MRR", "0.860")
-        st.caption("Evaluated on frozen 1024-d local cache")
+        st.markdown("---")
 
-    with g3_col:
-        st.markdown("#### 3. Held-Out Contracts Gate")
-        st.metric("Held-Out Recall@1", "75.0%")
-        st.metric("Held-Out Recall@5", "100.0%")
-        st.metric("Held-Out MRR", "0.875")
-        st.metric("Priority Inversions", "0")
+        # 7 Multi-Document Family Granular Table
+        st.markdown("### 📊 Granular Multi-Document Family Breakdown")
+        f_list = eval_data.get("families", [])
+        if f_list:
+            table_rows = []
+            for f in f_list:
+                status_badge = "✅ PASS" if f.get("status") == "PASS" else "❌ FAIL"
+                f_doc_count = len(f.get("documents", []))
+                f_rel_tp = f.get("relations_found", 0)
+                f_rel_exp = f.get("expected_relations", 0)
+                f_q_corr = f.get("queries_correct", 0)
+                f_q_tot = f.get("total_queries", 0)
+                f_s_mat = f.get("slots_matched", 0)
+                f_s_tot = f.get("total_slots", 0)
+                f_p_corr = f.get("propositions_correct", 0)
+                f_p_tot = f.get("total_propositions", 0)
+
+                table_rows.append({
+                    "Family ID": f.get("family_id"),
+                    "Description": f.get("description", "")[:60] + "...",
+                    "Docs": f_doc_count,
+                    "Relations": f"{f_rel_tp}/{f_rel_exp}",
+                    "As-Of Precedence": f"{f_q_corr}/{f_q_tot}",
+                    "Slot Matching": f"{f_s_mat}/{f_s_tot}",
+                    "Grounding": f"{f_p_corr}/{f_p_tot}",
+                    "Verdict": status_badge
+                })
+            st.dataframe(table_rows, use_container_width=True)
+
+        # 4-Way Calibration Matrix
+        st.markdown("---")
+        st.markdown("### 🎯 4-Way Proposition Calibration Matrix")
+        conf_mat = prop_m.get("confusion_matrix", {})
+        if conf_mat:
+            c_rows = []
+            for cat, c_data in conf_mat.items():
+                c_rows.append({
+                    "Failure Category": cat,
+                    "Expected Assertions": c_data.get("expected", 0),
+                    "Correct Classifications": c_data.get("correct", 0),
+                    "Category Accuracy": f"{(c_data.get('correct', 0) / c_data.get('expected', 1) * 100.0):.1f}%" if c_data.get('expected', 0) > 0 else "N/A"
+                })
+            st.dataframe(c_rows, use_container_width=True)
+
+        # Failure & Diagnostic Log
+        st.markdown("---")
+        st.markdown("### 🔍 Failure & Diagnostic Logs")
+        failures = eval_data.get("failures", [])
+        if failures:
+            st.error(f"{len(failures)} failure(s) identified:")
+            for fail in failures:
+                st.write(f"- ❌ `[{fail.get('family_id')}]` **{fail.get('type')}**: {fail.get('details')}")
+        else:
+            st.success("✅ **ZERO FAILURES** across all 7 adversarial multi-document test families.")
+            st.caption(f"Benchmark evaluated at {eval_data.get('timestamp_utc')} in {eval_data.get('elapsed_seconds')}s.")
 
     st.markdown("---")
     st.markdown("""
-        #### 💡 Trigger Discrimination & Zero-Extrapolation Invariants
-        - **Caps vs Fees**: The tagger strictly discriminates between liability limitation caps (`cap_amount`) and ongoing recurring fees or retainers (`fee_amount`).
-        - **Breach Cure vs Notices**: Notice periods for payment disputes, delinquency suspensions, and convenience terminations are separated from material breach cure periods (`cure_days`).
-        - **Strict Ambiguity Refusal**: If two operative instruments divergence on a topic without an explicit `AMENDS` or order-of-precedence edge (`SCHEDULE_OF`), the engine returns `status: "ambiguous"` with `confidence: 0.0`.
+        #### 💡 Four Architectural Invariants Enforced by KruschBiz
+        1. **Confirmed Edges Only**: Auto-extracted relations remain `status='proposed'` and never silently control DAG traversal; only human-confirmed edges control.
+        2. **As-Of Temporal Cutoffs**: Traversal strictly ignores instruments or amendments executed after the requested evaluation boundary.
+        3. **Draft Isolation**: Unexecuted drafts (`execution_status='draft'`) can never amend or supersede executed agreements.
+        4. **Strict Ambiguity Refusal**: If two operative instruments diverge without a governing `AMENDS` or precedence clause, the engine refuses to guess, returning `status: "ambiguous"` with `confidence: 0.0`.
     """)
 
-
-# ===========================================================================
-# TAB 5: 🧪 Labs (Commercial Ops & Explorer)
-# ===========================================================================
-with tab5:
-    st.subheader("🧪 Labs: Quarantined Commercial Operations & Raw Explorers")
-    st.markdown("""
-        <div class="disclaimer-card" style="border-left-color: #a855f7;">
-            ⚠️ <strong>Quarantined Experimental Modules</strong>: To preserve zero-bloat focus on the core contract DAG and assertion grounding,
-            commercial operations (AR aging, invoicing, OCR parsing, DraftPro template factory, and raw ANN search) have been decoupled into <code>src/labs/</code>.
-            They are presented here for research, exploratory queries, and administrative inspection.
-        </div>
-    """, unsafe_allow_html=True)
-
-    labs_sub1, labs_sub2, labs_sub3, labs_sub4 = st.tabs([
-        "🔍 Raw Vector & Policy Explorer",
-        "💼 Deal Matters Administration",
-        "📜 Contract Portfolio & Expirations (Labs)",
-        "✍️ DraftPro & Commercial Ops (Labs)"
-    ])
-
-    with labs_sub1:
-        st.subheader("Raw ANN Vector & Lexical Clause Search")
-        l_q, l_org, l_top = st.columns([2, 1, 1])
-        with l_q:
-            raw_q = st.text_input("Clause Search Query:", placeholder="e.g. limitation of liability, Net 30, SOC 2", key="labs_raw_q")
-        with l_org:
-            raw_org = st.text_input("Organization:", placeholder="Filter by org", key="labs_raw_org")
-        with l_top:
-            raw_top = st.text_input("Topic:", placeholder="Filter by topic", key="labs_raw_top")
-
-        if st.button("🔍 Search Sovereign Clause Index", key="btn_raw_search"):
-            try:
-                params = {"limit": 10}
-                if raw_q:
-                    params["q"] = raw_q
-                if raw_org:
-                    params["organization"] = raw_org
-                if raw_top:
-                    params["topic"] = raw_top
-
-                s_res = httpx.get(f"{BACKEND_URL}/api/clauses", params=params, headers=get_auth_headers(), timeout=10.0)
-                if s_res.status_code == 200:
-                    clauses = s_res.json()
-                    st.caption(f"Retrieved {len(clauses)} clause(s):")
-                    for cl in clauses:
-                        with st.container():
-                            st.markdown(f"""
-                                <div class="clause-card" style="border-left-color: #38bdf8;">
-                                    <div class="clause-header">{cl.get('title') or 'Untitled Clause'} (§ {cl.get('section', 'General')})</div>
-                                    <div class="clause-meta">🏢 {cl.get('organization', 'N/A')} | 🏷️ {cl.get('topic', 'N/A')}</div>
-                                    <div class="clause-body">{cl.get('content')}</div>
-                                    <div class="why-ranked-box">Slots: {cl.get('structured_slots')}</div>
-                                </div>
-                            """, unsafe_allow_html=True)
-                else:
-                    st.error(f"Search failed: {s_res.status_code}")
-            except Exception as e:
-                st.error(f"Search error: {e}")
-
-    with labs_sub2:
-        st.subheader("💼 Active Corporate Deals & Matters Administration")
-
-        with st.expander("➕ Create New Corporate Deal"):
-            with st.form("labs_new_deal_form"):
-                new_code = st.text_input("Deal Code:", placeholder="e.g. DEAL-2026-104")
-                new_title = st.text_input("Deal Title:", placeholder="e.g. Cloud Security Monitoring Procurement")
-                new_company = st.text_input("Internal Entity:", value="Acme Corp")
-                new_cp = st.text_input("Counterparty:", placeholder="e.g. Sentinel Guard Systems Inc.")
-                new_type = st.selectbox("Transaction Type:", ["Vendor Procurement", "SaaS Licensing", "M&A Due Diligence", "Executive Employment", "Commercial Lease", "Corporate Governance"])
-                new_facts = st.text_area("Transaction Facts & Context:", placeholder="Describe the transaction, parties, proposed pricing, and key clauses.")
-                submitted = st.form_submit_button("Create Deal Matter")
-
-                if submitted:
-                    if not new_title or not new_facts:
-                        st.error("Title and Transaction Facts are required.")
-                    else:
-                        try:
-                            create_resp = httpx.post(f"{BACKEND_URL}/api/deals", json={
-                                "deal_code": new_code,
-                                "company_name": new_company,
-                                "counterparty_name": new_cp,
-                                "deal_type": new_type,
-                                "title": new_title,
-                                "context_facts": new_facts
-                            }, headers=get_auth_headers(), timeout=10.0)
-                            if create_resp.status_code == 201:
-                                st.success("Deal created successfully!")
-                                st.rerun()
-                            else:
-                                st.error(f"Failed to create deal: {create_resp.text}")
-                        except Exception as ce:
-                            st.error(f"Error creating deal: {ce}")
-
-        for d in deals:
-            deal_id = d["id"]
-            d_code = d.get("deal_code") or f"DEAL-{deal_id}"
-            d_title = d.get("title", "")
-            d_cp = d.get("counterparty_name") or "N/A"
-            d_type = d.get("deal_type") or "General"
-            d_status = d.get("status", "")
-            d_facts = (d.get("context_facts") or "")[:220]
-            with st.container():
-                st.markdown(f"""
-                    <div class="deal-card">
-                        <div style="font-weight: 700; font-size: 1.1rem; color: #f8fafc;">
-                            [{d_code}] {d_title}
-                        </div>
-                        <div style="font-size: 0.85rem; color: #94a3b8; margin: 4px 0 8px 0;">
-                            🏢 Counterparty: <strong>{d_cp}</strong> |
-                            📋 Type: <strong>{d_type}</strong> |
-                            Status: <span style="color: #38bdf8;">{d_status}</span>
-                        </div>
-                        <div style="font-size: 0.88rem; color: #cbd5e1;">{d_facts}...</div>
-                    </div>
-                """, unsafe_allow_html=True)
-
-                col_del, _ = st.columns([2, 4])
-                if col_del.button(f"🗑️ Hard Delete #{d['id']}", key=f"labs_hard_delete_{d['id']}"):
-                    try:
-                        p_res = httpx.delete(f"{BACKEND_URL}/api/deals/{d['id']}/hard-delete", headers=get_auth_headers(), timeout=10.0)
-                        if p_res.status_code == 200:
-                            st.success(f"Deal #{d['id']} hard deleted.")
-                            st.rerun()
-                    except Exception as pe:
-                        st.error(f"Delete failed: {pe}")
-
-    with labs_sub3:
-        st.subheader("📜 Contract Portfolio & Expirations (Quarantined)")
-        st.info("Contract portfolio lifecycle and expiration tracking module is preserved in `src/labs/business_router.py`. Mount the extension to restore database synchronization.")
-
-        st.markdown("#### Sample Portfolio Registry (Local View)")
-        sample_portfolio = [
-            {"Title": "Master Cloud Agreement 2025", "Counterparty": "CloudScale AI", "Type": "MSA", "Status": "Active", "Expires": "2027-12-31"},
-            {"Title": "Sentinel Security Operations SOW", "Counterparty": "Sentinel Guard Systems", "Type": "SOW", "Status": "Active", "Expires": "2026-11-15"},
-            {"Title": "Datastream Logistics Redline", "Counterparty": "Datastream Logistics", "Type": "Amendment", "Status": "Under Review", "Expires": "2027-01-01"},
-        ]
-        st.dataframe(sample_portfolio, use_container_width=True)
-
-    with labs_sub4:
-        st.subheader("✍️ DraftPro Generator & Heuristic OCR (Quarantined)")
-        st.info("Air-gapped contract template drafting (`business_templates.py`) and invoice heuristic OCR (`business_ocr.py`) have been moved to `src/labs/` for independent development.")
-        st.markdown("""
-            - **DraftPro Templates**: Standard NDA, Cloud MSA, Vendor SOW, Data Processing Addendum.
-            - **Invoice Heuristic OCR**: Regex extraction of Line Items, Subtotals, Tax, Invoice Number, and Remittance details.
-        """)
