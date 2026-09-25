@@ -56,11 +56,39 @@ def format_slot_display(slots: dict) -> list[str]:
 # Cyber-Executive Corporate Design Aesthetics
 st.markdown("""
     <style>
-    /* Air-Gapped Offline System Font Stack */
+    /* ── Frontend MCP Design System Tokens (Refactoring UI & WCAG AAA) ── */
+    :root {
+        --bg-canvas: #070b14;
+        --bg-surface: rgba(15, 23, 42, 0.75);
+        --bg-surface-elevated: rgba(30, 41, 59, 0.7);
+        --border-subtle: rgba(255, 255, 255, 0.08);
+        --border-accent-gold: rgba(245, 158, 11, 0.3);
+        --color-gold: #f59e0b;
+        --color-gold-light: #fbbf24;
+        --color-gold-glow: rgba(245, 158, 11, 0.35);
+        --color-emerald: #10b981;
+        --color-emerald-light: #34d399;
+        --color-sky: #0ea5e9;
+        --color-sky-light: #38bdf8;
+        --color-crimson: #ef4444;
+        --color-crimson-light: #f87171;
+        --color-purple: #8b5cf6;
+        --text-primary: #f8fafc;
+        --text-secondary: #cbd5e1;
+        --text-muted: #94a3b8;
+        --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        --radius-sm: 6px;
+        --radius-md: 10px;
+        --radius-lg: 14px;
+        --radius-full: 9999px;
+        --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Air-Gapped Offline System Font Stack & Canvas */
     .stApp {
-        background: radial-gradient(circle at 50% 0%, #0c1322, #030712 100%);
-        color: #f8fafc;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background: radial-gradient(circle at 50% -12%, #172554 0%, #090d16 40%, #030712 100%);
+        color: var(--text-primary);
+        font-family: var(--font-stack);
     }
 
     /* Top Brand Container */
@@ -69,77 +97,207 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
         padding: 1.25rem 2rem;
-        background: rgba(15, 23, 42, 0.75);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.65) 100%);
         backdrop-filter: blur(16px);
-        border: 1px solid rgba(245, 158, 11, 0.25);
-        border-radius: 14px;
-        margin-bottom: 1.5rem;
+        border: 1px solid rgba(245, 158, 11, 0.28);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius-lg);
+        margin-bottom: 1.25rem;
     }
     .brand-title {
-        font-size: 1.85rem;
+        font-size: 1.95rem;
         font-weight: 800;
-        background: linear-gradient(135deg, #fbbf24, #f59e0b, #38bdf8);
+        background: linear-gradient(135deg, #fef08a 0%, #fbbf24 35%, #f59e0b 70%, #38bdf8 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         letter-spacing: -0.03em;
     }
     .brand-subtitle {
         font-size: 0.95rem;
-        color: #94a3b8;
-        margin-left: 12px;
+        color: var(--text-muted);
+        margin-left: 14px;
         font-weight: 500;
     }
     .badge-pill {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        background: rgba(245, 158, 11, 0.12);
+        background: rgba(245, 158, 11, 0.14);
         color: #fbbf24;
         border: 1px solid rgba(245, 158, 11, 0.35);
         padding: 0.35rem 0.85rem;
-        border-radius: 9999px;
+        border-radius: var(--radius-full);
         font-size: 0.82rem;
         font-weight: 600;
-        letter-spacing: 0.02em;
+        letter-spacing: 0.03em;
+        box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
     }
     .badge-nexus {
-        background: rgba(14, 165, 233, 0.12);
+        background: rgba(14, 165, 233, 0.14);
         color: #38bdf8;
         border: 1px solid rgba(14, 165, 233, 0.35);
         margin-left: 8px;
+        box-shadow: 0 2px 8px rgba(14, 165, 233, 0.15);
     }
     .badge-graph {
-        background: rgba(168, 85, 247, 0.12);
+        background: rgba(168, 85, 247, 0.14);
         color: #c084fc;
         border: 1px solid rgba(168, 85, 247, 0.35);
         margin-left: 8px;
+        box-shadow: 0 2px 8px rgba(168, 85, 247, 0.15);
     }
 
     /* Disclaimer Alert Box */
     .disclaimer-card {
-        background: rgba(30, 41, 59, 0.5);
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.7) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-left: 4px solid #f59e0b;
-        padding: 0.85rem 1.25rem;
-        border-radius: 8px;
-        font-size: 0.85rem;
-        color: #cbd5e1;
-        line-height: 1.5;
-        margin-bottom: 1.5rem;
+        padding: 0.95rem 1.35rem;
+        border-radius: var(--radius-md);
+        font-size: 0.86rem;
+        color: var(--text-secondary);
+        line-height: 1.55;
+        margin-bottom: 1.35rem;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
     }
+
+    /* ── Streamlit Native UI Components Styling ── */
+
+    /* Tabs Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(15, 23, 42, 0.65) !important;
+        backdrop-filter: blur(14px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 12px !important;
+        padding: 6px !important;
+        gap: 6px !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: var(--text-muted) !important;
+        font-weight: 600 !important;
+        font-size: 0.90rem !important;
+        border-radius: 8px !important;
+        padding: 10px 18px !important;
+        transition: all var(--transition-fast) !important;
+        border: none !important;
+        background: transparent !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #f1f5f9 !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(217, 119, 6, 0.12) 100%) !important;
+        color: #fbbf24 !important;
+        border-bottom: 2px solid #f59e0b !important;
+        box-shadow: 0 4px 14px rgba(245, 158, 11, 0.22) !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] {
+        background-color: transparent !important;
+    }
+    .stTabs [data-baseweb="tab-border"] {
+        display: none !important;
+    }
+
+    /* Button Hierarchy (Refactoring UI Principle) */
+    div.stButton > button {
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        padding: 0.55rem 1.25rem !important;
+        min-height: 42px !important;
+        transition: all var(--transition-fast) !important;
+    }
+    div.stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+        color: #050811 !important;
+        font-weight: 700 !important;
+        border: 1px solid rgba(254, 240, 138, 0.45) !important;
+        box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3) !important;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 6px 22px rgba(245, 158, 11, 0.5) !important;
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+    }
+    div.stButton > button[kind="primary"]:active {
+        transform: translateY(0px) !important;
+    }
+    div.stButton > button[kind="secondary"],
+    div.stButton > button:not([kind="primary"]) {
+        background: rgba(30, 41, 59, 0.6) !important;
+        color: var(--text-secondary) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+    }
+    div.stButton > button[kind="secondary"]:hover,
+    div.stButton > button:not([kind="primary"]):hover {
+        border-color: rgba(245, 158, 11, 0.5) !important;
+        color: #fbbf24 !important;
+        background: rgba(30, 41, 59, 0.9) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    /* Polished Metric Cards */
+    div[data-testid="stMetric"] {
+        background: linear-gradient(145deg, rgba(15, 23, 42, 0.75) 0%, rgba(30, 41, 59, 0.45) 100%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-top: 3px solid #f59e0b !important;
+        border-radius: var(--radius-md) !important;
+        padding: 0.95rem 1.25rem !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28) !important;
+        backdrop-filter: blur(10px) !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.06em !important;
+        color: var(--text-muted) !important;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.65rem !important;
+        font-weight: 800 !important;
+        color: var(--text-primary) !important;
+    }
+
+    /* Form Inputs and Select Boxes */
+    div[data-baseweb="select"] > div,
+    input.stTextInput,
+    div.stTextInput > div > div > input,
+    textarea.stTextArea,
+    div.stTextArea > div > div > textarea {
+        background-color: rgba(15, 23, 42, 0.8) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 8px !important;
+        color: #f1f5f9 !important;
+        transition: border-color var(--transition-fast), box-shadow var(--transition-fast) !important;
+    }
+    div[data-baseweb="select"] > div:focus-within,
+    div.stTextInput > div > div > input:focus,
+    div.stTextArea > div > div > textarea:focus {
+        border-color: #f59e0b !important;
+        box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25) !important;
+    }
+
+    /* ── Specific Domain Cards ── */
 
     /* Clause Card Styling */
     .clause-card {
-        background: rgba(30, 41, 59, 0.45);
-        backdrop-filter: blur(10px);
+        background: linear-gradient(145deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.65) 100%);
+        backdrop-filter: blur(12px);
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-left: 4px solid #f59e0b;
         padding: 1.25rem;
-        border-radius: 10px;
+        border-radius: var(--radius-md);
         margin-bottom: 1.15rem;
-        transition: transform 0.15s ease, border-color 0.15s ease;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+        transition: transform var(--transition-fast), border-color var(--transition-fast);
     }
     .clause-card:hover {
         border-color: rgba(245, 158, 11, 0.6);
+        transform: translateY(-1px);
     }
     .clause-header {
         font-weight: 700;
@@ -149,32 +307,38 @@ st.markdown("""
     }
     .clause-meta {
         font-size: 0.82rem;
-        color: #94a3b8;
+        color: var(--text-muted);
         margin-bottom: 0.75rem;
     }
     .clause-body {
         font-size: 0.88rem;
-        color: #cbd5e1;
+        color: var(--text-secondary);
         line-height: 1.55;
     }
     .why-ranked-box {
-        background: rgba(15, 23, 42, 0.75);
+        background: rgba(15, 23, 42, 0.8);
         border: 1px solid rgba(56, 189, 248, 0.25);
         border-radius: 6px;
-        padding: 0.6rem 0.9rem;
+        padding: 0.65rem 0.95rem;
         margin-top: 0.75rem;
         font-size: 0.80rem;
-        color: #94a3b8;
+        color: var(--text-muted);
     }
 
     /* Edge Card Styling */
     .edge-card {
-        background: rgba(30, 41, 59, 0.55);
+        background: linear-gradient(145deg, rgba(30, 41, 59, 0.65) 0%, rgba(15, 23, 42, 0.8) 100%);
         border: 1px solid rgba(245, 158, 11, 0.35);
         border-left: 4px solid #f59e0b;
-        border-radius: 10px;
-        padding: 1.15rem;
+        border-radius: var(--radius-md);
+        padding: 1.15rem 1.35rem;
         margin-bottom: 1rem;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .edge-card:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     }
     .edge-header {
         display: flex;
@@ -182,7 +346,7 @@ st.markdown("""
         align-items: center;
         font-weight: 700;
         font-size: 0.95rem;
-        color: #f8fafc;
+        color: var(--text-primary);
         margin-bottom: 0.4rem;
     }
     .edge-excerpt {
@@ -194,6 +358,16 @@ st.markdown("""
         color: #e2e8f0;
         font-style: italic;
         margin: 0.5rem 0;
+    }
+
+    /* Split-Pane Box in Review Queue */
+    .split-pane-box {
+        background: rgba(15, 23, 42, 0.75);
+        padding: 1rem 1.25rem;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        min-height: 190px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
     }
 
     /* Pills & Slots */
@@ -216,7 +390,7 @@ st.markdown("""
         color: #38bdf8;
         border: 1px solid rgba(56, 189, 248, 0.35);
         padding: 0.15rem 0.55rem;
-        border-radius: 9999px;
+        border-radius: var(--radius-full);
         font-size: 0.75rem;
         font-weight: 600;
         margin-right: 4px;
@@ -238,12 +412,13 @@ st.markdown("""
 
     /* Conflict & Evidence Cards */
     .conflict-card {
-        background: rgba(239, 68, 68, 0.08);
+        background: linear-gradient(145deg, rgba(239, 68, 68, 0.08) 0%, rgba(15, 23, 42, 0.7) 100%);
         border: 1px solid rgba(239, 68, 68, 0.35);
         border-left: 4px solid #ef4444;
-        padding: 1rem 1.25rem;
-        border-radius: 8px;
+        padding: 1.15rem 1.35rem;
+        border-radius: var(--radius-md);
         margin-bottom: 1rem;
+        box-shadow: 0 4px 16px rgba(239, 68, 68, 0.15);
     }
     .evidence-card {
         background: rgba(30, 41, 59, 0.45);
@@ -251,46 +426,59 @@ st.markdown("""
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-left: 4px solid #38bdf8;
         padding: 1.15rem;
-        border-radius: 10px;
+        border-radius: var(--radius-md);
         margin-bottom: 1.15rem;
     }
     .deal-card {
         background: rgba(15, 23, 42, 0.6);
         border: 1px solid rgba(56, 189, 248, 0.2);
         padding: 1rem 1.25rem;
-        border-radius: 10px;
+        border-radius: var(--radius-md);
         margin-bottom: 0.85rem;
     }
 
     /* Grounding Audit Table */
     .audit-table {
         width: 100%;
-        border-collapse: collapse;
-        font-size: 0.85rem;
-        margin: 1rem 0;
-    }
-    .audit-table th, .audit-table td {
-        padding: 8px 12px;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.86rem;
+        margin: 1.25rem 0;
+        border-radius: 10px;
+        overflow: hidden;
         border: 1px solid rgba(255, 255, 255, 0.1);
-        text-align: left;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     }
     .audit-table th {
-        background: rgba(30, 41, 59, 0.8);
-        color: #f1f5f9;
+        background: linear-gradient(180deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%);
+        color: #f8fafc;
+        font-weight: 700;
+        padding: 10px 14px;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
     }
-    .audit-verified { color: #10b981; font-weight: 600; }
-    .audit-divergent { color: #f59e0b; font-weight: 600; }
-    .audit-invented { color: #ef4444; font-weight: 600; }
-    .audit-superseded { color: #f97316; font-weight: 600; }
+    .audit-table td {
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(15, 23, 42, 0.5);
+        color: #cbd5e1;
+    }
+    .audit-table tr:hover td {
+        background: rgba(30, 41, 59, 0.65);
+    }
+    .audit-verified { color: #10b981; font-weight: 700; }
+    .audit-divergent { color: #f59e0b; font-weight: 700; }
+    .audit-invented { color: #ef4444; font-weight: 700; }
+    .audit-superseded { color: #f97316; font-weight: 700; }
 
     /* Uncertainty Warning Banner */
     .uncertainty-banner {
-        background: rgba(245, 158, 11, 0.12);
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.14) 0%, rgba(217, 119, 6, 0.08) 100%);
         border: 2px solid rgba(245, 158, 11, 0.6);
-        border-radius: 12px;
+        border-radius: var(--radius-md);
         padding: 1.15rem 1.5rem;
         margin-bottom: 1.5rem;
-        box-shadow: 0 0 20px rgba(245, 158, 11, 0.15);
+        box-shadow: 0 0 24px rgba(245, 158, 11, 0.18);
     }
 
     /* Compliance Card Styling */
@@ -298,32 +486,33 @@ st.markdown("""
         background: rgba(15, 23, 42, 0.65);
         backdrop-filter: blur(12px);
         border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
+        border-radius: var(--radius-md);
         padding: 1.25rem;
         margin-bottom: 1.25rem;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     }
     .compliance-card-violation {
         border-left: 5px solid #ef4444;
-        background: rgba(239, 68, 68, 0.04);
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(15, 23, 42, 0.7) 100%);
     }
     .compliance-card-aligned {
         border-left: 5px solid #10b981;
-        background: rgba(16, 185, 129, 0.04);
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(15, 23, 42, 0.7) 100%);
     }
     .compliance-card-generous {
         border-left: 5px solid #06b6d4;
-        background: rgba(6, 182, 212, 0.04);
+        background: linear-gradient(135deg, rgba(6, 182, 212, 0.08) 0%, rgba(15, 23, 42, 0.7) 100%);
     }
     .compliance-card-gap {
         border-left: 5px solid #64748b;
-        background: rgba(100, 116, 139, 0.04);
+        background: linear-gradient(135deg, rgba(100, 116, 139, 0.08) 0%, rgba(15, 23, 42, 0.7) 100%);
     }
     .badge-void {
         background: rgba(239, 68, 68, 0.15);
         color: #f87171;
         border: 1px solid rgba(239, 68, 68, 0.4);
         padding: 0.25rem 0.65rem;
-        border-radius: 9999px;
+        border-radius: var(--radius-full);
         font-weight: 700;
         font-size: 0.78rem;
     }
@@ -332,7 +521,7 @@ st.markdown("""
         color: #34d399;
         border: 1px solid rgba(16, 185, 129, 0.4);
         padding: 0.25rem 0.65rem;
-        border-radius: 9999px;
+        border-radius: var(--radius-full);
         font-weight: 700;
         font-size: 0.78rem;
     }
@@ -341,7 +530,7 @@ st.markdown("""
         color: #22d3ee;
         border: 1px solid rgba(6, 182, 212, 0.4);
         padding: 0.25rem 0.65rem;
-        border-radius: 9999px;
+        border-radius: var(--radius-full);
         font-weight: 700;
         font-size: 0.78rem;
     }
@@ -350,7 +539,7 @@ st.markdown("""
         color: #94a3b8;
         border: 1px solid rgba(100, 116, 139, 0.4);
         padding: 0.25rem 0.65rem;
-        border-radius: 9999px;
+        border-radius: var(--radius-full);
         font-weight: 700;
         font-size: 0.78rem;
     }
@@ -813,14 +1002,17 @@ with tab2:
                             st.markdown("##### 📄 Left Pane: Triggering Source Text & Span")
                             source_excerpt = pe.get('source_span') or pe.get('source_excerpt') or "Body amendment or preamble cue detected during ingestion"
                             st.markdown(f"""
-                                <div style="background: rgba(15, 23, 42, 0.7); padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.25); min-height: 200px;">
-                                    <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 8px;">
-                                        <strong>Source Instrument:</strong> {pe.get('source_title')} (ID: #{pe.get('source_agreement_id')})
+                                <div class="split-pane-box">
+                                    <div style="font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: #38bdf8; font-weight: 700; margin-bottom: 6px;">
+                                        📄 Source Instrument
                                     </div>
-                                    <div style="font-size: 0.9rem; color: #f1f5f9; font-style: italic; line-height: 1.55; border-left: 3px solid #38bdf8; padding-left: 12px; background: rgba(56, 189, 248, 0.05); padding-top: 6px; padding-bottom: 6px; border-radius: 0 6px 6px 0;">
+                                    <div style="font-weight: 600; color: #f8fafc; font-size: 0.95rem; margin-bottom: 8px;">
+                                        {pe.get('source_title')} <span style="color: #94a3b8; font-weight: 400; font-size: 0.85rem;">(ID: #{pe.get('source_agreement_id')})</span>
+                                    </div>
+                                    <div style="font-size: 0.88rem; color: #f1f5f9; font-style: italic; line-height: 1.55; border-left: 3px solid #38bdf8; padding-left: 12px; background: rgba(56, 189, 248, 0.06); padding-top: 8px; padding-bottom: 8px; border-radius: 0 6px 6px 0; margin-bottom: 10px;">
                                         "{source_excerpt}"
                                     </div>
-                                    <div style="font-size: 0.82rem; color: #38bdf8; margin-top: 12px;">
+                                    <div style="font-size: 0.82rem; color: #38bdf8;">
                                         🎯 <strong>Detected Scope Cue:</strong> <code>{pe.get('clause_scope', 'ALL')}</code>
                                     </div>
                                 </div>
@@ -830,10 +1022,13 @@ with tab2:
                             st.markdown("##### ⚡ Right Pane: Candidate Edge & Review Actions")
                             eff_str = pe.get('effective_date') or 'Unspecified / Inherited'
                             st.markdown(f"""
-                                <div style="background: rgba(15, 23, 42, 0.7); padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.25); margin-bottom: 12px;">
-                                    <div style="font-size: 0.88rem; color: #cbd5e1; line-height: 1.6;">
-                                        • <strong>Edge Type:</strong> <span class="badge-pill">{pe.get('relation_type')}</span><br/>
-                                        • <strong>Target Instrument:</strong> {pe.get('target_title')} (ID: #{pe.get('target_agreement_id')})<br/>
+                                <div class="split-pane-box" style="margin-bottom: 12px;">
+                                    <div style="font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: #fbbf24; font-weight: 700; margin-bottom: 6px;">
+                                        ⚡ Precedence Modification
+                                    </div>
+                                    <div style="font-size: 0.88rem; color: #cbd5e1; line-height: 1.65;">
+                                        • <strong>Proposed Edge:</strong> <span class="badge-pill">{pe.get('relation_type')}</span><br/>
+                                        • <strong>Target Instrument:</strong> <span style="color: #f1f5f9; font-weight: 600;">{pe.get('target_title')}</span> (ID: #{pe.get('target_agreement_id')})<br/>
                                         • <strong>Clause Scope:</strong> <code>{pe.get('clause_scope', 'ALL')}</code><br/>
                                         • <strong>Effective Date:</strong> <code>{eff_str}</code>
                                     </div>
@@ -1529,4 +1724,146 @@ with tab4:
         3. **Draft Isolation**: Unexecuted drafts (`execution_status='draft'`) can never amend or supersede executed agreements.
         4. **Strict Ambiguity Refusal**: If two operative instruments diverge without a governing `AMENDS` or precedence clause, the engine refuses to guess, returning `status: "ambiguous"` with `confidence: 0.0`.
     """)
+
+
+# ===========================================================================
+# TAB 5: ⚖️ The Join: Statutory Compliance Audit
+# ===========================================================================
+with tab5:
+    st.subheader("⚖️ The Join: Statutory Compliance Audit & Ceilings / Floors")
+    st.caption("Cross-domain sovereign evaluation: Compare controlling commercial terms (KruschBiz DAG) against mandatory statutory floors and ceilings (KruschLaw).")
+
+    j_c1, j_c2, j_c3 = st.columns([2, 1, 1])
+    with j_c1:
+        join_cp = st.selectbox("Select Counterparty / Vendor:", options=known_counterparties, key="join_cp")
+    with j_c2:
+        join_jurisdiction = st.selectbox(
+            "Statutory Jurisdiction:",
+            options=["California", "CA:Oakland", "CA:San Francisco", "Delaware", "New York"],
+            key="join_jurisdiction"
+        )
+    with j_c3:
+        join_as_of = st.date_input(
+            "As-Of Evaluation Date:",
+            value=datetime.now(timezone.utc).date(),
+            key="join_as_of"
+        )
+
+    join_topics = st.multiselect(
+        "Commercial & Statutory Topics to Audit:",
+        options=[
+            "SECURITY_DEPOSIT",
+            "ENTRY_NOTICE",
+            "DEPOSIT_RETURN",
+            "HABITABILITY_WAIVER",
+            "REPAIR_AND_DEDUCT",
+            "RETALIATION_WAIVER",
+            "LATE_FEE",
+            "PAYMENT_TERMS",
+            "COMMERCIAL_SECURITY_DEPOSIT"
+        ],
+        default=["LATE_FEE", "PAYMENT_TERMS", "SECURITY_DEPOSIT"],
+        key="join_topics_sel"
+    )
+
+    if st.button("⚖️ Run Contract-vs-Statute Compliance Audit", type="primary", use_container_width=True, key="btn_run_join"):
+        with st.spinner("Executing The Join cross-domain evaluation against statutory mandates..."):
+            try:
+                payload = {
+                    "counterparty": join_cp,
+                    "jurisdiction": join_jurisdiction,
+                    "as_of_date": join_as_of.isoformat(),
+                    "topics": join_topics
+                }
+                res = httpx.post(
+                    f"{BACKEND_URL}/api/conflicts/contract-vs-statute",
+                    json=payload,
+                    headers=get_auth_headers(),
+                    timeout=20.0
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    verdict = data.get("verdict", "UNKNOWN")
+                    findings = data.get("findings", [])
+
+                    # Summary Metrics Row
+                    c_v1, c_v2, c_v3, c_v4 = st.columns(4)
+                    c_v1.metric("Compliance Verdict", verdict.replace("_", " "))
+                    c_v2.metric("Topics Audited", len(findings))
+                    c_v3.metric("Jurisdiction", data.get("jurisdiction", "N/A"))
+                    c_v4.metric("Coverage", data.get("coverage_completeness", "N/A").upper())
+
+                    st.markdown("---")
+                    st.markdown("### 📋 Statutory Findings & Enforceability Determinations")
+
+                    for item in findings:
+                        top = item.get("topic")
+                        alignment = item.get("alignment", "unknown")
+                        enforceability = item.get("enforceability", "UNSPECIFIED")
+                        statute = item.get("controlling_statute") or {}
+                        clause = item.get("contract_clause") or {}
+                        explanation = item.get("explanation", "")
+
+                        # Determine styling card class and badge
+                        if alignment == "contract_less_than_mandatory" or enforceability == "VOID_AS_AGAINST_PUBLIC_POLICY":
+                            card_class = "compliance-card compliance-card-violation"
+                            badge_html = "<span class='badge-void'>🚫 VOID AS AGAINST PUBLIC POLICY</span>"
+                        elif alignment == "contract_more_generous":
+                            card_class = "compliance-card compliance-card-generous"
+                            badge_html = "<span class='badge-generous'>✨ MORE GENEROUS THAN STATUTORY FLOOR</span>"
+                        elif alignment == "aligned" or enforceability == "ENFORCEABLE_AS_WRITTEN":
+                            card_class = "compliance-card compliance-card-aligned"
+                            badge_html = "<span class='badge-enforceable'>✅ ENFORCEABLE AS WRITTEN</span>"
+                        else:
+                            card_class = "compliance-card compliance-card-gap"
+                            badge_html = "<span class='badge-gap'>⚪ COVERAGE GAP (STATUTE CONTROLS)</span>"
+
+                        st.markdown(f"""
+                            <div class="{card_class}">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <span style="font-weight: 800; font-size: 1.05rem; color: #f8fafc;">
+                                        {top}
+                                    </span>
+                                    {badge_html}
+                                </div>
+                                <div style="font-size: 0.90rem; color: #cbd5e1; margin-bottom: 10px; line-height: 1.5;">
+                                    {explanation}
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px;">
+                                    <div style="background: rgba(15, 23, 42, 0.7); padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08);">
+                                        <div style="font-size: 0.78rem; text-transform: uppercase; color: #38bdf8; font-weight: 700; margin-bottom: 4px;">
+                                            🏛️ Controlling Statutory Mandate ({statute.get('mandate_type', 'MANDATE')})
+                                        </div>
+                                        <div style="font-weight: 600; font-size: 0.88rem; color: #f1f5f9;">
+                                            {statute.get('citation', 'N/A')}
+                                        </div>
+                                        <div style="font-size: 0.82rem; color: #94a3b8; font-style: italic; margin-top: 4px;">
+                                            "{statute.get('span', '')}"
+                                        </div>
+                                        <div style="font-size: 0.80rem; color: #38bdf8; margin-top: 6px;">
+                                            Threshold: <code>{statute.get('normalized_slot', {})}</code>
+                                        </div>
+                                    </div>
+                                    <div style="background: rgba(15, 23, 42, 0.7); padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08);">
+                                        <div style="font-size: 0.78rem; text-transform: uppercase; color: #fbbf24; font-weight: 700; margin-bottom: 4px;">
+                                            💼 Portfolio Contract Provision
+                                        </div>
+                                        <div style="font-weight: 600; font-size: 0.88rem; color: #f1f5f9;">
+                                            {clause.get('agreement_title', 'No Provision Identified')} {f"(§ {clause.get('section')})" if clause.get('section') else ''}
+                                        </div>
+                                        <div style="font-size: 0.82rem; color: #94a3b8; font-style: italic; margin-top: 4px;">
+                                            "{clause.get('excerpt') or clause.get('content') or 'Term unaddressed in agreement'}"
+                                        </div>
+                                        <div style="font-size: 0.80rem; color: #fbbf24; margin-top: 6px;">
+                                            Contract Term: <code>{clause.get('structured_slots', {})}</code>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.error(f"Compliance audit failed: {res.status_code} - {res.text}")
+            except Exception as e:
+                st.error(f"Communication error with engine: {e}")
+
 
