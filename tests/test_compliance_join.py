@@ -455,7 +455,7 @@ class TestComplianceJoin(unittest.TestCase):
         self.assertEqual(f["alignment"], "contract_less_than_mandatory")
         self.assertEqual(f["enforceability"], "VOID_AS_AGAINST_PUBLIC_POLICY")
 
-    def test_10_unsupported_jurisdiction_returns_unsupported(self):
+    def test_13_unsupported_jurisdiction_returns_unsupported(self):
         """Verify that an unknown or non-CA jurisdiction returns UNSUPPORTED_JURISDICTION."""
         payload = {
             "counterparty": "Pacific Crest Properties LLC",

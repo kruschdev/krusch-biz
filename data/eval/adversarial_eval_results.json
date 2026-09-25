@@ -1,9 +1,9 @@
 {
-  "timestamp_utc": "2026-09-25T18:33:06.918454+00:00",
-  "elapsed_seconds": 0.347,
+  "timestamp_utc": "2026-09-25T19:17:04.369926+00:00",
+  "elapsed_seconds": 0.401,
   "evaluation_class": "fixture_verification",
   "provenance": {
-    "git_sha": "bd905367a09bae39a914084f08ae6c0daf3ffb83",
+    "git_sha": "45751b2d0a20013c795671852fa78a01aa417260",
     "fixture_hash": "6b5d2931c0d552d81cf3b78339e489c6cecd16afe70780147b3771b264e484da",
     "corpus_file": "adversarial_corpus.json",
     "embedding_model": "bge-large",

@@ -1,5 +1,5 @@
 {
-  "timestamp": "1790281724.6228237",
+  "timestamp": "2026-09-25T19:17:20.315458+00:00",
   "gate1_fixture_smoke_test": {
     "total_cases": 25,
     "recall_at_1": 80.0,
@@ -7,7 +7,7 @@
     "precision_at_5": 20.0,
     "mrr": 0.853,
     "distractor_leaks": 0,
-    "avg_latency_ms": 123.78
+    "avg_latency_ms": 116.91
   },
   "gate2_unmocked_embedding": {
     "status": "passed",

@@ -256,7 +256,8 @@ def evaluate_contract_vs_statute(
             tenant_id=tenant_id,
             counterparty=counterparty_query,
             topic=topic_norm,
-            as_of_date=as_of
+            as_of_date=as_of,
+            persist_trace=False
         )
 
         winning_clause = biz_res.get("controlling_clause")
