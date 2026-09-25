@@ -221,7 +221,7 @@ class TestSecurityHardening(unittest.TestCase):
         """Verify that hard transactional purges leave exactly 0 leftover rows across all related tables."""
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        from datetime import datetime
+        from datetime import datetime, timezone
         from src.backend.db import (
             Base, DealMatter, DealEvidence, CommercialGroundingReport,
             Agreement, Clause, AgreementRelation, CommercialClauseVector,
@@ -267,12 +267,29 @@ class TestSecurityHardening(unittest.TestCase):
             effective_date=datetime(2024, 1, 1),
             execution_status="executed"
         )
-        session.add(ag)
+        ag2 = Agreement(
+            tenant_id=tenant,
+            title="Target Amendment No. 1",
+            instrument_type="amendment",
+            counterparty="Target Co",
+            effective_date=datetime(2024, 6, 1),
+            execution_status="executed"
+        )
+        session.add_all([ag, ag2])
         session.flush()
 
         cl1 = Clause(tenant_id=tenant, agreement_id=ag.id, section="1.1", title="Term", topic="PAYMENT_TERMS", authority_class="governing_agreement", content="Content 1")
         cl2 = Clause(tenant_id=tenant, agreement_id=ag.id, section="1.2", title="Fee", topic="FEES", authority_class="governing_agreement", content="Content 2")
-        rel1 = AgreementRelation(tenant_id=tenant, source_agreement_id=ag.id, target_agreement_id=ag.id, relation_type="AMENDS", clause_scope="ALL", status="confirmed")
+        rel1 = AgreementRelation(
+            tenant_id=tenant,
+            source_agreement_id=ag2.id,
+            target_agreement_id=ag.id,
+            relation_type="AMENDS",
+            clause_scope="ALL",
+            status="confirmed",
+            reviewer_id="security_auditor",
+            reviewed_at=datetime.now(timezone.utc)
+        )
         vec1 = CommercialClauseVector(
             tenant_id=tenant,
             organization="Our Corp",
@@ -299,7 +316,9 @@ class TestSecurityHardening(unittest.TestCase):
 
         # Execute Agreement Purge
         ag_stats = purge_agreement_transactional(session, tenant, ag.id)
+        ag2_stats = purge_agreement_transactional(session, tenant, ag2.id)
         self.assertEqual(ag_stats["deleted"], 1)
+        self.assertEqual(ag2_stats["deleted"], 1)
 
         # Assert 0 leftover rows for agreement tables
         self.assertEqual(session.query(Agreement).filter_by(tenant_id=tenant).count(), 0)

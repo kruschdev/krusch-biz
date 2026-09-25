@@ -107,7 +107,16 @@ class TestTenantIsolation(unittest.TestCase):
             effective_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
             status="active"
         )
-        db.add_all([cls.alpha_deal, cls.alpha_ag])
+        cls.alpha_ag_2 = Agreement(
+            tenant_id=cls.alpha_tenant,
+            title="Alpha Amendment No. 1",
+            counterparty="AlphaCounterparty",
+            execution_status="executed",
+            instrument_type="amendment",
+            effective_date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+            status="active"
+        )
+        db.add_all([cls.alpha_deal, cls.alpha_ag, cls.alpha_ag_2])
         db.flush()
 
         cls.alpha_clause = Clause(
@@ -121,12 +130,14 @@ class TestTenantIsolation(unittest.TestCase):
         )
         cls.alpha_rel = AgreementRelation(
             tenant_id=cls.alpha_tenant,
-            source_agreement_id=cls.alpha_ag.id,
+            source_agreement_id=cls.alpha_ag_2.id,
             target_agreement_id=cls.alpha_ag.id,
             relation_type="AMENDS",
             clause_scope="Section 4.1",
             status="confirmed",
-            notes=json.dumps({"notes": "Alpha self-referential test edge"})
+            reviewer_id="alpha_reviewer",
+            reviewed_at=datetime.now(timezone.utc),
+            notes=json.dumps({"notes": "Alpha test edge"})
         )
         db.add_all([cls.alpha_clause, cls.alpha_rel])
 

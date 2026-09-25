@@ -246,7 +246,10 @@ def parse_relation_scope(scope_obj: Any) -> dict[str, list[str]]:
     if scope_obj is None:
         return res
 
-    if hasattr(scope_obj, "scope_type"):
+    if hasattr(scope_obj, "structured_scope"):
+        s_dict = scope_obj.structured_scope
+        if s_dict.get("topics") or s_dict.get("sections") or s_dict.get("slot_keys"):
+            return s_dict
         s_type = (getattr(scope_obj, "scope_type", None) or "ALL").upper()
         if s_type == "TOPICS":
             res["topics"] = [t.upper() for t in (getattr(scope_obj, "scope_topics", []) or [])]

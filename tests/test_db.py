@@ -322,6 +322,64 @@ class TestDatabase(unittest.TestCase):
         self.assertIsNotNone(pb_fetched)
         self.assertIn("INDEMNIFICATION", pb_fetched.master_controlling_topics)
 
+    def test_agreement_relation_check_constraints_and_structured_scope(self):
+        """Verify DB check constraints (no self loops, confirmed reviewer) and structured scope properties."""
+        from sqlalchemy.exc import IntegrityError
+        from src.backend.db import Agreement, AgreementRelation
+
+        ag1 = Agreement(tenant_id="tenant_db_rel", title="MSA 1", instrument_type="master_agreement", counterparty="Scope Corp")
+        ag2 = Agreement(tenant_id="tenant_db_rel", title="Amendment 1", instrument_type="amendment", counterparty="Scope Corp")
+        self.db.add_all([ag1, ag2])
+        self.db.flush()
+
+        # 1. Verify structured_scope property
+        rel_typed = AgreementRelation(
+            tenant_id="tenant_db_rel",
+            source_agreement_id=ag2.id,
+            target_agreement_id=ag1.id,
+            relation_type="AMENDS",
+            clause_scope="Section 4.1",
+            scope_type="SECTIONS",
+            scope_topics=["PAYMENT_TERMS"],
+            scope_sections=["4.1"],
+            scope_slots=["net_days"],
+            status="proposed"
+        )
+        self.db.add(rel_typed)
+        self.db.commit()
+
+        self.assertEqual(rel_typed.structured_scope["topics"], ["PAYMENT_TERMS"])
+        self.assertEqual(rel_typed.structured_scope["sections"], ["4.1"])
+        self.assertEqual(rel_typed.structured_scope["slot_keys"], ["net_days"])
+
+        # 2. Check duplicate relation rejected by UniqueConstraint
+        duplicate_rel = AgreementRelation(
+            tenant_id="tenant_db_rel",
+            source_agreement_id=ag2.id,
+            target_agreement_id=ag1.id,
+            relation_type="AMENDS",
+            clause_scope="Section 4.1",
+            status="proposed"
+        )
+        self.db.add(duplicate_rel)
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+        self.db.rollback()
+
+        # 3. Check self-loop rejected by CheckConstraint
+        self_loop_rel = AgreementRelation(
+            tenant_id="tenant_db_rel",
+            source_agreement_id=ag1.id,
+            target_agreement_id=ag1.id,
+            relation_type="AMENDS",
+            clause_scope="ALL",
+            status="proposed"
+        )
+        self.db.add(self_loop_rel)
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+        self.db.rollback()
+
 
 if __name__ == "__main__":
     unittest.main()

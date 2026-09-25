@@ -1125,7 +1125,19 @@ def confirm_relation(
     if not rel:
         raise HTTPException(status_code=404, detail="Relation edge not found.")
 
+    if rel.relation_type in ("AMENDS", "SUPERSEDES"):
+        src_ag = db.query(Agreement).filter_by(id=rel.source_agreement_id, tenant_id=x_tenant_id).first()
+        tgt_ag = db.query(Agreement).filter_by(id=rel.target_agreement_id, tenant_id=x_tenant_id).first()
+        if src_ag and tgt_ag:
+            if getattr(src_ag, "execution_status", "executed") == "draft" and getattr(tgt_ag, "execution_status", "executed") != "draft":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Draft isolation error: Draft instrument '{src_ag.title}' cannot {rel.relation_type} executed agreement '{tgt_ag.title}'."
+                )
+
     rel.status = "confirmed"
+    rel.reviewer_id = api_key or x_tenant_id or "reviewer"
+    rel.reviewed_at = datetime.now(timezone.utc)
     parsed_notes = {}
     if rel.notes:
         try:

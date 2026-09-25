@@ -26,6 +26,7 @@ if PROJECT_ROOT not in sys.path:
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -807,17 +808,9 @@ class TestGraphInvariants(unittest.TestCase):
             status="confirmed"
         )
         self.db.add(rel_self)
-        self.db.commit()
-
-        res_self = resolve_controlling_clause(
-            db=self.db,
-            tenant_id="tenant_inv",
-            counterparty="Ouroboros Corp",
-            topic="PAYMENT_TERMS",
-            as_of_date="2024-06-01"
-        )
-        self.assertEqual(res_self["status"], "GRAPH_CYCLE")
-        self.assertIn("Circular precedence dependency detected", res_self["resolution_rationale"])
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+        self.db.rollback()
 
         # Case 2: Multi-node circular loop (A amends B, B amends A)
         ag_b = Agreement(

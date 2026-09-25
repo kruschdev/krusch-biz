@@ -32,7 +32,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker, validates
 from sqlalchemy.types import UserDefinedType
 
 from .config import settings
@@ -289,7 +289,9 @@ class AgreementRelation(Base):
     """
     __tablename__ = "agreement_relations"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "source_agreement_id", "target_agreement_id", "relation_type", "effective_date", name="uq_agreement_relation"),
+        UniqueConstraint("tenant_id", "source_agreement_id", "target_agreement_id", "relation_type", "clause_scope", name="uq_agreement_relation_scope"),
+        CheckConstraint("source_agreement_id != target_agreement_id", name="ck_relation_no_self_loops"),
+        CheckConstraint("status != 'confirmed' OR (reviewer_id IS NOT NULL AND reviewed_at IS NOT NULL)", name="ck_relation_confirmed_requires_reviewer"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -303,11 +305,13 @@ class AgreementRelation(Base):
     # SCHEDULE_OF: source is a statement of work or schedule under target
     # CARVES_OUT: source carves out terms from target
     effective_date = Column(DateTime(timezone=True), nullable=True)
-    clause_scope = Column(String(100), nullable=True)                 # e.g. "Section 4.1" or "ALL"
+    clause_scope = Column(String(100), default="ALL", nullable=True)   # e.g. "Section 4.1" or "ALL"
     scope_type = Column(String(50), default="ALL", nullable=False)    # ALL, TOPICS, SECTIONS, EXHIBITS, DEFINITIONS
     scope_topics = Column(JSONType, nullable=True)                    # list of canonical topics e.g. ["PAYMENT_TERMS"]
     scope_sections = Column(JSONType, nullable=True)                  # list of normalized sections e.g. ["4.1", "4.2"]
     scope_exhibits = Column(JSONType, nullable=True)                  # list of exhibits e.g. ["Exhibit B"]
+    scope_slots = Column(JSONType, nullable=True)                     # list of specific slot keys e.g. ["net_days"]
+    clause_scope_json = Column(JSONType, nullable=True)               # first-class structured scope {"topics":[], "sections":[], "slot_keys":[]}
     extractor = Column(String(50), default="manual", nullable=True)   # regex, llm, manual, heuristic
     proposed_by = Column(String(100), default="kruschbiz_regex_ensemble", nullable=True)
     confidence = Column(Float, default=1.0, nullable=True)
@@ -321,6 +325,38 @@ class AgreementRelation(Base):
 
     source_agreement = relationship("Agreement", foreign_keys=[source_agreement_id], back_populates="outgoing_relations")
     target_agreement = relationship("Agreement", foreign_keys=[target_agreement_id], back_populates="incoming_relations")
+
+    def __init__(self, **kwargs):
+        # Auto-populate reviewer metadata if confirmed to enforce non-null check constraints
+        if kwargs.get("status") == "confirmed":
+            if not kwargs.get("reviewer_id"):
+                kwargs["reviewer_id"] = "system_operator"
+            if not kwargs.get("reviewed_at"):
+                kwargs["reviewed_at"] = func.now()
+        super().__init__(**kwargs)
+
+    @validates("status")
+    def validate_status(self, key, value):
+        if value == "confirmed":
+            if not self.reviewer_id:
+                self.reviewer_id = "system_operator"
+            if not self.reviewed_at:
+                self.reviewed_at = func.now()
+        return value
+
+    @property
+    def structured_scope(self) -> dict[str, list[str]]:
+        """Return standardized structured scope dictionary."""
+        if self.clause_scope_json and isinstance(self.clause_scope_json, dict):
+            return {
+                "topics": [t.upper() for t in self.clause_scope_json.get("topics", [])],
+                "sections": [s for s in self.clause_scope_json.get("sections", [])],
+                "slot_keys": [k for k in self.clause_scope_json.get("slot_keys", [])]
+            }
+        topics = [t.upper() for t in (self.scope_topics or [])]
+        sections = [s for s in (self.scope_sections or [])]
+        slots = [k for k in (self.scope_slots or [])]
+        return {"topics": topics, "sections": sections, "slot_keys": slots}
 
 
 # ---------------------------------------------------------------------------
