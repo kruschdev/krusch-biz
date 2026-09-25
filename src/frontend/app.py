@@ -958,11 +958,15 @@ with tab1:
                         audit_rows = []
                         for ca in claims_audit:
                             st_val = ca.get("status", "unknown").upper()
-                            badge_color = "audit-verified" if st_val == "VERIFIED" else "audit-divergent"
-                            if "INVENTED" in st_val:
+                            fm = (ca.get("failure_mode") or "").upper()
+                            if "VERIFIED" in st_val:
+                                badge_color = "audit-verified"
+                            elif fm in ("NO_AUTHORITY", "INVENTED_CLAUSE", "NEGATED_OBLIGATION", "WRONG_INSTRUMENT"):
                                 badge_color = "audit-invented"
-                            elif "SUPERSEDED" in st_val:
+                            elif fm in ("SUPERSEDED", "SUPERSEDED_TERM"):
                                 badge_color = "audit-superseded"
+                            else:
+                                badge_color = "audit-divergent"
 
                             audit_rows.append({
                                 "ID": ca.get("claim_id", ""),
