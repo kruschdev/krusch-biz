@@ -762,15 +762,28 @@ def resolve_controlling_clause(
             "confidence": 0.0
         })
 
-    # 5. Fetch candidate clauses matching topic (strictly from surviving agreements)
+    # 5. Single-Query Prefetch: load all active clauses for all relevant agreements in the family
+    all_family_ag_ids = set(ag_ids)
+    for r in valid_relations:
+        all_family_ag_ids.add(r.source_agreement_id)
+        all_family_ag_ids.add(r.target_agreement_id)
+
+    prefetched_clauses = db.query(Clause).filter(
+        Clause.tenant_id == tenant_id,
+        Clause.agreement_id.in_(list(all_family_ag_ids)),
+        Clause.is_active.is_(True)
+    ).all()
+
+    clauses_by_ag_all: dict[int, list[Clause]] = {}
+    for cl in prefetched_clauses:
+        clauses_by_ag_all.setdefault(cl.agreement_id, []).append(cl)
+
     is_keyword_fallback = False
     topic_candidates = TOPIC_ALIASES.get(topic, [topic])
-    raw_candidates = db.query(Clause).filter(
-        Clause.tenant_id == tenant_id,
-        Clause.agreement_id.in_(surviving_ag_ids),
-        Clause.is_active.is_(True),
-        Clause.topic.in_(topic_candidates)
-    ).all()
+    raw_candidates = [
+        c for c in prefetched_clauses
+        if c.agreement_id in surviving_ag_ids and c.topic in topic_candidates
+    ]
     candidate_clauses = [c for c in raw_candidates if is_clause_temporally_valid(c, as_of)]
 
     # Check confirmed INCORPORATES relations: union incorporated provisions into candidate authorities
@@ -782,12 +795,10 @@ def resolve_controlling_clause(
     ]
     incorporated_clauses: list[dict[str, Any]] = []
     for inc_rel in incorporates_relations:
-        inc_raw = db.query(Clause).filter(
-            Clause.tenant_id == tenant_id,
-            Clause.agreement_id == inc_rel.target_agreement_id,
-            Clause.is_active.is_(True),
-            Clause.topic.in_(topic_candidates)
-        ).all()
+        inc_raw = [
+            c for c in clauses_by_ag_all.get(inc_rel.target_agreement_id, [])
+            if c.topic in topic_candidates
+        ]
         for ic in inc_raw:
             if is_clause_temporally_valid(ic, as_of):
                 candidate_clauses.append(ic)
@@ -917,15 +928,10 @@ def resolve_controlling_clause(
                 if _rel_eff_date(rel) > as_of:
                     continue
 
-                # Fetch amending clauses in the source agreement
-                source_clauses = clauses_by_ag.get(rel.source_agreement_id, [])
+                # Fetch amending clauses in the source agreement via prefetch index
+                source_clauses = clauses_by_ag_all.get(rel.source_agreement_id, [])
                 if not source_clauses:
-                    source_clauses = db.query(Clause).filter(
-                        Clause.tenant_id == tenant_id,
-                        Clause.agreement_id == rel.source_agreement_id,
-                        Clause.is_active.is_(True),
-                        or_(Clause.topic == topic, Clause.section.isnot(None))
-                    ).all()
+                    source_clauses = clauses_by_ag.get(rel.source_agreement_id, [])
 
                 matching_amending_clause = None
                 for sc in source_clauses:
@@ -1683,3 +1689,79 @@ def diff_agreements(
         "omitted_in_b": omitted_in_b,
         "new_in_b": new_in_b
     }
+
+
+def materialize_family_effective_slots(
+    db: Session,
+    tenant_id: str,
+    counterparty: str,
+    as_of_date: date | None = None
+) -> list[dict[str, Any]]:
+    """
+    Materialize and persist effective commercial slot snapshots across canonical topics
+    for a counterparty / agreement family.
+    """
+    from .db import MaterializedEffectiveSlot
+    from .taxonomy import CANONICAL_TOPICS
+
+    as_of = as_of_date or date.today()
+    results = []
+
+    for top in CANONICAL_TOPICS:
+        res = resolve_controlling_clause(
+            db=db,
+            tenant_id=tenant_id,
+            counterparty=counterparty,
+            topic=top,
+            as_of_date=as_of
+        )
+        if res.get("status") == "resolved" and res.get("controlling_clause"):
+            cc = res["controlling_clause"]
+            ctrl_ag_id = cc.get("agreement_id")
+            ctrl_cl_id = cc.get("id")
+            eff_slots = cc.get("structured_slots") or {}
+            status_val = "resolved"
+        elif res.get("status") == "ambiguous":
+            ctrl_ag_id = None
+            ctrl_cl_id = None
+            eff_slots = {}
+            status_val = "ambiguous"
+        else:
+            continue
+
+        existing = db.query(MaterializedEffectiveSlot).filter(
+            MaterializedEffectiveSlot.tenant_id == tenant_id,
+            MaterializedEffectiveSlot.counterparty == counterparty,
+            MaterializedEffectiveSlot.topic == top,
+            MaterializedEffectiveSlot.as_of_date == as_of
+        ).first()
+
+        if existing:
+            existing.controlling_agreement_id = ctrl_ag_id
+            existing.controlling_clause_id = ctrl_cl_id
+            existing.effective_slots = eff_slots
+            existing.status = status_val
+            existing.amendment_trail = res.get("amendment_trail", [])
+            existing.computed_at = datetime.now(timezone.utc)
+        else:
+            mat_rec = MaterializedEffectiveSlot(
+                tenant_id=tenant_id,
+                counterparty=counterparty,
+                topic=top,
+                as_of_date=as_of,
+                controlling_agreement_id=ctrl_ag_id,
+                controlling_clause_id=ctrl_cl_id,
+                effective_slots=eff_slots,
+                status=status_val,
+                amendment_trail=res.get("amendment_trail", [])
+            )
+            db.add(mat_rec)
+        results.append({
+            "topic": top,
+            "status": status_val,
+            "effective_slots": eff_slots,
+            "controlling_agreement_id": ctrl_ag_id
+        })
+
+    db.commit()
+    return results

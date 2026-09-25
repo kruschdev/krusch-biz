@@ -1,56 +1,56 @@
 {
-  "timestamp_utc": "2026-09-25T19:57:03.835919+00:00",
-  "elapsed_seconds": 0.371,
+  "timestamp_utc": "2026-09-25T22:44:58.571556+00:00",
+  "elapsed_seconds": 1.519,
   "evaluation_class": "fixture_verification",
   "provenance": {
-    "git_sha": "158db0a6b4f5975d3720a2f1a2243acf40b2af7f",
-    "fixture_hash": "6b5d2931c0d552d81cf3b78339e489c6cecd16afe70780147b3771b264e484da",
+    "git_sha": "191fbd78a9b9bd1032b58da3150bea0d2c44c96d",
+    "fixture_hash": "ceaa9fc230baa57f712516e86594d65e305d9a38a9808a173056423b7b238444",
     "corpus_file": "adversarial_corpus.json",
     "embedding_model": "bge-large",
     "embedding_dim": 1024,
     "vectors_mocked": true,
     "environment": "ci_deterministic_fixture"
   },
-  "total_families": 7,
+  "total_families": 30,
   "metrics": {
     "relation_extraction": {
       "precision": 100.0,
       "recall": 100.0,
       "f1": 100.0,
-      "true_positives": 7,
+      "true_positives": 35,
       "false_positives": 0,
       "false_negatives": 0
     },
     "controlling_clause_accuracy_as_of_date": {
       "accuracy_pct": 100.0,
-      "total_queries": 13,
-      "correct_queries": 13
+      "total_queries": 57,
+      "correct_queries": 57
     },
     "slot_exact_match": {
       "accuracy_pct": 100.0,
-      "total_slots": 15,
-      "matched_slots": 15
+      "total_slots": 63,
+      "matched_slots": 63
     },
     "proposition_classification": {
       "accuracy_pct": 100.0,
-      "total_cases": 28,
-      "correct_cases": 28,
+      "total_cases": 120,
+      "correct_cases": 120,
       "confusion_matrix": {
         "VERIFIED": {
-          "expected": 7,
-          "correct": 7
+          "expected": 30,
+          "correct": 30
         },
         "INVENTED_CLAUSE": {
-          "expected": 7,
-          "correct": 7
+          "expected": 30,
+          "correct": 30
         },
         "DIVERGENT_TERM": {
-          "expected": 7,
-          "correct": 7
+          "expected": 30,
+          "correct": 30
         },
         "SUPERSEDED_TERM": {
-          "expected": 7,
-          "correct": 7
+          "expected": 30,
+          "correct": 30
         }
       }
     }
@@ -146,6 +146,305 @@
       "queries_correct": 1,
       "slots_total": 0,
       "slots_matched": 0
+    },
+    {
+      "family_id": "family_08_scoped_supersede_single_section",
+      "name": "Scoped Supersession of Single Section",
+      "documents_count": 3,
+      "relations_expected": 3,
+      "relations_tp": 3,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 4,
+      "queries_correct": 4,
+      "slots_total": 4,
+      "slots_matched": 4
+    },
+    {
+      "family_id": "family_09_currency_basis_trap",
+      "name": "Multi-Currency Nominal and Unit Trap",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_10_change_of_control_notice_carveout",
+      "name": "Change of Control Notice Interval Carve-Out",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 1,
+      "queries_correct": 1,
+      "slots_total": 1,
+      "slots_matched": 1
+    },
+    {
+      "family_id": "family_11_audit_frequency_disputes",
+      "name": "Audit Rights Frequency and Notice Dispute",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_12_concurrent_sibling_sows",
+      "name": "Concurrent Sibling SOWs with Precedence Clause",
+      "documents_count": 3,
+      "relations_expected": 2,
+      "relations_tp": 2,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 1,
+      "queries_correct": 1,
+      "slots_total": 1,
+      "slots_matched": 1
+    },
+    {
+      "family_id": "family_13_three_hop_circular_chain",
+      "name": "Three-Hop Precedence Chain",
+      "documents_count": 3,
+      "relations_expected": 2,
+      "relations_tp": 2,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 3,
+      "queries_correct": 3,
+      "slots_total": 3,
+      "slots_matched": 3
+    },
+    {
+      "family_id": "family_14_html_disguised_pdf",
+      "name": "HTML-Disguised Contract Content",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_15_liability_cap_amendment",
+      "name": "Monetary Liability Cap Upward Escalation",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_16_confidentiality_duration_extension",
+      "name": "Mutual NDA Payment Terms Amendment",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_17_termination_notice_reduction",
+      "name": "Termination for Convenience Notice Interval",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_18_insurance_coverage_escalation",
+      "name": "Commercial General Liability Insurance Limits",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_19_sla_credit_penalty_amendment",
+      "name": "Service Level Uptime and Credit Escalation",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 4,
+      "slots_matched": 4
+    },
+    {
+      "family_id": "family_20_unexecuted_draft_isolation",
+      "name": "Unexecuted Draft Isolation Invariant",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 1,
+      "queries_correct": 1,
+      "slots_total": 1,
+      "slots_matched": 1
+    },
+    {
+      "family_id": "family_21_cross_border_invoicing",
+      "name": "Cross-Border Payment and Invoicing Terms",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_22_late_payment_interest_escalation",
+      "name": "Late Payment Delinquency Interest Escalation",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 4,
+      "slots_matched": 4
+    },
+    {
+      "family_id": "family_23_data_breach_notice_hours_reduction",
+      "name": "Critical Security Breach Notice Hours Escalation",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 1,
+      "queries_correct": 1,
+      "slots_total": 1,
+      "slots_matched": 1
+    },
+    {
+      "family_id": "family_24_warranty_period_extension",
+      "name": "Hardware Replacement Warranty Period Extension",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_25_multi_tier_sow_amendment",
+      "name": "Multi-Tier SOW and SOW Amendment Hierarchy",
+      "documents_count": 3,
+      "relations_expected": 2,
+      "relations_tp": 2,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 1,
+      "queries_correct": 1,
+      "slots_total": 1,
+      "slots_matched": 1
+    },
+    {
+      "family_id": "family_26_liability_cap_restatement",
+      "name": "Enterprise AI Liability Cap Restatement",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_27_side_letter_payment_acceleration",
+      "name": "Side Letter Payment Acceleration",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_28_order_form_precedence_override",
+      "name": "Order Form Governing Precedence Override",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_29_full_restatement_supersession",
+      "name": "Restated Master Agreement Full Supersession",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
+    },
+    {
+      "family_id": "family_30_notice_period_formal_escalation",
+      "name": "General Notice Period Formal Escalation",
+      "documents_count": 2,
+      "relations_expected": 1,
+      "relations_tp": 1,
+      "relations_fp": 0,
+      "relations_fn": 0,
+      "queries_total": 2,
+      "queries_correct": 2,
+      "slots_total": 2,
+      "slots_matched": 2
     }
   ],
   "failures": []

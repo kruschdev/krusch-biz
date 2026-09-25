@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import or_, text
@@ -1149,7 +1149,46 @@ def confirm_relation(
     rel.notes = json.dumps(parsed_notes)
     db.commit()
     db.refresh(rel)
+
+    # Materialize effective slots upon relation confirmation
+    try:
+        src_ag = db.query(Agreement).filter_by(id=rel.source_agreement_id).first()
+        if src_ag and src_ag.counterparty:
+            from .resolver import materialize_family_effective_slots
+            materialize_family_effective_slots(db=db, tenant_id=x_tenant_id, counterparty=src_ag.counterparty)
+    except Exception as e:
+        logger.warning(f"Failed to auto-materialize effective slots for relation {rel.id}: {e}")
+
     return {"id": rel.id, "status": "confirmed"}
+
+
+@app.post("/api/agreements/materialize-slots")
+def api_materialize_slots(
+    payload: dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Materialize and persist effective commercial slot snapshots across canonical topics for a counterparty / agreement family."""
+    counterparty = payload.get("counterparty")
+    if not counterparty:
+        raise HTTPException(status_code=400, detail="Counterparty is required.")
+    as_of_str = payload.get("as_of_date")
+    as_of_dt = datetime.strptime(as_of_str, "%Y-%m-%d").date() if as_of_str else None
+    from .resolver import materialize_family_effective_slots
+    results = materialize_family_effective_slots(
+        db=db,
+        tenant_id=x_tenant_id,
+        counterparty=counterparty,
+        as_of_date=as_of_dt
+    )
+    return {
+        "status": "materialized",
+        "counterparty": counterparty,
+        "tenant_id": x_tenant_id,
+        "materialized_topics_count": len(results),
+        "slots": results
+    }
 
 
 @app.patch("/api/relations/{relation_id}/reject")

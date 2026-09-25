@@ -311,7 +311,24 @@ def run_adversarial_eval(
             sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', test_cl.content) if s.strip()]
             target_sentence = sentences[0]
             for s in sentences:
-                if any(str(v.get("value") if isinstance(v, dict) else v) in s for v in test_cl.structured_slots.values()):
+                matched_slot = False
+                for v in test_cl.structured_slots.values():
+                    raw_sp = v.get("raw_span") if isinstance(v, dict) else None
+                    val = v.get("value") if isinstance(v, dict) else v
+                    if raw_sp and raw_sp in s:
+                        matched_slot = True
+                        break
+                    if str(val) in s:
+                        matched_slot = True
+                        break
+                    if isinstance(val, (int, float)):
+                        int_str = str(int(val))
+                        # Avoid matching fractional parts of section numbers (e.g. '1' in 'Section 4.1')
+                        clean_s = s.replace(",", "")
+                        if re.search(r'(?<![\d\.])' + re.escape(int_str) + r'(?![\d\.])', clean_s):
+                            matched_slot = True
+                            break
+                if matched_slot:
                     target_sentence = s
                     break
 
@@ -488,7 +505,7 @@ def run_adversarial_eval(
             for f_item in failures_log:
                 print(f"  ❌ [{f_item['family_id']}] {f_item['type']}: {f_item['details']}")
         else:
-            print("  ✅ ZERO FAILURES across all 7 adversarial multi-document families.")
+            print(f"  ✅ ZERO FAILURES across all {len(families)} adversarial multi-document families.")
         print("=" * 80 + "\n")
 
     if output_json_path:

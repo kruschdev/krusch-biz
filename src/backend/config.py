@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     OLLAMA_LLM_MODEL: str = os.getenv("OLLAMA_LLM_MODEL", "qwen2.5-coder:7b")
     TAGGER_MODEL: str = os.getenv("TAGGER_MODEL", "qwen2.5-coder:7b")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))
+    USE_MOCK_EMBEDDINGS: bool = os.getenv("USE_MOCK_EMBEDDINGS", "0") in ("1", "true", "True")
+    HEADLESS_MODE: bool = os.getenv("HEADLESS_MODE", "0") in ("1", "true", "True")
 
     # Ports
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8086"))

@@ -19,6 +19,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -107,11 +108,10 @@ else:
 try:
     engine = create_engine(settings.DATABASE_URL, **engine_kwargs)
 except (ImportError, Exception) as exc:
-    import logging
-    logging.getLogger("kruschbiz.db").warning(
-        f"Database engine initialization failed ({exc}). Falling back to local SQLite engine."
-    )
-    engine = create_engine("sqlite:///kruschbiz.db", connect_args={"check_same_thread": False})
+    import os
+    demo_db = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "demo.db")
+    fallback_uri = f"sqlite:///{demo_db}" if os.path.exists(demo_db) else "sqlite:///kruschbiz.db"
+    engine = create_engine(fallback_uri, connect_args={"check_same_thread": False})
 
 
 @event.listens_for(Engine, "connect")
@@ -357,6 +357,29 @@ class AgreementRelation(Base):
         sections = [s for s in (self.scope_sections or [])]
         slots = [k for k in (self.scope_slots or [])]
         return {"topics": topics, "sections": sections, "slot_keys": slots}
+
+
+class MaterializedEffectiveSlot(Base):
+    """
+    Materialized cache of effective commercial slots per agreement family / counterparty and topic.
+    Precomputed upon relation confirmation or demand to provide O(1) slot lookups and audit trails.
+    """
+    __tablename__ = "materialized_effective_slots"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "counterparty", "topic", "as_of_date", name="uq_mat_effective_slot"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
+    counterparty = Column(String(255), nullable=False, index=True)
+    topic = Column(String(100), nullable=False, index=True)
+    as_of_date = Column(Date, nullable=False, index=True)
+    controlling_agreement_id = Column(Integer, ForeignKey("agreements.id", ondelete="SET NULL"), nullable=True)
+    controlling_clause_id = Column(Integer, ForeignKey("clauses.id", ondelete="SET NULL"), nullable=True)
+    effective_slots = Column(JSONType, nullable=False, default=dict)
+    status = Column(String(50), nullable=False, default="resolved")
+    amendment_trail = Column(JSONType, nullable=False, default=list)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -312,11 +313,47 @@ class EmbeddingCache:
 embedding_cache = EmbeddingCache(maxsize=10000)
 
 
+def generate_deterministic_pseudo_vector(text: str, dim: int = 1024) -> list[float]:
+    """
+    Generate a deterministic, non-constant normalized unit pseudo-vector from text hash.
+    Provides reproducible vector representations for CI, testing, and offline / headless
+    operation without requiring Ollama or external models.
+    """
+    import hashlib
+    import math
+    vec = [0.0] * dim
+    h_bytes = hashlib.sha256(text.encode("utf-8")).digest()
+    words = re.findall(r"\w+", text.lower())
+    for w in words:
+        w_hash = int(hashlib.md5(w.encode("utf-8")).hexdigest()[:8], 16)
+        idx = w_hash % dim
+        vec[idx] += 1.0
+
+    for i in range(dim):
+        byte_val = h_bytes[i % len(h_bytes)]
+        vec[i] += math.sin((i + 1) * byte_val * 0.1)
+
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm > 0:
+        vec = [round(x / norm, 6) for x in vec]
+    return vec
+
+
 def get_embeddings_batch(queries: list[str]) -> list[list[float]]:
-    """Generate vector embeddings in batch via Ollama API with LRU cache."""
+    """Generate vector embeddings in batch via Ollama API with LRU cache or deterministic headless fallback."""
     if not queries:
         return []
     clean_queries = [q.strip() if q and q.strip() else " " for q in queries]
+
+    is_headless = bool(
+        getattr(settings, "USE_MOCK_EMBEDDINGS", False)
+        or getattr(settings, "HEADLESS_MODE", False)
+        or os.getenv("USE_MOCK_EMBEDDINGS") in ("1", "true", "True")
+        or os.getenv("HEADLESS_MODE") in ("1", "true", "True")
+    )
+    dim = getattr(settings, "EMBEDDING_DIM", 1024)
+    if is_headless:
+        return [generate_deterministic_pseudo_vector(q, dim=dim) for q in clean_queries]
 
     results: list[list[float] | None] = [None] * len(clean_queries)
     miss_indices: list[int] = []
@@ -361,6 +398,17 @@ def get_embeddings_batch(queries: list[str]) -> list[list[float]]:
             results[idx] = vec
 
     except Exception as e:
+        if (
+            is_headless
+            or os.getenv("USE_MOCK_EMBEDDINGS") in ("1", "true", "True")
+            or os.getenv("HEADLESS_MODE") in ("1", "true", "True")
+        ):
+            for idx, q_text in zip(miss_indices, miss_texts):
+                p_vec = generate_deterministic_pseudo_vector(q_text, dim=dim)
+                embedding_cache.set(settings.OLLAMA_EMBED_MODEL, q_text, p_vec)
+                results[idx] = p_vec
+            return [r for r in results if r is not None]
+
         logger.warning(f"Ollama batch embedding generation unavailable ({e}).")
         raise RetrievalError(f"CANNOT_DRAFT_EMBEDDINGS_UNAVAILABLE: Embedding generation offline ({e}). Drafting on constant vectors is strictly prohibited.")
 

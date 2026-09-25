@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-25T19:17:20.315458+00:00",
+  "timestamp": "2026-09-25T22:35:38.425329+00:00",
   "gate1_fixture_smoke_test": {
     "total_cases": 25,
     "recall_at_1": 80.0,
@@ -7,7 +7,7 @@
     "precision_at_5": 20.0,
     "mrr": 0.853,
     "distractor_leaks": 0,
-    "avg_latency_ms": 116.91
+    "avg_latency_ms": 121.75
   },
   "gate2_unmocked_embedding": {
     "status": "passed",
@@ -26,7 +26,7 @@
     "superseded_in_top_1_rate": 0.0
   },
   "gate4_grounding_calibration": {
-    "calibration_accuracy": 91.67,
+    "calibration_accuracy": 93.62,
     "macro_precision": 100.0,
     "macro_recall": 93.37,
     "macro_f1": 96.41,
@@ -44,8 +44,8 @@
         "correct": 9
       },
       "SUPERSEDED_TERM": {
-        "expected": 1,
-        "correct": 1
+        "expected": 12,
+        "correct": 12
       }
     },
     "per_failure_mode_metrics": {
@@ -77,7 +77,7 @@
         "precision": 100.0,
         "recall": 100.0,
         "f1": 100.0,
-        "tp": 1,
+        "tp": 12,
         "fp": 0,
         "fn": 0
       }
