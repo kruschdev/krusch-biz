@@ -163,41 +163,118 @@ st.markdown("""
 
     /* ── Streamlit Native UI Components Styling ── */
 
-    /* Tabs Styling */
-    .stTabs [data-baseweb="tab-list"] {
-        background: rgba(15, 23, 42, 0.65) !important;
-        backdrop-filter: blur(14px) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    /* Tabs Styling - Modern Streamlit React-Aria High Contrast Selectors */
+    div[role="tablist"],
+    .stTabs [data-baseweb="tab-list"],
+    div[data-testid="stTabList"] {
+        background: rgba(15, 23, 42, 0.92) !important;
+        backdrop-filter: blur(16px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
         border-radius: 12px !important;
-        padding: 6px !important;
-        gap: 6px !important;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        padding: 8px !important;
+        gap: 8px !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45) !important;
+        margin-bottom: 1.5rem !important;
     }
+
+    /* Individual Tab Buttons (Inactive) */
+    div[data-testid="stTab"],
+    div[role="tab"],
     .stTabs [data-baseweb="tab"] {
-        color: var(--text-muted) !important;
-        font-weight: 600 !important;
-        font-size: 0.90rem !important;
+        background: rgba(30, 41, 59, 0.8) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
         border-radius: 8px !important;
-        padding: 10px 18px !important;
+        padding: 10px 22px !important;
         transition: all var(--transition-fast) !important;
-        border: none !important;
-        background: transparent !important;
+        cursor: pointer !important;
+        opacity: 1 !important;
     }
+
+    /* Tab Text - PURE CRISP HIGH-CONTRAST SILVER-WHITE */
+    div[data-testid="stTab"] p,
+    div[data-testid="stTab"] span,
+    div[data-testid="stTab"] div,
+    div[role="tab"] p,
+    div[role="tab"] span,
+    div[role="tab"] div,
+    div[role="tab"] [data-testid="stMarkdownContainer"] *,
+    .stTabs [data-baseweb="tab"] p,
+    .stTabs [data-baseweb="tab"] span,
+    .stTabs [data-baseweb="tab"] div,
+    .stTabs [data-baseweb="tab"] [data-testid="stMarkdownContainer"] * {
+        color: #f8fafc !important; /* Pure crisp bright silver-white for maximum legibility */
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        opacity: 1 !important;
+    }
+
+    /* Tab Hover State */
+    div[data-testid="stTab"]:hover,
+    div[role="tab"]:hover,
     .stTabs [data-baseweb="tab"]:hover {
-        color: #f1f5f9 !important;
-        background: rgba(255, 255, 255, 0.05) !important;
+        background: rgba(51, 65, 85, 0.95) !important;
+        border-color: rgba(245, 158, 11, 0.6) !important;
     }
+    div[data-testid="stTab"]:hover p,
+    div[data-testid="stTab"]:hover span,
+    div[role="tab"]:hover p,
+    div[role="tab"]:hover span,
+    .stTabs [data-baseweb="tab"]:hover p,
+    .stTabs [data-baseweb="tab"]:hover span {
+        color: #ffffff !important;
+    }
+
+    /* Active Selected Tab - VIBRANT EXECUTIVE GOLD */
+    div[data-testid="stTab"][aria-selected="true"],
+    div[data-testid="stTab"][data-selected="true"],
+    div[role="tab"][aria-selected="true"],
+    div[role="tab"][data-selected="true"],
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(217, 119, 6, 0.12) 100%) !important;
-        color: #fbbf24 !important;
-        border-bottom: 2px solid #f59e0b !important;
-        box-shadow: 0 4px 14px rgba(245, 158, 11, 0.22) !important;
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.28) 0%, rgba(217, 119, 6, 0.18) 100%) !important;
+        border: 1px solid rgba(245, 158, 11, 0.85) !important;
+        border-bottom: 3px solid #f59e0b !important;
+        box-shadow: 0 4px 18px rgba(245, 158, 11, 0.35) !important;
     }
+
+    div[data-testid="stTab"][aria-selected="true"] p,
+    div[data-testid="stTab"][aria-selected="true"] span,
+    div[data-testid="stTab"][aria-selected="true"] div,
+    div[role="tab"][aria-selected="true"] p,
+    div[role="tab"][aria-selected="true"] span,
+    div[role="tab"][aria-selected="true"] div,
+    div[role="tab"][aria-selected="true"] [data-testid="stMarkdownContainer"] *,
+    .stTabs [data-baseweb="tab"][aria-selected="true"] p,
+    .stTabs [data-baseweb="tab"][aria-selected="true"] span,
+    .stTabs [data-baseweb="tab"][aria-selected="true"] div,
+    .stTabs [data-baseweb="tab"][aria-selected="true"] [data-testid="stMarkdownContainer"] * {
+        color: #fbbf24 !important; /* Vibrant high-contrast executive gold */
+        font-weight: 800 !important;
+    }
+
+    /* Selection Indicator Bar Override */
+    div.react-aria-SelectionIndicator {
+        background-color: #f59e0b !important;
+        height: 3px !important;
+        border-radius: 2px !important;
+    }
+
     .stTabs [data-baseweb="tab-highlight"] {
         background-color: transparent !important;
     }
     .stTabs [data-baseweb="tab-border"] {
         display: none !important;
+    }
+
+    /* High-Contrast Universal Typography Overrides */
+    .stCaption, [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {
+        color: #cbd5e1 !important; /* Clearly readable silver-gray */
+        font-size: 0.88rem !important;
+        font-weight: 500 !important;
+    }
+    label, [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] * {
+        color: #f8fafc !important; /* Crisp high-contrast white */
+        font-weight: 600 !important;
+        font-size: 0.90rem !important;
     }
 
     /* Button Hierarchy (Refactoring UI Principle) */
@@ -620,13 +697,12 @@ except Exception:
     pass
 
 
-# 5-Tab Core Precedence & Compliance Architecture
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+# 4-Tab Core Precedence & Controlling Architecture
+tab1, tab2, tab3, tab4 = st.tabs([
     "🏛️ The Deal Room",
     "🔗 Relation Review Queue & Precedence Graph",
     "🌲 Sovereign Ingest & Deep Extraction",
-    "🛡️ Adversarial Multi-Document Scorecard",
-    "⚖️ The Join: Statutory Compliance Audit"
+    "🛡️ Adversarial Multi-Document Scorecard"
 ])
 
 
@@ -1725,145 +1801,5 @@ with tab4:
         4. **Strict Ambiguity Refusal**: If two operative instruments diverge without a governing `AMENDS` or precedence clause, the engine refuses to guess, returning `status: "ambiguous"` with `confidence: 0.0`.
     """)
 
-
-# ===========================================================================
-# TAB 5: ⚖️ The Join: Statutory Compliance Audit
-# ===========================================================================
-with tab5:
-    st.subheader("⚖️ The Join: Statutory Compliance Audit & Ceilings / Floors")
-    st.caption("Cross-domain sovereign evaluation: Compare controlling commercial terms (KruschBiz DAG) against mandatory statutory floors and ceilings (KruschLaw).")
-
-    j_c1, j_c2, j_c3 = st.columns([2, 1, 1])
-    with j_c1:
-        join_cp = st.selectbox("Select Counterparty / Vendor:", options=known_counterparties, key="join_cp")
-    with j_c2:
-        join_jurisdiction = st.selectbox(
-            "Statutory Jurisdiction:",
-            options=["California", "CA:Oakland", "CA:San Francisco", "Delaware", "New York"],
-            key="join_jurisdiction"
-        )
-    with j_c3:
-        join_as_of = st.date_input(
-            "As-Of Evaluation Date:",
-            value=datetime.now(timezone.utc).date(),
-            key="join_as_of"
-        )
-
-    join_topics = st.multiselect(
-        "Commercial & Statutory Topics to Audit:",
-        options=[
-            "SECURITY_DEPOSIT",
-            "ENTRY_NOTICE",
-            "DEPOSIT_RETURN",
-            "HABITABILITY_WAIVER",
-            "REPAIR_AND_DEDUCT",
-            "RETALIATION_WAIVER",
-            "LATE_FEE",
-            "PAYMENT_TERMS",
-            "COMMERCIAL_SECURITY_DEPOSIT"
-        ],
-        default=["LATE_FEE", "PAYMENT_TERMS", "SECURITY_DEPOSIT"],
-        key="join_topics_sel"
-    )
-
-    if st.button("⚖️ Run Contract-vs-Statute Compliance Audit", type="primary", use_container_width=True, key="btn_run_join"):
-        with st.spinner("Executing The Join cross-domain evaluation against statutory mandates..."):
-            try:
-                payload = {
-                    "counterparty": join_cp,
-                    "jurisdiction": join_jurisdiction,
-                    "as_of_date": join_as_of.isoformat(),
-                    "topics": join_topics
-                }
-                res = httpx.post(
-                    f"{BACKEND_URL}/api/conflicts/contract-vs-statute",
-                    json=payload,
-                    headers=get_auth_headers(),
-                    timeout=20.0
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    verdict = data.get("verdict", "UNKNOWN")
-                    findings = data.get("findings", [])
-
-                    # Summary Metrics Row
-                    c_v1, c_v2, c_v3, c_v4 = st.columns(4)
-                    c_v1.metric("Compliance Verdict", verdict.replace("_", " "))
-                    c_v2.metric("Topics Audited", len(findings))
-                    c_v3.metric("Jurisdiction", data.get("jurisdiction", "N/A"))
-                    c_v4.metric("Coverage", data.get("coverage_completeness", "N/A").upper())
-
-                    st.markdown("---")
-                    st.markdown("### 📋 Statutory Findings & Enforceability Determinations")
-
-                    for item in findings:
-                        top = item.get("topic")
-                        alignment = item.get("alignment", "unknown")
-                        enforceability = item.get("enforceability", "UNSPECIFIED")
-                        statute = item.get("controlling_statute") or {}
-                        clause = item.get("contract_clause") or {}
-                        explanation = item.get("explanation", "")
-
-                        # Determine styling card class and badge
-                        if alignment == "contract_less_than_mandatory" or enforceability == "VOID_AS_AGAINST_PUBLIC_POLICY":
-                            card_class = "compliance-card compliance-card-violation"
-                            badge_html = "<span class='badge-void'>🚫 VOID AS AGAINST PUBLIC POLICY</span>"
-                        elif alignment == "contract_more_generous":
-                            card_class = "compliance-card compliance-card-generous"
-                            badge_html = "<span class='badge-generous'>✨ MORE GENEROUS THAN STATUTORY FLOOR</span>"
-                        elif alignment == "aligned" or enforceability == "ENFORCEABLE_AS_WRITTEN":
-                            card_class = "compliance-card compliance-card-aligned"
-                            badge_html = "<span class='badge-enforceable'>✅ ENFORCEABLE AS WRITTEN</span>"
-                        else:
-                            card_class = "compliance-card compliance-card-gap"
-                            badge_html = "<span class='badge-gap'>⚪ COVERAGE GAP (STATUTE CONTROLS)</span>"
-
-                        st.markdown(f"""
-                            <div class="{card_class}">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                    <span style="font-weight: 800; font-size: 1.05rem; color: #f8fafc;">
-                                        {top}
-                                    </span>
-                                    {badge_html}
-                                </div>
-                                <div style="font-size: 0.90rem; color: #cbd5e1; margin-bottom: 10px; line-height: 1.5;">
-                                    {explanation}
-                                </div>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px;">
-                                    <div style="background: rgba(15, 23, 42, 0.7); padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08);">
-                                        <div style="font-size: 0.78rem; text-transform: uppercase; color: #38bdf8; font-weight: 700; margin-bottom: 4px;">
-                                            🏛️ Controlling Statutory Mandate ({statute.get('mandate_type', 'MANDATE')})
-                                        </div>
-                                        <div style="font-weight: 600; font-size: 0.88rem; color: #f1f5f9;">
-                                            {statute.get('citation', 'N/A')}
-                                        </div>
-                                        <div style="font-size: 0.82rem; color: #94a3b8; font-style: italic; margin-top: 4px;">
-                                            "{statute.get('span', '')}"
-                                        </div>
-                                        <div style="font-size: 0.80rem; color: #38bdf8; margin-top: 6px;">
-                                            Threshold: <code>{statute.get('normalized_slot', {})}</code>
-                                        </div>
-                                    </div>
-                                    <div style="background: rgba(15, 23, 42, 0.7); padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08);">
-                                        <div style="font-size: 0.78rem; text-transform: uppercase; color: #fbbf24; font-weight: 700; margin-bottom: 4px;">
-                                            💼 Portfolio Contract Provision
-                                        </div>
-                                        <div style="font-weight: 600; font-size: 0.88rem; color: #f1f5f9;">
-                                            {clause.get('agreement_title', 'No Provision Identified')} {f"(§ {clause.get('section')})" if clause.get('section') else ''}
-                                        </div>
-                                        <div style="font-size: 0.82rem; color: #94a3b8; font-style: italic; margin-top: 4px;">
-                                            "{clause.get('excerpt') or clause.get('content') or 'Term unaddressed in agreement'}"
-                                        </div>
-                                        <div style="font-size: 0.80rem; color: #fbbf24; margin-top: 6px;">
-                                            Contract Term: <code>{clause.get('structured_slots', {})}</code>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    st.error(f"Compliance audit failed: {res.status_code} - {res.text}")
-            except Exception as e:
-                st.error(f"Communication error with engine: {e}")
 
 
