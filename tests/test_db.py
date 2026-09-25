@@ -155,8 +155,8 @@ class TestDatabase(unittest.TestCase):
         self.db.rollback()
 
     def test_purge_deal_matter_transactional_counts(self):
-        """Verify purge_deal_matter_transactional atomically removes deal, evidence, reports, and invoices."""
-        from src.backend.db import purge_deal_matter_transactional, Invoice
+        """Verify purge_deal_matter_transactional atomically removes deal, evidence, and reports."""
+        from src.backend.db import purge_deal_matter_transactional
         deal = DealMatter(id=201, tenant_id="org_default", title="Deal Purge Test", context_facts="Facts")
         self.db.add(deal)
         self.db.flush()
@@ -164,32 +164,28 @@ class TestDatabase(unittest.TestCase):
         ev1 = DealEvidence(deal_id=201, tenant_id="org_default", filename="f1.pdf", content="c1")
         ev2 = DealEvidence(deal_id=201, tenant_id="org_default", filename="f2.pdf", content="c2")
         rep = CommercialGroundingReport(deal_id=201, tenant_id="org_default", claims_json="[]")
-        inv = Invoice(deal_id=201, tenant_id="org_default", invoice_number="INV-201", client_name="Client")
-        self.db.add_all([ev1, ev2, rep, inv])
+        self.db.add_all([ev1, ev2, rep])
         self.db.commit()
 
         # Pre-counts
         self.assertEqual(self.db.query(DealMatter).filter(DealMatter.id == 201).count(), 1)
         self.assertEqual(self.db.query(DealEvidence).filter(DealEvidence.deal_id == 201).count(), 2)
         self.assertEqual(self.db.query(CommercialGroundingReport).filter(CommercialGroundingReport.deal_id == 201).count(), 1)
-        self.assertEqual(self.db.query(Invoice).filter(Invoice.deal_id == 201).count(), 1)
 
         result = purge_deal_matter_transactional(self.db, "org_default", 201)
         self.assertEqual(result["deleted"], 1)
         self.assertEqual(result["evidence"], 2)
         self.assertEqual(result["reports"], 1)
-        self.assertEqual(result["invoices"], 1)
 
         # Post-counts
         self.assertEqual(self.db.query(DealMatter).filter(DealMatter.id == 201).count(), 0)
         self.assertEqual(self.db.query(DealEvidence).filter(DealEvidence.deal_id == 201).count(), 0)
         self.assertEqual(self.db.query(CommercialGroundingReport).filter(CommercialGroundingReport.deal_id == 201).count(), 0)
-        self.assertEqual(self.db.query(Invoice).filter(Invoice.deal_id == 201).count(), 0)
 
     def test_purge_agreement_transactional_counts(self):
-        """Verify purge_agreement_transactional atomically removes agreement, portfolio, relations, clauses, and vectors."""
+        """Verify purge_agreement_transactional atomically removes agreement, relations, clauses, and vectors."""
         from src.backend.db import (
-            Agreement, Clause, AgreementRelation, ContractPortfolio,
+            Agreement, Clause, AgreementRelation,
             purge_agreement_transactional, write_clause_and_vector_transactional
         )
         ag = Agreement(
@@ -201,14 +197,6 @@ class TestDatabase(unittest.TestCase):
         )
         self.db.add(ag)
         self.db.flush()
-
-        pf = ContractPortfolio(
-            agreement_id=301,
-            tenant_id="org_default",
-            contract_name="Purge Test MSA",
-            vendor="Acme"
-        )
-        self.db.add(pf)
 
         target_ag = Agreement(
             id=302,
@@ -250,24 +238,89 @@ class TestDatabase(unittest.TestCase):
 
         # Pre-counts
         self.assertEqual(self.db.query(Agreement).filter(Agreement.id == 301).count(), 1)
-        self.assertEqual(self.db.query(ContractPortfolio).filter(ContractPortfolio.agreement_id == 301).count(), 1)
         self.assertEqual(self.db.query(AgreementRelation).filter(AgreementRelation.source_agreement_id == 301).count(), 1)
         self.assertEqual(self.db.query(Clause).filter(Clause.agreement_id == 301).count(), 1)
         self.assertEqual(self.db.query(CommercialClauseVector).filter(CommercialClauseVector.title == "Purge Test MSA").count(), 1)
 
         result = purge_agreement_transactional(self.db, "org_default", 301)
         self.assertEqual(result["deleted"], 1)
-        self.assertEqual(result["portfolio"], 1)
         self.assertEqual(result["relations"], 1)
         self.assertEqual(result["clauses"], 1)
         self.assertEqual(result["vectors"], 1)
 
         # Post-counts
         self.assertEqual(self.db.query(Agreement).filter(Agreement.id == 301).count(), 0)
-        self.assertEqual(self.db.query(ContractPortfolio).filter(ContractPortfolio.agreement_id == 301).count(), 0)
         self.assertEqual(self.db.query(AgreementRelation).filter(AgreementRelation.source_agreement_id == 301).count(), 0)
         self.assertEqual(self.db.query(Clause).filter(Clause.agreement_id == 301).count(), 0)
         self.assertEqual(self.db.query(CommercialClauseVector).filter(CommercialClauseVector.title == "Purge Test MSA").count(), 0)
+
+    def test_party_and_aliases_first_class_model(self):
+        """Verify first-class Party and PartyAlias models prevent string divergence and link to Agreement."""
+        from src.backend.db import Party, PartyAlias, Agreement
+
+        party = Party(
+            tenant_id="org_default",
+            canonical_name="Acme Corporation",
+            entity_type="corporation",
+            jurisdiction="Delaware"
+        )
+        self.db.add(party)
+        self.db.flush()
+
+        alias1 = PartyAlias(tenant_id="org_default", party_id=party.id, alias_name="Acme, Inc.", match_type="suffix_normalized")
+        alias2 = PartyAlias(tenant_id="org_default", party_id=party.id, alias_name="ACME Inc", match_type="exact")
+        self.db.add_all([alias1, alias2])
+        self.db.flush()
+
+        ag = Agreement(
+            tenant_id="org_default",
+            title="Acme Master Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="Acme, Inc.",
+            party_id=party.id,
+            raw_hash="acme_hash_001"
+        )
+        self.db.add(ag)
+        self.db.commit()
+
+        fetched_party = self.db.query(Party).filter(Party.canonical_name == "Acme Corporation").first()
+        self.assertIsNotNone(fetched_party)
+        self.assertEqual(len(fetched_party.aliases), 2)
+        self.assertEqual(len(fetched_party.agreements), 1)
+        self.assertEqual(fetched_party.agreements[0].title, "Acme Master Agreement")
+
+    def test_contract_conflict_and_deal_playbook_models(self):
+        """Verify ContractConflictRecord and DealPlaybook models persist structured ambiguity and precedence."""
+        from src.backend.db import ContractConflictRecord, DealPlaybook
+
+        conflict = ContractConflictRecord(
+            tenant_id="org_default",
+            counterparty="Acme Corp",
+            topic="LIMITATION_OF_LIABILITY",
+            as_of_date="2024-06-01",
+            conflict_type="AMBIGUOUS_CONTROLLING_INSTRUMENT",
+            candidate_a_agreement_id=10,
+            candidate_b_agreement_id=11,
+            missing_edge_type="SUPERSEDES",
+            details="Two executed instruments with divergent liability caps and no connecting edge."
+        )
+        playbook = DealPlaybook(
+            tenant_id="org_default",
+            playbook_name="enterprise_procurement",
+            master_controlling_topics=["LIMITATION_OF_LIABILITY", "INDEMNIFICATION"],
+            sow_controlling_topics=["PAYMENT_TERMS", "FEES"]
+        )
+        self.db.add_all([conflict, playbook])
+        self.db.commit()
+
+        c_fetched = self.db.query(ContractConflictRecord).filter(ContractConflictRecord.topic == "LIMITATION_OF_LIABILITY").first()
+        self.assertIsNotNone(c_fetched)
+        self.assertEqual(c_fetched.conflict_type, "AMBIGUOUS_CONTROLLING_INSTRUMENT")
+        self.assertEqual(c_fetched.resolution_status, "open")
+
+        pb_fetched = self.db.query(DealPlaybook).filter(DealPlaybook.playbook_name == "enterprise_procurement").first()
+        self.assertIsNotNone(pb_fetched)
+        self.assertIn("INDEMNIFICATION", pb_fetched.master_controlling_topics)
 
 
 if __name__ == "__main__":

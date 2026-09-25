@@ -242,6 +242,76 @@ class TestAdversarialGrounding(unittest.TestCase):
         self.assertEqual(stats["partial_supports"], 1)
         self.assertEqual(claims[0]["failure_mode"], "PARTIAL_SUPPORT")
 
+    def test_17_ambiguous_citation_detection(self):
+        """Detect AMBIGUOUS_CITATION when citation matches multiple distinct active agreements without qualification."""
+        multi_ag_clauses = [
+            {
+                "agreement_id": 1,
+                "agreement_title": "Master Services Agreement",
+                "section": "Section 4.1",
+                "content": "MSA Section 4.1: Net 30 payment terms.",
+                "structured_slots": {"net_days": 30},
+                "superseded": False,
+                "terminated": False
+            },
+            {
+                "agreement_id": 2,
+                "agreement_title": "Statement of Work #1",
+                "section": "Section 4.1",
+                "content": "SOW Section 4.1: Deliverables inspection within 5 business days.",
+                "structured_slots": {"inspection_days": 5},
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        # Ambiguous citation: does not specify MSA or SOW
+        draft = "Pursuant to Section 4.1, Customer shall remit payment within thirty (30) days."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, multi_ag_clauses)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["ambiguous_citations"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "AMBIGUOUS_CITATION")
+
+    def test_18_numeric_claim_strict_slot_or_span_rejection(self):
+        """Ensure token overlap CANNOT substantiate an unverified numeric claim."""
+        # Clause specifies Net 30
+        clause = [
+            {
+                "agreement_id": 1,
+                "agreement_title": "Master Services Agreement",
+                "section": "Section 4.1",
+                "content": "Customer shall pay all undisputed invoice amounts within thirty (30) days of invoice date.",
+                "structured_slots": {"net_days": 30},
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        # Draft asserts 75 days, using high token overlap words from the clause
+        draft = "Pursuant to Section 4.1, Customer shall pay all undisputed invoice amounts within 75 days of invoice date."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, clause)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["divergent_terms"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "DIVERGENT_TERM")
+
+    def test_19_conditional_obligation_negation(self):
+        """Detect NEGATED_OBLIGATION when an assertion asserts unconditional coverage dropping express exceptions."""
+        conditional_clause = [
+            {
+                "agreement_id": 1,
+                "agreement_title": "Master Services Agreement",
+                "section": "Section 4.1",
+                "content": "Invoices are payable Net 30, except for pre-approved rush orders which require immediate payment.",
+                "structured_slots": {"net_days": 30},
+                "superseded": False,
+                "terminated": False
+            }
+        ]
+        # Draft claims Net 30 applies to all orders without exception
+        draft = "Pursuant to Section 4.1, invoices are payable Net 30 for all orders without exception."
+        is_grounded, claims, _, stats = verify_commercial_grounding(draft, conditional_clause)
+        self.assertFalse(is_grounded)
+        self.assertEqual(stats["negated_obligations"], 1)
+        self.assertEqual(claims[0]["failure_mode"], "NEGATED_OBLIGATION")
+
 
 if __name__ == "__main__":
     unittest.main()

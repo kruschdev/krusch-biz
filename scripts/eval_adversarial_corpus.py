@@ -63,7 +63,8 @@ def section_matches(sec_a: str | None, sec_b: str | None) -> bool:
 def run_adversarial_eval(
     corpus_path: str = os.path.join(PROJECT_ROOT, "data/eval/adversarial_corpus.json"),
     output_json_path: str | None = None,
-    verbose: bool = True
+    verbose: bool = True,
+    use_llm: bool = False
 ) -> dict[str, Any]:
     """
     Execute end-to-end evaluation across all adversarial multi-document families.
@@ -147,7 +148,7 @@ def run_adversarial_eval(
                 sec_match = re.match(r'^(Section\s+[\d\.\w\-]+|Article\s+[\d\.\w\-]+|Schedule\s+[A-Z\d]+|Exhibit\s+[A-Z\d]+|Letter\s+Agreement)', ch_text, re.IGNORECASE)
                 sec_name = sec_match.group(1) if sec_match else f"Section {idx}"
                 topic, slots = extract_structured_slots(ch_text)
-                tag_info = tag_commercial_chunk(content=ch_text, filename=d["filename"], locator=sec_name, doc_type=d["instrument_type"])
+                tag_info = tag_commercial_chunk(content=ch_text, filename=d["filename"], locator=sec_name, doc_type=d["instrument_type"], use_llm=use_llm)
                 assigned_topic = tag_info.get("topic") or topic
                 cl = Clause(
                     tenant_id=tenant_id,
@@ -411,9 +412,35 @@ def run_adversarial_eval(
     total_prop_corr = sum(v["correct"] for v in prop_cases.values())
     prop_acc = (total_prop_corr / total_prop_exp * 100.0) if total_prop_exp > 0 else 100.0
 
+    git_sha = "unknown"
+    try:
+        import subprocess
+        git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, cwd=PROJECT_ROOT).strip()
+    except Exception:
+        pass
+
+    fixture_hash = "unknown"
+    try:
+        with open(corpus_path, "rb") as f:
+            fixture_hash = hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        pass
+
+    from src.backend.config import settings
+
     summary = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "elapsed_seconds": round(elapsed, 3),
+        "evaluation_class": "fixture_verification",
+        "provenance": {
+            "git_sha": git_sha,
+            "fixture_hash": fixture_hash,
+            "corpus_file": os.path.basename(corpus_path),
+            "embedding_model": settings.OLLAMA_EMBED_MODEL,
+            "embedding_dim": settings.EMBEDDING_DIM,
+            "vectors_mocked": True,
+            "environment": "ci_deterministic_fixture"
+        },
         "total_families": len(families),
         "metrics": {
             "relation_extraction": {
@@ -476,9 +503,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Adversarial Multi-Document Evaluation Runner")
     parser.add_argument("--corpus", default=os.path.join(PROJECT_ROOT, "data/eval/adversarial_corpus.json"), help="Path to adversarial corpus JSON fixture")
     parser.add_argument("--output", default=os.path.join(PROJECT_ROOT, "data/eval/adversarial_eval_results.json"), help="Path to write JSON results")
+    parser.add_argument("--use-llm", action="store_true", help="Enable local LLM for chunk tagging during evaluation")
     args = parser.parse_args()
 
-    results = run_adversarial_eval(corpus_path=args.corpus, output_json_path=args.output)
+    results = run_adversarial_eval(corpus_path=args.corpus, output_json_path=args.output, use_llm=args.use_llm)
     metrics = results["metrics"]
 
     # Minimum Production Thresholds

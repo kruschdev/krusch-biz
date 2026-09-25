@@ -1,6 +1,16 @@
 {
-  "timestamp_utc": "2026-09-25T04:20:44.631263+00:00",
-  "elapsed_seconds": 63.723,
+  "timestamp_utc": "2026-09-25T15:25:47.537393+00:00",
+  "elapsed_seconds": 0.47,
+  "evaluation_class": "fixture_verification",
+  "provenance": {
+    "git_sha": "d7a73a84961f17db489e2849b7ba823b6dde7d7f",
+    "fixture_hash": "6b5d2931c0d552d81cf3b78339e489c6cecd16afe70780147b3771b264e484da",
+    "corpus_file": "adversarial_corpus.json",
+    "embedding_model": "bge-large",
+    "embedding_dim": 1024,
+    "vectors_mocked": true,
+    "environment": "ci_deterministic_fixture"
+  },
   "total_families": 7,
   "metrics": {
     "relation_extraction": {

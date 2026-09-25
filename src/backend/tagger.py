@@ -359,10 +359,17 @@ def tag_commercial_chunk(
                     seen.add(ct)
                     merged_tags.append(ct)
 
-            # 2. Add LLM semantic tags
+            # 2. Add LLM semantic tags (reject uncorroborated LLM numeric tags)
+            slot_tags_sanitized = {sanitize_tag(st) for st in heuristic.get("slot_tags", []) if sanitize_tag(st)}
             for t in res.get("tags", []):
                 ct = sanitize_tag(t)
-                if ct and ct not in seen:
+                if not ct:
+                    continue
+                # Invariant: Never let the LLM tagger invent a numeric tag not verified by regex slots
+                if re.search(r'\d', ct) and ct not in slot_tags_sanitized:
+                    logger.info(f"Rejecting LLM-invented numeric tag '{ct}' not corroborated by regex slots.")
+                    continue
+                if ct not in seen:
                     seen.add(ct)
                     merged_tags.append(ct)
                     if len(merged_tags) >= 7:

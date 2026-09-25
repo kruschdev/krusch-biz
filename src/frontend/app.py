@@ -292,6 +292,68 @@ st.markdown("""
         margin-bottom: 1.5rem;
         box-shadow: 0 0 20px rgba(245, 158, 11, 0.15);
     }
+
+    /* Compliance Card Styling */
+    .compliance-card {
+        background: rgba(15, 23, 42, 0.65);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
+    }
+    .compliance-card-violation {
+        border-left: 5px solid #ef4444;
+        background: rgba(239, 68, 68, 0.04);
+    }
+    .compliance-card-aligned {
+        border-left: 5px solid #10b981;
+        background: rgba(16, 185, 129, 0.04);
+    }
+    .compliance-card-generous {
+        border-left: 5px solid #06b6d4;
+        background: rgba(6, 182, 212, 0.04);
+    }
+    .compliance-card-gap {
+        border-left: 5px solid #64748b;
+        background: rgba(100, 116, 139, 0.04);
+    }
+    .badge-void {
+        background: rgba(239, 68, 68, 0.15);
+        color: #f87171;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-weight: 700;
+        font-size: 0.78rem;
+    }
+    .badge-enforceable {
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.4);
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-weight: 700;
+        font-size: 0.78rem;
+    }
+    .badge-generous {
+        background: rgba(6, 182, 212, 0.15);
+        color: #22d3ee;
+        border: 1px solid rgba(6, 182, 212, 0.4);
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-weight: 700;
+        font-size: 0.78rem;
+    }
+    .badge-gap {
+        background: rgba(100, 116, 139, 0.15);
+        color: #94a3b8;
+        border: 1px solid rgba(100, 116, 139, 0.4);
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-weight: 700;
+        font-size: 0.78rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -369,12 +431,13 @@ except Exception:
     pass
 
 
-# 4-Tab Core Precedence Architecture
-tab1, tab2, tab3, tab4 = st.tabs([
+# 5-Tab Core Precedence & Compliance Architecture
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🏛️ The Deal Room",
     "🔗 Relation Review Queue & Precedence Graph",
     "🌲 Sovereign Ingest & Deep Extraction",
-    "🛡️ Adversarial Multi-Document Scorecard"
+    "🛡️ Adversarial Multi-Document Scorecard",
+    "⚖️ The Join: Statutory Compliance Audit"
 ])
 
 
@@ -732,36 +795,70 @@ with tab2:
                     p_id = pe["id"]
                     with st.container():
                         st.markdown(f"""
-                            <div class="edge-card" style="border-left: 4px solid #f59e0b;">
-                                <div class="edge-header">
-                                    <span>🔗 <strong>{pe.get('source_title')}</strong> ➔ <span class="badge-pill">{pe.get('relation_type')}</span> ➔ <strong>{pe.get('target_title')}</strong></span>
-                                    <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">Scope: <code>{pe.get('clause_scope', 'ALL')}</code> • Confidence: {int(pe.get('confidence', 0.9)*100)}%</span>
-                                </div>
-                                <div class="edge-excerpt">
-                                    💬 <em>"{pe.get('source_excerpt') or 'Body amendment or preamble cue detected during ingestion'}"</em>
+                            <div class="edge-card" style="border-left: 4px solid #f59e0b; margin-bottom: 0.75rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-weight: 700; color: #fbbf24; font-size: 1.0rem;">
+                                        ⚠️ Proposed Precedence Edge #{p_id}: {pe.get('source_title')} ➔ <span class="badge-pill">{pe.get('relation_type')}</span> ➔ {pe.get('target_title')}
+                                    </span>
+                                    <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">
+                                        Confidence: {int(pe.get('confidence', 0.9)*100)}%
+                                    </span>
                                 </div>
                             </div>
                         """, unsafe_allow_html=True)
 
-                        c_act1, c_act2, c_act3 = st.columns([1, 1, 2])
-                        with c_act1:
-                            if st.button(f"✅ Accept #{p_id}", key=f"q_btn_conf_{p_id}", use_container_width=True):
-                                cf_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}/confirm", headers=get_auth_headers())
-                                if cf_res.status_code == 200:
-                                    st.success(f"Confirmed relation #{p_id}. Graph updated.")
-                                    st.rerun()
-                                else:
-                                    st.error(f"Confirmation failed: {cf_res.text}")
-                        with c_act2:
-                            if st.button(f"❌ Reject #{p_id}", key=f"q_btn_rej_{p_id}", use_container_width=True):
-                                rj_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}/reject", headers=get_auth_headers())
-                                if rj_res.status_code == 200:
-                                    st.warning(f"Rejected relation #{p_id}.")
-                                    st.rerun()
-                                else:
-                                    st.error(f"Rejection failed: {rj_res.text}")
-                        with c_act3:
-                            with st.expander(f"✏️ Edit & Adjust #{p_id}"):
+                        col_left, col_right = st.columns([1, 1], gap="medium")
+
+                        with col_left:
+                            st.markdown("##### 📄 Left Pane: Triggering Source Text & Span")
+                            source_excerpt = pe.get('source_span') or pe.get('source_excerpt') or "Body amendment or preamble cue detected during ingestion"
+                            st.markdown(f"""
+                                <div style="background: rgba(15, 23, 42, 0.7); padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.25); min-height: 200px;">
+                                    <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 8px;">
+                                        <strong>Source Instrument:</strong> {pe.get('source_title')} (ID: #{pe.get('source_agreement_id')})
+                                    </div>
+                                    <div style="font-size: 0.9rem; color: #f1f5f9; font-style: italic; line-height: 1.55; border-left: 3px solid #38bdf8; padding-left: 12px; background: rgba(56, 189, 248, 0.05); padding-top: 6px; padding-bottom: 6px; border-radius: 0 6px 6px 0;">
+                                        "{source_excerpt}"
+                                    </div>
+                                    <div style="font-size: 0.82rem; color: #38bdf8; margin-top: 12px;">
+                                        🎯 <strong>Detected Scope Cue:</strong> <code>{pe.get('clause_scope', 'ALL')}</code>
+                                    </div>
+                                </div>
+                            """, unsafe_allow_html=True)
+
+                        with col_right:
+                            st.markdown("##### ⚡ Right Pane: Candidate Edge & Review Actions")
+                            eff_str = pe.get('effective_date') or 'Unspecified / Inherited'
+                            st.markdown(f"""
+                                <div style="background: rgba(15, 23, 42, 0.7); padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.25); margin-bottom: 12px;">
+                                    <div style="font-size: 0.88rem; color: #cbd5e1; line-height: 1.6;">
+                                        • <strong>Edge Type:</strong> <span class="badge-pill">{pe.get('relation_type')}</span><br/>
+                                        • <strong>Target Instrument:</strong> {pe.get('target_title')} (ID: #{pe.get('target_agreement_id')})<br/>
+                                        • <strong>Clause Scope:</strong> <code>{pe.get('clause_scope', 'ALL')}</code><br/>
+                                        • <strong>Effective Date:</strong> <code>{eff_str}</code>
+                                    </div>
+                                </div>
+                            """, unsafe_allow_html=True)
+
+                            c_act1, c_act2 = st.columns(2)
+                            with c_act1:
+                                if st.button(f"✅ Accept Edge #{p_id}", key=f"q_btn_conf_{p_id}", use_container_width=True, type="primary"):
+                                    cf_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}/confirm", headers=get_auth_headers())
+                                    if cf_res.status_code == 200:
+                                        st.success(f"Confirmed relation #{p_id}. Graph updated.")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Confirmation failed: {cf_res.text}")
+                            with c_act2:
+                                if st.button(f"❌ Reject Edge #{p_id}", key=f"q_btn_rej_{p_id}", use_container_width=True):
+                                    rj_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}/reject", headers=get_auth_headers())
+                                    if rj_res.status_code == 200:
+                                        st.warning(f"Rejected relation #{p_id}.")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Rejection failed: {rj_res.text}")
+
+                            with st.expander(f"✏️ Edit Scope & Dates #{p_id}"):
                                 with st.form(f"edit_rel_form_{p_id}"):
                                     e_type = st.selectbox(
                                         "Relation Type:",
@@ -771,6 +868,7 @@ with tab2:
                                     )
                                     e_scope = st.text_input("Clause Scope (e.g. 'Section 4.1' or 'ALL'):", value=pe.get("clause_scope") or "ALL", key=f"edit_scope_{p_id}")
                                     e_tgt = st.number_input("Target Agreement ID:", min_value=1, value=int(pe.get("target_agreement_id") or 1), step=1, key=f"edit_tgt_{p_id}")
+                                    e_eff_date = st.text_input("Effective Date (YYYY-MM-DD):", value=pe.get("effective_date") or "", key=f"edit_eff_{p_id}")
                                     e_confirm = st.checkbox("Confirm and activate upon save", value=True, key=f"edit_conf_{p_id}")
                                     e_sub = st.form_submit_button("Save & Update Relation")
                                     if e_sub:
@@ -780,12 +878,20 @@ with tab2:
                                             "target_agreement_id": int(e_tgt),
                                             "status": "confirmed" if e_confirm else "proposed"
                                         }
+                                        if e_eff_date.strip():
+                                            payload["effective_date"] = e_eff_date.strip()
                                         ed_res = httpx.patch(f"{BACKEND_URL}/api/relations/{p_id}", json=payload, headers=get_auth_headers(), timeout=10.0)
                                         if ed_res.status_code == 200:
                                             st.success(f"Updated relation #{p_id}!")
                                             st.rerun()
                                         else:
                                             st.error(f"Update failed: {ed_res.text}")
+
+                            with st.expander(f"🔍 Preview Would-Be Controlling Clause Impact #{p_id}"):
+                                st.info(f"**Impact Simulation**: If confirmed, `{pe.get('source_title')}` will {pe.get('relation_type')} `{pe.get('target_title')}` for scope **`{pe.get('clause_scope', 'ALL')}`**.")
+                                st.write(f"- **Controlling Authority**: Provisions in `{pe.get('source_title')}` matching scope `{pe.get('clause_scope', 'ALL')}` will supersede or modify prior terms in `{pe.get('target_title')}` as of effective date.")
+                                st.write(f"- **Non-Amended Provisions**: Baseline terms in `{pe.get('target_title')}` outside this scope remain operative under the master agreement.")
+                st.markdown("---")
             else:
                 st.success("✅ **Zero pending relation reviews.** All extracted relations are confirmed and active in the controlling DAG.")
         else:
@@ -936,6 +1042,71 @@ with tab2:
                     st.error(f"Conflict check failed: {c_res.status_code}")
             except Exception as e:
                 st.error(f"Conflict detection error: {e}")
+
+    st.markdown("---")
+
+    # Section 3: General Counsel "What Controls as of DATE" Export
+    st.subheader("📑 General Counsel 'What Controls as of DATE' Memorandum Export")
+    st.write(
+        "Generate and download a comprehensive 1-page executive memorandum detailing all operative controlling clauses, "
+        "amendment lineages, and active conflicts across commercial topics for a counterparty as of a specific date."
+    )
+
+    exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
+    with exp_col1:
+        memo_cp = st.selectbox("Counterparty for Memorandum:", options=known_counterparties, key="res_memo_cp")
+    with exp_col2:
+        memo_date = st.date_input("As-Of Date:", value=datetime.now(timezone.utc).date(), key="res_memo_date")
+    with exp_col3:
+        st.write("")
+        st.write("")
+        btn_gen_memo = st.button("📑 Generate 1-Page GC Memo", use_container_width=True, type="primary", key="btn_gen_gc_memo")
+
+    if btn_gen_memo:
+        with st.spinner(f"Compiling General Counsel controlling terms memorandum for {memo_cp}..."):
+            try:
+                resp = httpx.post(
+                    f"{BACKEND_URL}/api/resolver/what-controls-export",
+                    json={"counterparty": memo_cp, "as_of_date": memo_date.isoformat()},
+                    headers=get_auth_headers(),
+                    timeout=20.0
+                )
+                if resp.status_code == 200:
+                    memo_data = resp.json()
+                    st.session_state["last_memo_data"] = memo_data
+                    st.success(f"Generated memorandum for {memo_cp} as of {memo_date.isoformat()} ({memo_data.get('topics_evaluated', 0)} topics evaluated)!")
+                else:
+                    st.error(f"Export failed: {resp.status_code} - {resp.text}")
+            except Exception as e:
+                st.error(f"Error compiling export: {e}")
+
+    if "last_memo_data" in st.session_state:
+        mdata = st.session_state["last_memo_data"]
+        safe_cp = mdata.get("counterparty", "counterparty").replace(" ", "_").replace(".", "")
+        safe_dt = mdata.get("as_of_date", "date")
+
+        dcol1, dcol2 = st.columns(2)
+        with dcol1:
+            st.download_button(
+                label="⬇️ Download Memorandum (.md)",
+                data=mdata.get("markdown", ""),
+                file_name=f"what_controls_{safe_cp}_{safe_dt}.md",
+                mime="text/markdown",
+                use_container_width=True,
+                key="dl_gc_memo_md"
+            )
+        with dcol2:
+            st.download_button(
+                label="⬇️ Download Audit Artifact (.json)",
+                data=json.dumps(mdata, indent=2),
+                file_name=f"what_controls_{safe_cp}_{safe_dt}.json",
+                mime="application/json",
+                use_container_width=True,
+                key="dl_gc_memo_json"
+            )
+
+        with st.expander("👁️ View Rendered Memorandum Preview", expanded=True):
+            st.markdown(mdata.get("markdown", ""))
 
     st.markdown("---")
 

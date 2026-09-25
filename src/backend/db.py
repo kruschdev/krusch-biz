@@ -143,6 +143,53 @@ def get_db():
 # ---------------------------------------------------------------------------
 # RELATIONAL CONTRACT GRAPH MODELS
 # ---------------------------------------------------------------------------
+# FIRST-CLASS PARTY ENTITIES & ALIASES
+# ---------------------------------------------------------------------------
+
+class Party(Base):
+    """
+    First-class enterprise party / counterparty entity.
+    Prevents silent precedence misses between string variants (e.g. 'Acme, Inc.' vs 'ACME Incorporated').
+    """
+    __tablename__ = "parties"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "canonical_name", name="uq_party_tenant_canonical_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
+    canonical_name = Column(String(255), nullable=False, index=True)
+    entity_type = Column(String(50), default="corporation", nullable=False)  # corporation, llc, partnership, individual, government
+    jurisdiction = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    aliases = relationship("PartyAlias", back_populates="party", cascade="all, delete-orphan")
+    agreements = relationship("Agreement", back_populates="party_entity")
+
+
+class PartyAlias(Base):
+    """
+    Known aliases, abbreviations, d/b/a names, and subsidiaries mapped to a canonical party.
+    """
+    __tablename__ = "party_aliases"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "alias_name", name="uq_party_alias_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
+    party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
+    alias_name = Column(String(255), nullable=False, index=True)
+    match_type = Column(String(50), default="exact", nullable=False)  # exact, suffix_normalized, regex, subsidiary
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    party = relationship("Party", back_populates="aliases")
+
+
+# ---------------------------------------------------------------------------
+# RELATIONAL CONTRACT GRAPH MODELS
+# ---------------------------------------------------------------------------
 
 class Agreement(Base):
     """
@@ -156,6 +203,7 @@ class Agreement(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
+    party_id = Column(Integer, ForeignKey("parties.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String(255), nullable=False, index=True)
     instrument_type = Column(String(100), nullable=False, index=True)
     # Types: master_services_agreement, amendment, statement_of_work, service_level_agreement,
@@ -163,6 +211,10 @@ class Agreement(Base):
     parties = Column(JSONType, nullable=True)  # {"principal": "Acme Corp", "counterparty": "CloudScale AI"}
     counterparty = Column(String(100), nullable=True, index=True)
     effective_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    effective_from = Column(DateTime(timezone=True), nullable=True, index=True)
+    effective_to = Column(DateTime(timezone=True), nullable=True, index=True)
+    execution_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    termination_date = Column(DateTime(timezone=True), nullable=True, index=True)
     expiration_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), default="active", nullable=False, index=True)  # active, superseded, terminated, expired
     execution_status = Column(String(50), default="executed", nullable=False, index=True)  # executed, draft, unknown
@@ -173,6 +225,7 @@ class Agreement(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
+    party_entity = relationship("Party", back_populates="agreements")
     clauses = relationship("Clause", back_populates="agreement", cascade="all, delete-orphan")
     outgoing_relations = relationship(
         "AgreementRelation",
@@ -249,9 +302,17 @@ class AgreementRelation(Base):
     # CARVES_OUT: source carves out terms from target
     effective_date = Column(DateTime(timezone=True), nullable=True)
     clause_scope = Column(String(100), nullable=True)                 # e.g. "Section 4.1" or "ALL"
+    scope_type = Column(String(50), default="ALL", nullable=False)    # ALL, TOPICS, SECTIONS, EXHIBITS, DEFINITIONS
+    scope_topics = Column(JSONType, nullable=True)                    # list of canonical topics e.g. ["PAYMENT_TERMS"]
+    scope_sections = Column(JSONType, nullable=True)                  # list of normalized sections e.g. ["4.1", "4.2"]
+    scope_exhibits = Column(JSONType, nullable=True)                  # list of exhibits e.g. ["Exhibit B"]
     extractor = Column(String(50), default="manual", nullable=True)   # regex, llm, manual, heuristic
+    proposed_by = Column(String(100), default="kruschbiz_regex_ensemble", nullable=True)
     confidence = Column(Float, default=1.0, nullable=True)
     span = Column(Text, nullable=True)
+    source_span = Column(Text, nullable=True)
+    reviewer_id = Column(String(100), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), default="accepted", nullable=False, index=True)  # proposed, accepted, rejected
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -362,63 +423,46 @@ class DealEvidence(Base):
     deal_matter = relationship("DealMatter", backref="evidence")
 
 
-class ContractPortfolio(Base):
+class ContractConflictRecord(Base):
     """
-    Vendor agreements and commercial contract lifecycle portfolio.
-    Tracks expiration dates, contract values, auto-renewal terms, and alert thresholds.
+    First-class persisted conflict and ambiguity record.
+    Tracks AMBIGUOUS_CONTROLLING_INSTRUMENT, GRAPH_CYCLE, and DIVERGENT_OPERATIVE_TERMS as structured data.
     """
-    __tablename__ = "contracts_portfolio"
+    __tablename__ = "contract_conflicts"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
-    agreement_id = Column(Integer, ForeignKey("agreements.id", ondelete="SET NULL"), nullable=True, index=True)
-    contract_name = Column(String(255), nullable=False, index=True)
-    vendor = Column(String(255), nullable=False, index=True)
-    contract_type = Column(String(100), nullable=True)  # e.g. "Vendor MSA", "SaaS License", "Consulting", "Commercial Lease"
-    start_date = Column(DateTime(timezone=True), nullable=True)
-    expiration_date = Column(DateTime(timezone=True), nullable=True, index=True)
-    value = Column(Float, nullable=True)
-    auto_renew = Column(Boolean, default=False, nullable=False)
-    reminder_days = Column(String(50), default="30,60,90", nullable=True)
-    status = Column(String(50), default="active", nullable=False, index=True)  # active, expiring_soon, expired, renewed, terminated
-    document_link = Column(String(500), nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    agreement = relationship("Agreement")
+    counterparty = Column(String(255), nullable=False, index=True)
+    topic = Column(String(100), nullable=False, index=True)
+    as_of_date = Column(String(50), nullable=False, index=True)
+    conflict_type = Column(String(100), nullable=False, index=True)  # AMBIGUOUS_CONTROLLING_INSTRUMENT, GRAPH_CYCLE, DIVERGENT_OPERATIVE_TERMS
+    candidate_a_agreement_id = Column(Integer, nullable=True)
+    candidate_a_clause_id = Column(Integer, nullable=True)
+    candidate_b_agreement_id = Column(Integer, nullable=True)
+    candidate_b_clause_id = Column(Integer, nullable=True)
+    missing_edge_type = Column(String(50), nullable=True)            # e.g., AMENDS, SUPERSEDES
+    details = Column(Text, nullable=True)
+    resolution_status = Column(String(50), default="open", nullable=False, index=True)  # open, resolved, dismissed
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
-class Invoice(Base):
+class DealPlaybook(Base):
     """
-    Commercial client invoicing, line items, and accounts receivable tracking.
+    Deal playbook defining precedence rules between instrument types (e.g. MSA vs SOW).
+    Replaces hardcoded topic precedence with configurable, tenant-specific playbooks.
     """
-    __tablename__ = "invoices"
+    __tablename__ = "deal_playbooks"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "invoice_number", name="uq_invoice_tenant_number"),
+        UniqueConstraint("tenant_id", "playbook_name", name="uq_deal_playbook_name"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String(100), default="org_default", nullable=False, index=True)
-    deal_id = Column(Integer, ForeignKey("deal_matters.id", ondelete="SET NULL"), nullable=True, index=True)
-    invoice_number = Column(String(100), nullable=False, index=True)
-    client_name = Column(String(255), nullable=False, index=True)
-    client_email = Column(String(255), nullable=True)
-    line_items = Column(JSONType, nullable=True)  # [{"description": str, "quantity": float, "rate": float, "amount": float}]
-    subtotal = Column(Float, default=0.0, nullable=False)
-    tax_rate = Column(Float, default=0.0, nullable=False)
-    tax_amount = Column(Float, default=0.0, nullable=False)
-    total = Column(Float, default=0.0, nullable=False)
-    status = Column(String(50), default="draft", nullable=False, index=True)  # draft, sent, paid, overdue, cancelled
-    invoice_date = Column(DateTime(timezone=True), nullable=True)
-    due_date = Column(DateTime(timezone=True), nullable=True, index=True)
-    sent_date = Column(DateTime(timezone=True), nullable=True)
-    paid_date = Column(DateTime(timezone=True), nullable=True)
-    notes = Column(Text, nullable=True)
+    playbook_name = Column(String(100), default="default_commercial", nullable=False)
+    master_controlling_topics = Column(JSONType, nullable=True)  # e.g. ["LIMITATION_OF_LIABILITY", "INDEMNIFICATION"]
+    sow_controlling_topics = Column(JSONType, nullable=True)     # e.g. ["PAYMENT_TERMS", "PRICING_FEES"]
+    rules_json = Column(JSONType, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    deal = relationship("DealMatter")
 
 
 class CommercialGroundingReport(Base):
@@ -617,7 +661,7 @@ def init_db(target_engine=None):
 
 def purge_deal_matter_transactional(db: Session, tenant_id: str, deal_id: int) -> dict[str, int]:
     """
-    Wrap hard purge of a deal matter and all associated evidence, reports, and invoices
+    Wrap hard purge of a deal matter and all associated evidence and reports
     into a single atomic transaction.
     """
     deal = db.query(DealMatter).filter(
@@ -625,12 +669,7 @@ def purge_deal_matter_transactional(db: Session, tenant_id: str, deal_id: int) -
         DealMatter.tenant_id == tenant_id
     ).first()
     if not deal:
-        return {"deal_id": deal_id, "deleted": 0, "evidence": 0, "reports": 0, "invoices": 0}
-
-    inv_count = db.query(Invoice).filter(
-        Invoice.deal_id == deal_id,
-        Invoice.tenant_id == tenant_id
-    ).delete(synchronize_session=False)
+        return {"deal_id": deal_id, "deleted": 0, "evidence": 0, "reports": 0}
 
     ev_count = db.query(DealEvidence).filter(
         DealEvidence.deal_id == deal_id,
@@ -649,14 +688,13 @@ def purge_deal_matter_transactional(db: Session, tenant_id: str, deal_id: int) -
         "deal_id": deal_id,
         "deleted": 1,
         "evidence": ev_count,
-        "reports": rep_count,
-        "invoices": inv_count
+        "reports": rep_count
     }
 
 
 def purge_agreement_transactional(db: Session, tenant_id: str, agreement_id: int) -> dict[str, int]:
     """
-    Wrap hard purge of an agreement and all associated relations, clauses, vectors, and portfolio entries
+    Wrap hard purge of an agreement and all associated relations, clauses, and vectors
     into a single atomic transaction.
     """
     ag = db.query(Agreement).filter(
@@ -664,13 +702,7 @@ def purge_agreement_transactional(db: Session, tenant_id: str, agreement_id: int
         Agreement.tenant_id == tenant_id
     ).first()
     if not ag:
-        return {"agreement_id": agreement_id, "deleted": 0, "portfolio": 0, "relations": 0, "clauses": 0, "vectors": 0}
-
-    # Delete portfolio entries
-    pf_count = db.query(ContractPortfolio).filter(
-        ContractPortfolio.agreement_id == agreement_id,
-        ContractPortfolio.tenant_id == tenant_id
-    ).delete(synchronize_session=False)
+        return {"agreement_id": agreement_id, "deleted": 0, "relations": 0, "clauses": 0, "vectors": 0}
 
     # Delete relations where source or target
     rel_count = db.query(AgreementRelation).filter(
@@ -696,7 +728,6 @@ def purge_agreement_transactional(db: Session, tenant_id: str, agreement_id: int
     return {
         "agreement_id": agreement_id,
         "deleted": 1,
-        "portfolio": pf_count,
         "relations": rel_count,
         "clauses": cl_count,
         "vectors": vec_count

@@ -852,7 +852,8 @@ def verify_commercial_grounding(
                 known_clauses_by_sec.setdefault(clean_k, []).append(c)
 
     claim_records: list[dict[str, Any]] = []
-    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', analysis_text) if s.strip()]
+    # Claim decomposition: split on sentence boundaries, semicolons, and newlines
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?;\n])\s+', analysis_text) if s.strip()]
 
     total_claims = 0
     supported_claims = 0
@@ -863,6 +864,7 @@ def verify_commercial_grounding(
     wrong_instruments = 0
     partial_supports = 0
     negated_obligations = 0
+    ambiguous_citations = 0
 
     citation_pattern = re.compile(
         r'((?:(?:the\s+)?(?:\d{4}\s+)?(?:MSA|SOW|Statement\s+of\s+Work|Master\s+Agreement|Amendment(?:\s+No\.?\s*\d+)?|Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Article\s+[IVXLCDM\d]+|Lease)\s*,?\s*)?(?:Section|Clause|§)\s*[\w\.\-]+(?:\([a-zA-Z\d]+\))*|Exhibit\s+[A-Za-z\d]+(?:\s*\([A-Za-z0-9]+\))?|Lease\s*§\s*[\w\.\-]+)',
@@ -964,7 +966,26 @@ def verify_commercial_grounding(
                     })
                     continue
             else:
-                matching_clause = matching_candidates[0]
+                # Ambiguous Citation Check: multiple distinct active agreements match the section without instrument qualifier
+                active_cands = [c for c in matching_candidates if not c.get("superseded") and not c.get("terminated")]
+                distinct_ags = set(
+                    cand.get("agreement_id") or cand.get("agreement_title") or cand.get("title")
+                    for cand in active_cands
+                )
+                if len(distinct_ags) > 1:
+                    ambiguous_citations += 1
+                    unsupported_claims += 1
+                    claim_records.append({
+                        "claim_id": f"claim_{total_claims}",
+                        "sentence": sentence,
+                        "cited_authority": cited_raw,
+                        "status": "ambiguous_citation",
+                        "failure_mode": "AMBIGUOUS_CITATION",
+                        "details": f"Ambiguous citation: '{cited_raw}' matches {len(distinct_ags)} distinct agreements in controlling set without instrument qualification.",
+                        "evidence_span": None
+                    })
+                    continue
+                matching_clause = active_cands[0] if active_cands else matching_candidates[0]
 
             # 2. Check: Superseded / Inoperative
             if matching_clause.get("superseded") or matching_clause.get("terminated"):
@@ -1016,6 +1037,29 @@ def verify_commercial_grounding(
                     "status": "negated_obligation",
                     "failure_mode": "NEGATED_OBLIGATION",
                     "details": f"Asserted proposition in '{cited_raw}' drops or denies contractual carve-outs/exceptions.",
+                    "evidence_span": clause_content[:180] + "..."
+                })
+                continue
+
+            # Conditionals & Carve-outs: Handle "upon material breach", "except for", "notwithstanding", "unless pre-approved"
+            clause_has_condition = bool(re.search(
+                r'\b(?:except\s+for|except\s+in|excluding|subject\s+to|upon\s+material\s+breach|conditioned\s+upon|unless\s+pre-approved|except\s+for\s+pre-approved|notwithstanding)\b',
+                clause_lower
+            ))
+            claim_is_unconditional = bool(re.search(
+                r'\b(?:all\s+orders|every\s+order|without\s+exception|for\s+all\s+claims|in\s+all\s+cases|unconditionally|regardless\s+of)\b',
+                sent_lower
+            ))
+            if clause_has_condition and claim_is_unconditional:
+                negated_obligations += 1
+                unsupported_claims += 1
+                claim_records.append({
+                    "claim_id": f"claim_{total_claims}",
+                    "sentence": sentence,
+                    "cited_authority": cited_raw,
+                    "status": "negated_obligation",
+                    "failure_mode": "NEGATED_OBLIGATION",
+                    "details": f"Asserted proposition in '{cited_raw}' drops contractual condition or exception.",
                     "evidence_span": clause_content[:180] + "..."
                 })
                 continue
@@ -1130,20 +1174,47 @@ def verify_commercial_grounding(
                 })
                 continue
 
-            # 6. Check: Substantive token containment
+            # 6. Check: Substantive token containment & Strict Slot/Span Requirement for Numbers
+            body_digits = re.findall(r'\b\d+(?:\.\d+)?%?\b', sent_without_sec)
+            has_numeric_assertion = bool(body_digits) or any(s in sent_slots for s in ("net_days", "uptime_pct", "late_interest_pct", "cap_amount", "notice_hours", "notice_days", "cure_days", "credit_pct")) or bool(re.search(r'[\$€£]', sent_without_sec))
+
+            has_slot_match = bool(set(sent_slots.keys()).intersection(clause_slots.keys()))
+
+            if has_numeric_assertion:
+                # Invariant (Priority 4 & 5): Numeric claims REQUIRE slot match or exact span containment in the clause!
+                # Lexical token overlap CANNOT substantiate numeric claims.
+                span_contained = False
+                for d in body_digits:
+                    clean_d = d.strip("%")
+                    if clean_d in clause_content:
+                        span_contained = True
+                        break
+
+                if not has_slot_match and not span_contained:
+                    divergent_terms += 1
+                    unsupported_claims += 1
+                    claim_records.append({
+                        "claim_id": f"claim_{total_claims}",
+                        "sentence": sentence,
+                        "cited_authority": cited_raw,
+                        "status": "divergent_term",
+                        "failure_mode": "DIVERGENT_TERM",
+                        "details": f"Numeric claim in '{cited_raw}' requires slot match or span containment; asserted values not found in governing clause.",
+                        "evidence_span": clause_content[:180] + "..."
+                    })
+                    continue
+
             sent_words = [w for w in re.findall(r'[a-zA-Z]{3,}', sent_lower) if w not in STOPWORDS]
             clause_words = set(w for w in re.findall(r'[a-zA-Z]{3,}', clause_lower) if w not in STOPWORDS)
             substantive_overlap = [w for w in sent_words if w in clause_words]
 
-            # Require substantive overlap >= 40% of sentence substantive words OR at least 2 key substantive tokens
-            has_slot_match = bool(set(sent_slots.keys()).intersection(clause_slots.keys()))
             is_substantiated = (
-                (len(sent_words) > 0 and len(substantive_overlap) / len(sent_words) >= 0.40)
+                has_slot_match
+                or (len(sent_words) > 0 and len(substantive_overlap) / len(sent_words) >= 0.40)
                 or len(substantive_overlap) >= 2
-                or has_slot_match
             )
 
-            if is_substantiated and len(substantive_overlap) > 0:
+            if is_substantiated and (len(substantive_overlap) > 0 or has_slot_match):
                 supported_claims += 1
                 span_match = clause_content[:200] + ("..." if len(clause_content) > 200 else "")
                 claim_records.append({
@@ -1178,7 +1249,8 @@ def verify_commercial_grounding(
                 f"> ⚠️ **COMMERCIAL GROUNDING WARNING**: Only {supported_claims}/{total_claims} assertions ({pass_rate}%) "
                 f"are verified against the governing contract graph. "
                 f"{invented_clauses} invented clause(s), {divergent_terms} divergent term(s), {superseded_terms} superseded term(s), "
-                f"{wrong_instruments} wrong instrument(s), {partial_supports} partial support(s), and {negated_obligations} negated obligation(s) detected."
+                f"{wrong_instruments} wrong instrument(s), {partial_supports} partial support(s), {negated_obligations} negated obligation(s), "
+                f"and {ambiguous_citations} ambiguous citation(s) detected."
             )
         else:
             advisory_md = (
@@ -1196,6 +1268,7 @@ def verify_commercial_grounding(
         "wrong_instruments": wrong_instruments,
         "partial_supports": partial_supports,
         "negated_obligations": negated_obligations,
+        "ambiguous_citations": ambiguous_citations,
         "pass_rate": pass_rate
     }
     is_grounded = (unsupported_claims == 0)

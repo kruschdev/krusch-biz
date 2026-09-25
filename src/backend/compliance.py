@@ -145,6 +145,7 @@ class ComplianceFinding(BaseModel):
     topic: str
     alignment: str                    # aligned, contract_more_generous, contract_less_than_mandatory, coverage_gap, jurisdiction_mismatch
     enforceability: str               # ENFORCEABLE, VOID_AS_AGAINST_PUBLIC_POLICY, PREEMPTED, UNSPECIFIED
+    coverage: str = "partial"         # Invariant: Mark every finding coverage: partial unless jurisdiction is complete
     contract_clause: Optional[Dict[str, Any]] = None
     controlling_statute: Optional[Dict[str, Any]] = None
     explanation: str
@@ -156,6 +157,7 @@ class ContractVsStatuteResponse(BaseModel):
     as_of_date: str
     jurisdiction: str
     counterparty: Optional[str] = None
+    coverage_completeness: str = "partial"
     findings: List[ComplianceFinding]
 
 

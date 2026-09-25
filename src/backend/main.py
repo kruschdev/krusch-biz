@@ -39,6 +39,7 @@ from .db import (
     Agreement,
     AgreementRelation,
     AuditLog,
+    Clause,
     CommercialClauseVector,
     CommercialGroundingReport,
     DealEvidence,
@@ -302,6 +303,7 @@ class RelationUpdate(BaseModel):
     relation_type: str | None = None
     target_agreement_id: int | None = None
     status: str | None = None
+    effective_date: str | None = None
 
 
 class ResolverRequest(BaseModel):
@@ -315,6 +317,12 @@ class ConflictsRequest(BaseModel):
     counterparty: str = Field(..., description="Counterparty name")
     as_of_date: str | None = Field(None, description="Optional ISO date (YYYY-MM-DD)")
     deal_id: int | None = Field(None, description="Optional associated deal matter ID")
+
+
+class WhatControlsExportRequest(BaseModel):
+    counterparty: str = Field(..., description="Counterparty or vendor entity name")
+    as_of_date: str = Field(..., description="Mandatory governing as-of date (YYYY-MM-DD)")
+    topics: list[str] | None = Field(None, description="Optional list of topics to resolve")
 
 
 class ConsultResponse(BaseModel):
@@ -540,7 +548,7 @@ def hard_delete_deal(
     db.commit()
     return {
         "status": "success",
-        "message": f"Deal #{deal_id} permanently purged ({purge_stats['evidence']} evidence, {purge_stats['reports']} reports, {purge_stats['invoices']} invoices).",
+        "message": f"Deal #{deal_id} permanently purged ({purge_stats['evidence']} evidence, {purge_stats['reports']} reports).",
         "purge_stats": purge_stats
     }
 
@@ -872,6 +880,60 @@ def get_agreements_conflicts(
     return get_contract_conflicts(counterparty, as_of_date, db, api_key, x_tenant_id)
 
 
+@app.post("/api/resolver/what-controls-export")
+def export_what_controls_endpoint(
+    body: WhatControlsExportRequest,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """
+    Generate an authoritative 1-page 'What Controls as of DATE' General Counsel memorandum
+    and JSON audit trail with amendment lineage.
+    """
+    from .export import generate_what_controls_export
+    try:
+        parsed_date = datetime.fromisoformat(body.as_of_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD).")
+
+    topics = body.topics
+    if not topics:
+        agreements = db.query(Agreement).filter(
+            Agreement.tenant_id == x_tenant_id,
+            Agreement.counterparty.ilike(body.counterparty.strip())
+        ).all()
+        ag_ids = [ag.id for ag in agreements]
+        distinct_topics = db.query(Clause.topic).filter(
+            Clause.tenant_id == x_tenant_id,
+            Clause.agreement_id.in_(ag_ids),
+            Clause.is_active.is_(True),
+            Clause.topic != "GENERAL_COMMERCIAL"
+        ).distinct().all()
+        topics = [t[0] for t in distinct_topics if t[0]]
+        if not topics:
+            topics = ["PAYMENT_TERMS", "LIMITATION_OF_LIABILITY", "SLA_UPTIME", "INDEMNIFICATION"]
+
+    resolutions = []
+    for top in topics:
+        res = resolve_controlling_clause(
+            db=db,
+            tenant_id=x_tenant_id,
+            counterparty=body.counterparty,
+            topic=top,
+            as_of_date=parsed_date
+        )
+        res["topic"] = top
+        resolutions.append(res)
+
+    return generate_what_controls_export(
+        counterparty=body.counterparty,
+        as_of_date=body.as_of_date,
+        resolutions=resolutions,
+        tenant_id=x_tenant_id
+    )
+
+
 @app.get("/api/resolution-traces")
 def list_resolution_traces(
     counterparty: str | None = Query(None, description="Filter by counterparty"),
@@ -1007,9 +1069,11 @@ def list_relations(
             "target_title": tgt_ag[0] if tgt_ag else f"Agreement #{r.target_agreement_id}",
             "relation_type": r.relation_type,
             "clause_scope": r.clause_scope,
+            "effective_date": r.effective_date.isoformat() if r.effective_date else None,
             "status": rel_status,
             "confidence": parsed_notes.get("confidence", 1.0),
             "source_excerpt": parsed_notes.get("source_excerpt"),
+            "source_span": r.source_span or r.span or parsed_notes.get("source_excerpt"),
             "notes": r.notes,
             "created_at": r.created_at.isoformat() if r.created_at else None
         })
@@ -1131,6 +1195,11 @@ def update_relation(
         rel.relation_type = rel_update.relation_type
     if rel_update.target_agreement_id is not None:
         rel.target_agreement_id = rel_update.target_agreement_id
+    if rel_update.effective_date is not None:
+        try:
+            rel.effective_date = datetime.fromisoformat(rel_update.effective_date)
+        except Exception:
+            pass
     if rel_update.status is not None:
         rel.status = rel_update.status
 
@@ -1152,7 +1221,8 @@ def update_relation(
         "status": rel.status,
         "clause_scope": rel.clause_scope,
         "relation_type": rel.relation_type,
-        "target_agreement_id": rel.target_agreement_id
+        "target_agreement_id": rel.target_agreement_id,
+        "effective_date": rel.effective_date.isoformat() if rel.effective_date else None
     }
 
 

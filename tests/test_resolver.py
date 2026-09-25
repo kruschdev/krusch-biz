@@ -234,7 +234,14 @@ class TestControllingDocumentResolver(unittest.TestCase):
             topic="PAYMENT_TERMS",
             as_of_date="2025-01-01"
         )
-        self.assertIn(res["status"], ("resolved", "ambiguous"))
+        self.assertEqual(res["status"], "GRAPH_CYCLE")
+        self.assertEqual(res["confidence"], 0.0)
+        from src.backend.db import ContractConflictRecord
+        conflict = self.db.query(ContractConflictRecord).filter_by(
+            counterparty="CycleCorp",
+            conflict_type="GRAPH_CYCLE"
+        ).first()
+        self.assertIsNotNone(conflict)
 
     def test_03_expired_instrument_excluded(self):
         """
@@ -641,6 +648,258 @@ class TestControllingDocumentResolver(unittest.TestCase):
         self.assertEqual(conflicts[0]["topic"], "PAYMENT_TERMS")
         self.assertEqual(conflicts[0]["conflict_type"], "AMBIGUOUS_CONTROLLING_INSTRUMENT")
 
+    def test_party_aliases_and_entity_resolution(self):
+        """Verify that first-class Party entity and aliases resolve accurately."""
+        from src.backend.db import Party, PartyAlias
+        party = Party(
+            tenant_id="tenant_party",
+            canonical_name="Acme Corporation",
+            jurisdiction="Delaware"
+        )
+        self.db.add(party)
+        self.db.flush()
+
+        alias = PartyAlias(
+            tenant_id="tenant_party",
+            party_id=party.id,
+            alias_name="ACME Inc."
+        )
+        self.db.add(alias)
+        self.db.flush()
+
+        ag = Agreement(
+            tenant_id="tenant_party",
+            party_id=party.id,
+            title="Acme Master Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="Acme Corporation",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        self.db.add(ag)
+        self.db.flush()
+
+        cl = Clause(
+            tenant_id="tenant_party",
+            agreement_id=ag.id,
+            section="Section 1",
+            topic="GOVERNING_LAW",
+            content="Governed by the laws of the State of Delaware.",
+            is_active=True
+        )
+        self.db.add(cl)
+        self.db.commit()
+
+        # Query using the alias
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_party",
+            counterparty="ACME Inc.",
+            topic="GOVERNING_LAW",
+            as_of_date="2024-06-01"
+        )
+        self.assertEqual(res["status"], "resolved")
+        self.assertEqual(res["controlling_clause"]["agreement_id"], ag.id)
+
+    def test_exact_section_scope_isolation(self):
+        """Verify that relation scope 'Section 4' does not misfire on 'Section 4.2'."""
+        ag1 = Agreement(
+            tenant_id="tenant_scope",
+            title="Base Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="ScopeVendor",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        ag_amd = Agreement(
+            tenant_id="tenant_scope",
+            title="Amendment 1",
+            instrument_type="amendment",
+            counterparty="ScopeVendor",
+            effective_date=datetime(2024, 2, 1),
+            status="active"
+        )
+        self.db.add_all([ag1, ag_amd])
+        self.db.flush()
+
+        cl_sec4 = Clause(
+            tenant_id="tenant_scope",
+            agreement_id=ag1.id,
+            section="Section 4",
+            topic="PAYMENT_TERMS",
+            content="Base Section 4: Net 30.",
+            is_active=True
+        )
+        cl_sec4_2 = Clause(
+            tenant_id="tenant_scope",
+            agreement_id=ag1.id,
+            section="Section 4.2",
+            topic="INTEREST_RATE",
+            content="Base Section 4.2: 1.5% per month.",
+            is_active=True
+        )
+        cl_amd = Clause(
+            tenant_id="tenant_scope",
+            agreement_id=ag_amd.id,
+            section="Section 1",
+            topic="PAYMENT_TERMS",
+            content="Amended Section 4: Net 45.",
+            is_active=True
+        )
+        self.db.add_all([cl_sec4, cl_sec4_2, cl_amd])
+
+        # Amendment targets specifically Section 4
+        rel = AgreementRelation(
+            tenant_id="tenant_scope",
+            source_agreement_id=ag_amd.id,
+            target_agreement_id=ag1.id,
+            relation_type="AMENDS",
+            clause_scope="Section 4",
+            scope_type="sections",
+            scope_sections=["Section 4"],
+            effective_date=datetime(2024, 2, 1)
+        )
+        self.db.add(rel)
+        self.db.commit()
+
+        # PAYMENT_TERMS (Section 4) should be amended by ag_amd
+        res_pay = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_scope",
+            counterparty="ScopeVendor",
+            topic="PAYMENT_TERMS",
+            as_of_date="2024-03-01"
+        )
+        self.assertEqual(res_pay["status"], "resolved")
+        self.assertEqual(res_pay["controlling_clause"]["agreement_id"], ag_amd.id)
+
+        # INTEREST_RATE (Section 4.2) should NOT be amended by ag_amd
+        res_rate = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_scope",
+            counterparty="ScopeVendor",
+            topic="INTEREST_RATE",
+            as_of_date="2024-03-01"
+        )
+        self.assertEqual(res_rate["status"], "resolved")
+        self.assertEqual(res_rate["controlling_clause"]["agreement_id"], ag1.id)
+        self.assertEqual(res_rate["controlling_clause"]["section"], "Section 4.2")
+
+    def test_dual_ended_effective_dating(self):
+        """Verify that effective_from and effective_to properly gate clause validity."""
+        ag = Agreement(
+            tenant_id="tenant_dates",
+            title="Time-Bounded Contract",
+            instrument_type="master_services_agreement",
+            counterparty="DatedVendor",
+            effective_from=datetime(2024, 1, 1),
+            effective_to=datetime(2024, 12, 31),
+            status="active"
+        )
+        self.db.add(ag)
+        self.db.flush()
+
+        cl = Clause(
+            tenant_id="tenant_dates",
+            agreement_id=ag.id,
+            section="Section 2",
+            topic="PRICING_FEES",
+            content="Pricing is $1,000/mo.",
+            is_active=True
+        )
+        self.db.add(cl)
+        self.db.commit()
+
+        # Active in mid 2024
+        res_in = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_dates",
+            counterparty="DatedVendor",
+            topic="PRICING_FEES",
+            as_of_date="2024-06-01"
+        )
+        self.assertEqual(res_in["status"], "resolved")
+
+        # Expired in 2025
+        res_out = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_dates",
+            counterparty="DatedVendor",
+            topic="PRICING_FEES",
+            as_of_date="2025-01-01"
+        )
+        self.assertEqual(res_out["status"], "all_authorities_superseded")
+
+    def test_deal_playbook_topic_precedence(self):
+        """Verify that DealPlaybook overrides default topic precedence."""
+        from src.backend.db import DealPlaybook
+        pb = DealPlaybook(
+            tenant_id="tenant_pb",
+            playbook_name="procurement_heavy",
+            sow_controlling_topics=["LIMITATION_OF_LIABILITY"],  # SOW controls liability in this playbook
+            master_controlling_topics=["PAYMENT_TERMS"]
+        )
+        self.db.add(pb)
+
+        ag_msa = Agreement(
+            tenant_id="tenant_pb",
+            title="Master Agreement",
+            instrument_type="master_services_agreement",
+            counterparty="PlaybookCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        ag_sow = Agreement(
+            tenant_id="tenant_pb",
+            title="Statement of Work 1",
+            instrument_type="statement_of_work",
+            counterparty="PlaybookCorp",
+            effective_date=datetime(2024, 1, 1),
+            status="active"
+        )
+        self.db.add_all([ag_msa, ag_sow])
+        self.db.flush()
+
+        cl_msa = Clause(
+            tenant_id="tenant_pb",
+            agreement_id=ag_msa.id,
+            section="Section 8",
+            topic="LIMITATION_OF_LIABILITY",
+            content="MSA Liability cap: 12 months fees.",
+            is_active=True
+        )
+        cl_sow = Clause(
+            tenant_id="tenant_pb",
+            agreement_id=ag_sow.id,
+            section="Section 4",
+            topic="LIMITATION_OF_LIABILITY",
+            content="SOW Liability cap: $500,000.",
+            is_active=True
+        )
+        self.db.add_all([cl_msa, cl_sow])
+
+        rel = AgreementRelation(
+            tenant_id="tenant_pb",
+            source_agreement_id=ag_sow.id,
+            target_agreement_id=ag_msa.id,
+            relation_type="SCHEDULE_OF",
+            effective_date=datetime(2024, 1, 1)
+        )
+        self.db.add(rel)
+        self.db.commit()
+
+        res = resolve_controlling_clause(
+            db=self.db,
+            tenant_id="tenant_pb",
+            counterparty="PlaybookCorp",
+            topic="LIMITATION_OF_LIABILITY",
+            as_of_date="2024-06-01"
+        )
+        # SOW should win because DealPlaybook specifies LIMITATION_OF_LIABILITY is in sow_controlling_topics
+        self.assertEqual(res["status"], "resolved")
+        self.assertEqual(res["controlling_clause"]["agreement_id"], ag_sow.id)
+
 
 if __name__ == "__main__":
     unittest.main()
+

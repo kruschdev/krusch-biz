@@ -126,12 +126,12 @@ def to_utc_date(val: Any) -> date:
 
 
 def normalize_section(section: str | None) -> str:
-    """Normalize section locator string (e.g. 'Section 4.1', '§4.1', '4.1' -> '4.1')."""
+    """Normalize section locator string (e.g. 'Section 4.1', 'Section 6.', '§4.1', '4.1' -> '4.1')."""
     if not section:
         return ""
     cleaned = section.strip().lower()
     cleaned = re.sub(r"^(?:section|clause|schedule|article|exhibit|§)\s*", "", cleaned)
-    return cleaned.strip()
+    return cleaned.strip(" .:")
 
 
 def compute_clause_uid(
@@ -154,11 +154,39 @@ def compute_clause_uid(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def is_scope_match(clause_scope: str | None, clause: Clause, topic: str) -> bool:
+def is_scope_match(scope_obj: Any, clause: Clause, topic: str) -> bool:
     """
-    Verify if a relation's clause_scope governs a specific clause or topic.
-    Returns True if clause_scope is None/ALL, or matches the section or topic.
+    Verify if a relation's scope governs a specific clause or topic.
+    Supports structured scope attributes (scope_type, scope_topics, scope_sections) on AgreementRelation,
+    as well as string clause_scope. Enforces strict exact normalized section matching so 'Section 4'
+    cannot falsely govern 'Section 4.2'.
     """
+    if scope_obj is None:
+        return True
+
+    # 1. Structured Scope Evaluation on AgreementRelation model
+    if hasattr(scope_obj, "scope_type"):
+        s_type = (getattr(scope_obj, "scope_type", None) or "ALL").upper()
+        if s_type in ("ALL", "*"):
+            return True
+        if s_type == "TOPICS":
+            t_list = [t.upper() for t in (getattr(scope_obj, "scope_topics", []) or [])]
+            return topic.upper() in t_list
+        if s_type == "SECTIONS":
+            sec_list = [normalize_section(s) for s in (getattr(scope_obj, "scope_sections", []) or [])]
+            c_sec = normalize_section(clause.section)
+            return bool(c_sec and c_sec in sec_list)
+        if s_type == "EXHIBITS":
+            ex_list = [ex.lower() for ex in (getattr(scope_obj, "scope_exhibits", []) or [])]
+            c_sec_raw = (clause.section or "").lower()
+            c_title_raw = (clause.title or "").lower()
+            return any(ex in c_sec_raw or ex in c_title_raw for ex in ex_list)
+        clause_scope = getattr(scope_obj, "clause_scope", None)
+    elif isinstance(scope_obj, str):
+        clause_scope = scope_obj
+    else:
+        clause_scope = None
+
     if not clause_scope or clause_scope.strip().upper() in ("ALL", "*"):
         return True
 
@@ -171,7 +199,7 @@ def is_scope_match(clause_scope: str | None, clause: Clause, topic: str) -> bool
     if scope.upper() == topic.upper():
         return True
 
-    # Section-level scope, e.g. "Section 4.1", "§4.1", "4.1"
+    # Section-level scope: Strict normalized exact match prevents '4' matching '4.2'
     if clause.section:
         c_sec = clause.section.strip().lower()
         if scope == c_sec:
@@ -182,7 +210,7 @@ def is_scope_match(clause_scope: str | None, clause: Clause, topic: str) -> bool
             return True
 
     # Check if clause title matches scope
-    if clause.title and scope in clause.title.strip().lower():
+    if clause.title and scope == clause.title.strip().lower():
         return True
 
     return False
@@ -190,15 +218,49 @@ def is_scope_match(clause_scope: str | None, clause: Clause, topic: str) -> bool
 
 def get_party_agreements(db: Session, tenant_id: str, counterparty: str) -> list[Agreement]:
     """
-    Fetch agreements for a strictly matched counterparty.
+    Fetch agreements for a strictly matched counterparty entity or alias.
+    Resolves canonical Party entity and PartyAlias records if present.
     STRICT SECURITY INVARIANT: Zero fallback to all tenant agreements.
     """
+    from .db import Party, PartyAlias
+
+    norm_target = normalize_party_name(counterparty)
+
+    # 1. Check if counterparty matches a first-class Party entity or PartyAlias
+    party = db.query(Party).filter(
+        Party.tenant_id == tenant_id,
+        (Party.canonical_name.ilike(counterparty.strip()) |
+         Party.canonical_name.ilike(norm_target))
+    ).first()
+
+    if not party:
+        alias = db.query(PartyAlias).filter(
+            PartyAlias.tenant_id == tenant_id,
+            (PartyAlias.alias_name.ilike(counterparty.strip()) |
+             PartyAlias.alias_name.ilike(norm_target))
+        ).first()
+        if alias:
+            party = alias.party
+
     all_agreements = db.query(Agreement).filter(
         Agreement.tenant_id == tenant_id
     ).all()
 
     matched = []
     for ag in all_agreements:
+        # Match via first-class Party entity link
+        if party and ag.party_id is not None and ag.party_id == party.id:
+            matched.append(ag)
+            continue
+        # Match via party aliases if party entity exists
+        if party and ag.counterparty:
+            if any(is_party_match(ag.counterparty, a.alias_name) for a in party.aliases):
+                matched.append(ag)
+                continue
+            if is_party_match(ag.counterparty, party.canonical_name):
+                matched.append(ag)
+                continue
+        # Standard strict normalized string matching
         if is_party_match(ag.counterparty, counterparty):
             matched.append(ag)
 
@@ -393,11 +455,13 @@ def resolve_controlling_clause(
     for ag in agreements:
         if ag.status in ("terminated", "expired", "archived"):
             continue
-        if ag.effective_date is None:
+        eff_start = getattr(ag, "effective_from", None) or ag.effective_date or getattr(ag, "execution_date", None)
+        if eff_start is None:
             missing_dates = True
-        elif to_utc_date(ag.effective_date) > as_of:
+        elif to_utc_date(eff_start) > as_of:
             continue
-        if ag.expiration_date and to_utc_date(ag.expiration_date) <= as_of:
+        eff_end = getattr(ag, "effective_to", None) or getattr(ag, "termination_date", None) or ag.expiration_date
+        if eff_end and to_utc_date(eff_end) <= as_of:
             continue
         active_ag_ids.add(ag.id)
 
@@ -734,18 +798,45 @@ def resolve_controlling_clause(
         if pruned_terminals:
             unique_terminals = pruned_terminals
 
+    # 7b. Fail-Closed on Cycle Detection (Priority 3: Cycle is a data error, not a haircut)
+    has_cycle = supersedes_cycle or amends_cycle_detected
+    if has_cycle:
+        cycle_type = "SUPERSEDES" if supersedes_cycle else "AMENDS"
+        try:
+            from .db import ContractConflictRecord
+            conflict_rec = ContractConflictRecord(
+                tenant_id=tenant_id,
+                counterparty=counterparty,
+                topic=topic,
+                as_of_date=str(as_of) if as_of else "unspecified",
+                conflict_type="GRAPH_CYCLE",
+                missing_edge_type=cycle_type,
+                details=f"Cycle defect detected in {cycle_type} relation chain for counterparty '{counterparty}'."
+            )
+            db.add(conflict_rec)
+            db.commit()
+        except Exception as exc:
+            logger.warning(f"Could not persist ContractConflictRecord for GRAPH_CYCLE: {exc}")
+
+        return _finalize_result({
+            "status": "GRAPH_CYCLE",
+            "controlling_clause": None,
+            "amendment_trail": [],
+            "resolution_rationale": f"Data integrity error: Circular precedence dependency detected ({cycle_type} cycle). Precedence cannot be reliably determined.",
+            "confidence": 0.0
+        })
+
     # 8. Single Unambiguous Winner
     if len(unique_terminals) == 1:
         winner, trail, merged_slots = unique_terminals[0]
         ag_winner = ag_by_id.get(winner.agreement_id)
 
-        has_cycle = supersedes_cycle or amends_cycle_detected
         confidence = compute_resolution_confidence(
             trail=trail,
             has_competing_peers=False,
             missing_dates=missing_dates,
             is_keyword_fallback=is_keyword_fallback,
-            cycle_detected=has_cycle,
+            cycle_detected=False,
             base_confidence=0.85
         )
 
@@ -779,7 +870,11 @@ def resolve_controlling_clause(
             "confidence": confidence
         })
 
-    # 9. Multiple Surviving Candidates: Order of Precedence (SOW vs MSA)
+    # 9. Multiple Surviving Candidates: Order of Precedence (SOW vs MSA via DealPlaybook)
+    from .db import DealPlaybook
+    playbook = db.query(DealPlaybook).filter(DealPlaybook.tenant_id == tenant_id).first()
+    sow_topics = set(playbook.sow_controlling_topics) if (playbook and playbook.sow_controlling_topics) else SOW_CONTROLLING_TOPICS
+
     sow_candidate = None
     msa_candidate = None
     sow_trail = []
@@ -809,7 +904,7 @@ def resolve_controlling_clause(
             msa_slots = sl
 
     if sow_candidate and msa_candidate and len(unique_terminals) == 2:
-        if topic in SOW_CONTROLLING_TOPICS:
+        if topic in sow_topics:
             winner = sow_candidate
             trail = list(sow_trail)
             ag_winner = ag_by_id.get(winner.agreement_id)
@@ -907,6 +1002,32 @@ def resolve_controlling_clause(
             "effective_date": str(ag.effective_date) if ag and ag.effective_date else None,
             "content_snippet": cl.content[:150] + "..." if len(cl.content) > 150 else cl.content
         })
+
+    cand_a = unique_terminals[0][0] if len(unique_terminals) > 0 else None
+    cand_b = unique_terminals[1][0] if len(unique_terminals) > 1 else None
+    try:
+        from .db import ContractConflictRecord
+        conflict_rec = ContractConflictRecord(
+            tenant_id=tenant_id,
+            counterparty=counterparty,
+            topic=topic,
+            as_of_date=str(as_of) if as_of else "unspecified",
+            conflict_type="AMBIGUOUS_CONTROLLING_INSTRUMENT",
+            candidate_a_agreement_id=cand_a.agreement_id if cand_a else None,
+            candidate_a_clause_id=cand_a.id if cand_a else None,
+            candidate_b_agreement_id=cand_b.agreement_id if cand_b else None,
+            candidate_b_clause_id=cand_b.id if cand_b else None,
+            missing_edge_type="SUPERSEDES / AMENDS",
+            details=(
+                f"Found {len(unique_terminals)} concurrently active candidate clauses for topic '{topic}' "
+                f"without a governing amendment or precedence edge."
+            )
+        )
+        db.add(conflict_rec)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning(f"Could not persist ContractConflictRecord for AMBIGUOUS_CONTROLLING_INSTRUMENT: {exc}")
 
     return _finalize_result({
         "status": "ambiguous",

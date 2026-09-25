@@ -25,10 +25,11 @@ Runs completely self-contained in <1 second with zero external dependencies.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 # Ensure project root is in sys.path

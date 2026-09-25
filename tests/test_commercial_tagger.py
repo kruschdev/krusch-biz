@@ -156,6 +156,25 @@ class TestCommercialTagger(unittest.TestCase):
             self.assertEqual(res1, res2)
             self.assertEqual(mock_post.call_count, 1, "Cache hit should not trigger additional HTTP request!")
 
+    def test_12_reject_llm_invented_numeric_tags(self):
+        """Enforce invariant: Never let the LLM tagger invent a number the regex did not see."""
+        content = "Section 4.1 Payment Terms: Invoices shall be paid within thirty (30) days ('Net 30')."
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # LLM invents a fabricated numeric tag 'net-90' and 'cap-10m'
+        mock_resp.json.return_value = {
+            "response": '{"summary": "Payment terms summary.", "tags": ["payment-terms", "net-90", "cap-10m", "general-billing"], "topic": "PAYMENT_TERMS"}'
+        }
+
+        with patch("httpx.Client.post", return_value=mock_resp):
+            res = tag_commercial_chunk(content, filename="terms.pdf", locator="Section 4.1", use_llm=True)
+            # Legitimate regex slot tag 'net-30' is present
+            self.assertIn("net-30", res["tags"])
+            self.assertIn("payment-terms", res["tags"])
+            # Fabricated numeric tags MUST be rejected!
+            self.assertNotIn("net-90", res["tags"])
+            self.assertNotIn("cap-10m", res["tags"])
+
 
 if __name__ == "__main__":
     unittest.main()

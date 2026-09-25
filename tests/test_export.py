@@ -72,6 +72,43 @@ class TestExport(unittest.TestCase):
         self.assertIn("APPENDIX B: TABLE OF CONTRACTUAL AUTHORITIES RETRIEVED", md)
         self.assertIn("Section 10.1", md)
 
+    def test_03_generate_what_controls_export(self):
+        from src.backend.export import generate_what_controls_export
+        resolutions = [
+            {
+                "topic": "PAYMENT_TERMS",
+                "status": "resolved",
+                "confidence": 0.95,
+                "controlling_clause": {
+                    "agreement_title": "Master Services Agreement",
+                    "section": "Section 4.1",
+                    "structured_slots": {"net_days": 30}
+                },
+                "amendment_trail": [
+                    {
+                        "relation": "AMENDS",
+                        "scope": "Section 4.1",
+                        "from_agreement_title": "Amendment No. 1",
+                        "to_agreement_title": "Master Services Agreement",
+                        "effective_date": "2024-02-01"
+                    }
+                ],
+                "resolution_rationale": "Resolved via explicit 1-hop amendment walk."
+            }
+        ]
+        res = generate_what_controls_export(
+            counterparty="VendorCorp",
+            as_of_date="2024-06-01",
+            resolutions=resolutions
+        )
+        self.assertEqual(res["counterparty"], "VendorCorp")
+        self.assertEqual(res["as_of_date"], "2024-06-01")
+        self.assertEqual(res["topics_evaluated"], 1)
+        self.assertIn("GENERAL COUNSEL CONTROLLING TERMS MEMORANDUM", res["markdown"])
+        self.assertIn("VendorCorp", res["markdown"])
+        self.assertIn("PAYMENT_TERMS", res["markdown"])
+        self.assertIn("AMENDMENT PRECEDENCE LINEAGE & AUDIT TRAIL", res["markdown"])
+
 
 if __name__ == "__main__":
     unittest.main()

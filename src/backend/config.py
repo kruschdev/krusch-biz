@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     # Models
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-large")
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", os.getenv("OLLAMA_EMBED_MODEL", "bge-large"))
     OLLAMA_LLM_MODEL: str = os.getenv("OLLAMA_LLM_MODEL", "qwen2.5-coder:7b")
     TAGGER_MODEL: str = os.getenv("TAGGER_MODEL", "qwen2.5-coder:7b")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))

@@ -427,6 +427,121 @@ def generate_brief_markdown(
     return "\n".join(lines)
 
 
+def generate_what_controls_export(
+    counterparty: str,
+    as_of_date: str,
+    resolutions: list[dict[str, Any]],
+    tenant_id: str = "org_default"
+) -> dict[str, Any]:
+    """
+    Generate an authoritative 1-page 'What Controls as of DATE' legal memorandum and JSON artifact
+    for General Counsel filing and deal audit trails.
+    """
+    now_str = datetime.now().strftime("%B %d, %Y")
+    md_lines = [
+        "# GENERAL COUNSEL CONTROLLING TERMS MEMORANDUM",
+        "**Subject**: Operative Precedence & Controlling Terms Analysis  ",
+        f"**Counterparty**: {counterparty}  ",
+        f"**Governing Effective Date (As-Of)**: {as_of_date}  ",
+        f"**Export Generated**: {now_str} (Tenant: {tenant_id})  ",
+        "\n---\n",
+        "## EXECUTIVE CONTROLLING TERMS SUMMARY\n",
+        "| Commercial Topic | Controlling Instrument | Section | Status | Confidence | Operative Terms Summary |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- |"
+    ]
+
+    export_items = []
+    amendment_lineages = []
+    unresolved_conflicts = []
+
+    for item in resolutions:
+        topic = item.get("topic", "UNKNOWN")
+        status = item.get("status", "unknown")
+        confidence = item.get("confidence", 0.0)
+        winner = item.get("controlling_clause") or {}
+        trail = item.get("amendment_trail") or []
+        rationale = item.get("resolution_rationale", "")
+
+        inst_name = winner.get("agreement_title") or "None"
+        section = winner.get("section") or "N/A"
+        slots = winner.get("structured_slots") or {}
+        slots_str = ", ".join(f"{k}={v}" for k, v in slots.items()) if slots else "Qualitative clause"
+
+        status_badge = f"**{status.upper()}**"
+        conf_str = f"{int(confidence * 100)}%"
+
+        md_lines.append(f"| {topic} | {inst_name} | {section} | {status_badge} | {conf_str} | {slots_str} |")
+
+        if trail:
+            amendment_lineages.append({
+                "topic": topic,
+                "winner": f"{inst_name} ({section})",
+                "hops": trail
+            })
+
+        if status in ("ambiguous", "GRAPH_CYCLE", "all_authorities_superseded"):
+            unresolved_conflicts.append({
+                "topic": topic,
+                "status": status,
+                "rationale": rationale,
+                "candidates": item.get("conflicting_candidates", [])
+            })
+
+        export_items.append({
+            "topic": topic,
+            "status": status,
+            "confidence": confidence,
+            "controlling_instrument": inst_name,
+            "section": section,
+            "structured_slots": slots,
+            "resolution_rationale": rationale,
+            "amendment_trail": trail
+        })
+
+    md_lines.append("\n---\n")
+
+    if amendment_lineages:
+        md_lines.append("## AMENDMENT PRECEDENCE LINEAGE & AUDIT TRAIL\n")
+        for lineage in amendment_lineages:
+            md_lines.append(f"### Topic: {lineage['topic']} (Controls: {lineage['winner']})")
+            for i, hop in enumerate(lineage["hops"], start=1):
+                rel = hop.get("relation", "MODIFIES")
+                scope = hop.get("scope", "ALL")
+                from_inst = hop.get("from_agreement_title", "Agreement")
+                to_inst = hop.get("to_agreement_title", "Agreement")
+                eff = hop.get("effective_date", "unspecified")
+                md_lines.append(f"- **Hop {i}**: `{from_inst}` ➔ [{rel} (scope: {scope}, eff: {eff})] ➔ `{to_inst}`")
+            md_lines.append("")
+        md_lines.append("---\n")
+
+    if unresolved_conflicts:
+        md_lines.append("## UNRESOLVED AMBIGUITIES & CONFLICT DEFECTS\n")
+        for conf in unresolved_conflicts:
+            md_lines.append(f"⚠️ **Topic '{conf['topic']}'**: {conf['status']} — {conf['rationale']}")
+            if conf["candidates"]:
+                for c in conf["candidates"]:
+                    md_lines.append(f"  - Candidate: {c.get('agreement_title')} ({c.get('section')})")
+        md_lines.append("\n---\n")
+
+    md_lines.append("### Corporate Legal Disclaimer\n")
+    md_lines.append("> This document is a machine-generated analysis of recorded and confirmed contractual precedence edges. "
+                    "It constitutes corporate intelligence work product and does not replace formal legal advice from qualified outside counsel.\n")
+
+    full_markdown = "\n".join(md_lines)
+
+    return {
+        "counterparty": counterparty,
+        "as_of_date": as_of_date,
+        "tenant_id": tenant_id,
+        "generated_at": now_str,
+        "topics_evaluated": len(resolutions),
+        "resolutions": export_items,
+        "unresolved_conflicts": unresolved_conflicts,
+        "markdown": full_markdown
+    }
+
+
 # Aliases for backward compatibility and canonical export naming
 export_executive_memo_docx = generate_brief_docx
 export_executive_memo_markdown = generate_brief_markdown
+

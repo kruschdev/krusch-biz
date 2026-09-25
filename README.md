@@ -4,12 +4,12 @@
 > *Private corporate contract retrieval, relational contract graph walking, commercial assertion-level grounding verification, and audit-logged executive decision intelligence using on-premise open-weight models and the sovereign KruschNexus ingestion spine.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version: 0.6.0](https://img.shields.io/badge/Version-0.6.0-green.svg)](https://github.com/kruschdev/krusch-biz)
+[![Version: 0.1.0-alpha.1](https://img.shields.io/badge/Version-0.1.0--alpha.1-blue.svg)](https://github.com/kruschdev/krusch-biz)
 [![Python 3.11 | 3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 144 Passing](https://img.shields.io/badge/Tests-144%20Passing-brightgreen.svg)](tests/)
+[![Tests: 162 Passing](https://img.shields.io/badge/Tests-162%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: 4/4 Passing](https://img.shields.io/badge/CI%20Gates-4%2F4%20Passing-brightgreen.svg)](scripts/eval_adversarial_corpus.py)
 
 ---
@@ -170,9 +170,10 @@ When retrieving deal exhibits or searching operative agreements (`src/backend/ra
 * `GET /api/deals/{deal_id}/evidence`: Enriched deal exhibits with tags, summary, and canonical topics.
 * `GET /api/clauses`: Clause search with topic, tag, and as-of date temporal filtering.
 * `POST /api/consult`: Transitive precedence DAG walk determining controlling clauses for `(counterparty, topic, as_of_date)`.
+* `POST /api/resolver/what-controls-export`: Generate comprehensive 1-page "What Controls as of DATE" GC legal memo and audit artifact across commercial topics.
 * `POST /api/verify`: Assertion-level proposition grounding scanner returning a 6-way verification taxonomy.
 * `GET /api/relations`: Query relation edges filtered by status (`proposed`, `confirmed`, `rejected`) and agreement.
-* `PATCH /api/relations/{relation_id}`: Human-in-the-loop review endpoint to confirm, reject, or edit proposed relation types and scopes.
+* `PATCH /api/relations/{relation_id}`: Human-in-the-loop review endpoint to confirm, reject, or edit proposed relation types, scopes, and dates.
 * `DELETE /api/relations/{relation_id}`: Delete an erroneous relation edge.
 * `POST /api/conflicts/contract-vs-statute`: The Join: evaluate contractual slots against statutory floors and ceilings.
 * `GET /api/evaluation/adversarial`: Retrieve the live 4-metric adversarial scorecard across 7 multi-document families.
@@ -185,7 +186,7 @@ When retrieving deal exhibits or searching operative agreements (`src/backend/ra
                                 ┌────────────────────────────────┐       ┌────────────────────────────────┐
                                 │     KruschBiz Web Dashboard    │       │     IDE Agents / Subagents     │
                                 │  (Streamlit / 127.0.0.1:8506)  │       │ (Claude / Antigravity / Wind)  │
-                                │  *Executive Navy/Gold Styling* │       │  *6 Canonical Tools (~950 tok)*│
+                                │  *Executive Navy/Gold Styling* │       │  *4 Canonical Tools (~650 tok)*│
                                 └──────────────┬─────────────────┘       └──────────────┬─────────────────┘
                                                │ REST (CORS Restricted)                 │ Stdio JSON-RPC
                                                │                         ┌──────────────▼─────────────────┐
@@ -196,10 +197,10 @@ When retrieving deal exhibits or searching operative agreements (`src/backend/ra
                                 ┌──────────────▼────────────────────────────────────────▼─┐
                                 │                   KruschBiz Backend                     │
                                 │              (FastAPI / 127.0.0.1:8086)                 │
-                                │      *Relational Graph, Grounding & Commercial Ops*     │
+                                │         *Relational Graph, Resolver & Grounding*        │
                                 └───┬──────────────────────┬──────────────────────────┬───┘
                                     │                      │                          │
-                     SQL / pgvector │                      │ Nexus Spine / OCR        │ Local HTTP
+                     SQL / pgvector │                      │ Nexus Spine / Ingest     │ Local HTTP
                                     │                      │ Standalone               │
          ┌──────────────────────────▼───┐              ┌───▼───────────┐  ┌───────────▼──────────────┐
          │   PostgreSQL 16 + pgvector   │              │  Nexus Adapter│  │     Local Ollama Node    │
@@ -342,7 +343,7 @@ KruschBiz is evaluated against an adversarial public fixture corpus of 7 complex
 6. Similar counterparties with subtle corporate entity suffixes (Inc vs LLC vs Ltd).
 7. Conflicting entire agreement / merger clauses.
 
-The engine is benchmarked across **4 uncoupled, objective metrics**:
+The engine is benchmarked across **4 uncoupled, objective metrics** under the **Fixture Verification** evaluation class (deterministic CI validation against `data/eval/adversarial_corpus.json` with recorded SHA-256 fixture hash `6b5d2931...`; distinct from Gate 3 Held-Out evaluations):
 
 | Metric | Target | Measured Score | Evaluation Notes |
 |---|---|---|---|
@@ -352,7 +353,7 @@ The engine is benchmarked across **4 uncoupled, objective metrics**:
 | **4. Proposition Grounding Accuracy** | > 90.0% | **100.0%** (28/28) | Multi-class grounding verification (`VERIFIED`, `DIVERGENT_TERM`, `INVENTED_CLAUSE`, `SUPERSEDED_TERM`) |
 
 ```bash
-# Execute adversarial benchmark suite (publishes live scorecard to data/eval/adversarial_scorecard.json)
+# Execute adversarial fixture verification suite (publishes live scorecard to data/eval/adversarial_eval_results.json)
 python3 scripts/eval_adversarial_corpus.py
 
 # Run automated pytest verification gates
@@ -414,7 +415,7 @@ KruschBiz enforces defense-in-depth security to protect confidential commercial 
 ## 🧪 Automated Testing & CI Gates
 
 ```bash
-# Run full unit, integration, graph invariant, compliance join, tagger, security, and tenant isolation test suite (144 tests)
+# Run full unit, integration, graph invariant, compliance join, tagger, security, and tenant isolation test suite (162 tests)
 pytest tests
 
 # Run golden precedence graph invariant tests (confirmed-edge walk, draft isolation, hierarchy)

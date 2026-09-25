@@ -27,35 +27,27 @@ KruschBiz is an on-premise, air-gapped corporate intelligence engine and version
    - **Pydantic Serialization**: SQLite/Postgres text columns storing JSON tags must utilize `@field_validator("tags", mode="before")` on Pydantic schemas (e.g., `DealEvidenceItem`) to transparently deserialize raw JSON strings into typed string lists.
    - **Air-Gapped Sovereign Model**: Use local Ollama `qwen2.5-coder:7b` with a 15.0s timeout and immediate deterministic fallback. Zero external network calls.
 
-7. **Commercial Operations & DraftPro Invariants**:
-   - **Contract Portfolio**: Track vendor agreements, expiration dates, renewal terms, and auto-renew flags with proactive alert thresholds (e.g. 30/60/90 days).
-   - **Invoicing & Accounts Receivable**: Dual-storage JSON line items, automated subtotal, tax rate, and total calculation. Support status lifecycle (`draft`, `sent`, `paid`, `overdue`, `cancelled`) with automated aging breakdown (current, 1-30d, 31-60d, 61-90d, 90d+).
-   - **Invoice & Document OCR Parsing**: Safe heuristic regex parser with date and currency sanitization, MIME validation, 20MB file cap, and confidence scoring.
-   - **DraftPro Commercial Templates**: 5 core templates (`commercial_nda`, `master_services_agreement`, `statement_of_work`, `independent_contractor`, `commercial_demand_letter`). Strict field validation, dynamic math computation (e.g. demand letter total due), and legal revision engine.
-8. **MCP Canonical Consolidation & Anti-Tool-Bloat Standard**:
-   - **6 Canonical Tools**: To prevent context window bloat (~950 tokens vs ~3,500 tokens) and tool routing confusion on local 7B/14B models, `TOOLS_CATALOG` exposes strictly 6 high-leverage canonical tools: `contract_intelligence`, `manage_deal`, `vendor_portfolio`, `accounts_receivable`, `commercial_drafting`, and `document_pipeline`.
-   - **Backwards-Compatible Dispatch**: The MCP dispatcher maintains transparent routing for both the 6 canonical tools and all 16 legacy granular tool names, preventing breaks in existing integrations.
-   - **Separation of Concerns**: The database and FastAPI routes handle arithmetic, relational state, and ground truth; the agent and MCP layer handle reasoning and communicative interface.
-
-9. **Precedence Graph Hardening, Draft Isolation & The Join**:
+7. **Confirmed-Edge Relational Graph & Draft Isolation Invariants**:
    - **Confirmed Edges Only**: Auto-extracted relations remain `status='proposed'` and never silently control DAG traversal; only human-confirmed edges (`status='confirmed'|'accepted'`) control.
    - **Draft Isolation**: Unexecuted drafts (`execution_status='draft'`) cannot defeat, supersede, or amend executed agreements.
    - **Hierarchical Governance**: Master agreements (MSAs) outrank SOWs/schedules on general governance provisions unless an explicit clause-level carve-out exists.
-   - **The Join (`POST /conflicts/contract-vs-statute`)**: Directly compares controlling contract clause slots against statutory floors and ceilings (e.g., California AB 12 security deposit caps, Civ. Code § 1954 24-hr entry notice floor).
    - **Audit Trace**: Immutable `ResolutionTraceRecord` with cryptographic timestamps persisted to the database on every consult.
 
-10. **Sovereign 5-Verb Gateway MCP Router (`src/mcp/gateway.py`)**:
-    - **Prompt Token Budget**: Single consolidated gateway strictly constrained to <450 prompt tokens (~428 tokens) for local 7B/14B inference without prompt bloat.
-    - **Core Verbs**: `ask_law`, `ask_biz`, `check_compliance`, `ingest`, `purge`.
-    - **Orchestrator Invariants (`docs/ORCHESTRATOR_SPEC.md`)**:
-      - Canonical `matter_ref` ↔ `deal_ref` cross-domain mapping.
-      - Never union law and contract vector tables (clean schema separation).
-      - Mandatory `as_of_date` on every consult.
-      - Deterministic typed number evaluation over LLM math.
+8. **MCP Catalog & Sovereign Gateway Standards**:
+   - **Core Domain MCP Tools**: `src/mcp/server.py` exposes strictly 4 core domain tools: `contract_intelligence`, `manage_deal`, `ingest_contract`, and `verify_grounding`. Zero ops, invoicing, or legacy drafting tools.
+   - **Sovereign 5-Verb Gateway MCP Router (`src/mcp/gateway.py`)**: Consolidated cross-domain router strictly constrained to <450 prompt tokens (~428 tokens) for local 7B/14B inference (`ask_biz`, `ask_law`, `check_compliance`, `ingest`, `purge`).
+   - **Orchestrator Invariants (`docs/ORCHESTRATOR_SPEC.md`)**:
+     - Canonical `matter_ref` ↔ `deal_ref` cross-domain mapping.
+     - Never union law and contract vector tables (clean schema separation).
+     - Mandatory `as_of_date` on every consult.
+     - Deterministic typed number evaluation over LLM math.
 
 ## Testing Commands
 ```bash
-# Run full unit, integration, precedence graph, The Join, and MCP test suite (145 tests)
+# Discover canonical test count
+pytest --collect-only -q
+
+# Run full core test suite
 pytest tests
 
 # Run precedence graph and draft isolation tests
@@ -67,11 +59,8 @@ pytest tests/test_the_join.py
 # Run 5-verb Gateway MCP router tests
 pytest tests/test_gateway_mcp.py
 
-# Run canonical 6-tool MCP server tests
+# Run canonical 4-tool MCP server tests
 pytest tests/test_mcp.py
-
-# Run commercial operations and DraftPro test suites
-pytest tests/test_business_ops.py tests/test_business_ocr.py tests/test_business_templates.py
 
 # Run commercial tagger and deal evidence tests
 pytest tests/test_commercial_tagger.py tests/test_deal_evidence.py
