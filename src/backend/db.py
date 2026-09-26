@@ -107,7 +107,7 @@ else:
 
 try:
     engine = create_engine(settings.DATABASE_URL, **engine_kwargs)
-except (ImportError, Exception) as exc:
+except (ImportError, Exception):
     import os
     demo_db = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "demo.db")
     fallback_uri = f"sqlite:///{demo_db}" if os.path.exists(demo_db) else "sqlite:///kruschbiz.db"
