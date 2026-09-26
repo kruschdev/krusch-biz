@@ -30,7 +30,7 @@ except ImportError:
 
 @dataclass
 class ParsedPage:
-    page_number: int
+    page_number: int | None
     text: str
     tables: list[list[str]] = field(default_factory=list)
 
@@ -76,7 +76,9 @@ def parse_document(file_path: str) -> ParsedDocument:
             res = kn_parsers.parse_document(file_path, filename)
             pages = []
             for p in getattr(res, "pages", []):
-                p_num = getattr(p, "page_number", 1)
+                p_num = getattr(p, "page_number", None)
+                if p_num is None:
+                    p_num = getattr(p, "index", None)
                 p_text = getattr(p, "text", "")
                 p_tables = getattr(p, "tables", [])
                 pages.append(ParsedPage(page_number=p_num, text=p_text, tables=p_tables))
@@ -162,8 +164,8 @@ def chunk_document(
             continue
 
         raw_sections = section_pattern.split(text)
-        p_num = page.page_number if page.page_number is not None else 1
-        current_section_locator = f"p. {p_num}"
+        p_num = page.page_number
+        current_section_locator = f"p. {p_num}" if p_num is not None else "General"
 
         for block in raw_sections:
             block = block.strip()
