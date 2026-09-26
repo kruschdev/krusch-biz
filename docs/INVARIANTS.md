@@ -111,6 +111,18 @@
   pytest tests/test_api.py tests/test_mcp.py
   ```
 
+### INV-10: Legal Hold Preservation & Strict Data Residency
+* **Requirement**: Deals, matters, or agreements flagged with `legal_hold=True` must reject destructive purge operations fail-closed with HTTP 423 (Locked) to prevent spoliation of evidence. Production databases must reside strictly on loopback unless explicitly overridden with `ALLOW_LAN=1`.
+* **Behavior**:
+  - `purge_deal_matter_transactional` and `purge_agreement_transactional` raise `PermissionError("CANNOT_PURGE_LEGAL_HOLD_ACTIVE")` when target records are on hold.
+  - REST endpoints (`/api/deals/{id}/hard-delete`, `/api/agreements/{id}`) return HTTP 423 Locked.
+  - `/api/deals/{id}/export-hold-bundle` exports complete evidentiary manifests with SHA-256 integrity verification.
+  - Production server fails boot if `DATABASE_URL` targets non-loopback host without `ALLOW_LAN=1`.
+* **Verification Command**:
+  ```bash
+  pytest tests/test_security_hardening.py -k "test_13 or test_14 or test_15"
+  ```
+
 ---
 
 ## 🚀 Running the Full Invariant Suite
