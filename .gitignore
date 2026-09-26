@@ -40,6 +40,7 @@ venv*/
 *.sqlite3-wal
 *.sqlite3-shm
 *.db
+!data/demo.db
 *.db-journal
 *.db-wal
 *.db-shm

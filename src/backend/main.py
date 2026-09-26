@@ -48,6 +48,7 @@ from .db import (
     SessionLocal,
     get_db,
     init_db,
+    purge_agreement_transactional,
     purge_deal_matter_transactional,
 )
 from .export import export_executive_memo_docx, export_executive_memo_markdown
@@ -533,7 +534,16 @@ def hard_delete_deal(
                 detail=f"Typed confirmation failed: 'confirm_deal_code' must match '{deal.deal_code}'."
             )
 
-    purge_stats = purge_deal_matter_transactional(db, x_tenant_id, deal_id)
+    if deal.legal_hold:
+        raise HTTPException(
+            status_code=423,
+            detail=f"CANNOT_PURGE_LEGAL_HOLD_ACTIVE: Deal matter #{deal_id} ('{deal.title}') is under active legal hold."
+        )
+
+    try:
+        purge_stats = purge_deal_matter_transactional(db, x_tenant_id, deal_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=423, detail=str(pe))
 
     actor_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "anonymous"
     audit = AuditLog(
@@ -965,6 +975,217 @@ def list_resolution_traces(
         }
         for r in records
     ]
+
+
+@app.get("/api/resolution-traces/{trace_id}")
+def get_resolution_trace(
+    trace_id: str,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Retrieve an immutable resolution trace by ID with strict tenant isolation."""
+    record = db.query(ResolutionTraceRecord).filter(
+        ResolutionTraceRecord.id == trace_id,
+        ResolutionTraceRecord.tenant_id == x_tenant_id
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Resolution trace #{trace_id} not found.")
+    return {
+        "id": record.id,
+        "tenant_id": record.tenant_id,
+        "counterparty": record.counterparty,
+        "topic": record.topic,
+        "as_of_date": record.as_of_date,
+        "status": record.status,
+        "controlling_agreement_id": record.controlling_agreement_id,
+        "controlling_clause_id": record.controlling_clause_id,
+        "confidence": record.confidence,
+        "resolution_rationale": record.resolution_rationale,
+        "trace_payload": record.trace_payload,
+        "created_at": record.created_at.isoformat() if record.created_at else None
+    }
+
+
+@app.delete("/api/agreements/{agreement_id}")
+def delete_agreement(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Atomically purge an agreement and its clauses, relations, and vectors."""
+    ag = db.query(Agreement).filter(
+        Agreement.id == agreement_id,
+        Agreement.tenant_id == x_tenant_id
+    ).first()
+    if not ag:
+        raise HTTPException(status_code=404, detail=f"Agreement #{agreement_id} not found.")
+    if ag.legal_hold:
+        raise HTTPException(
+            status_code=423,
+            detail=f"CANNOT_PURGE_LEGAL_HOLD_ACTIVE: Agreement #{agreement_id} ('{ag.title}') is under active legal hold."
+        )
+    try:
+        purge_stats = purge_agreement_transactional(db, x_tenant_id, agreement_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=423, detail=str(pe))
+
+    actor_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "anonymous"
+    audit = AuditLog(
+        tenant_id=x_tenant_id,
+        action="delete_agreement",
+        actor_key_hash=actor_hash,
+        duration_ms=0,
+        grounding_verdict=f"DELETED_AGREEMENT_{agreement_id}"
+    )
+    db.add(audit)
+    db.commit()
+    return {
+        "status": "success",
+        "message": f"Agreement #{agreement_id} permanently purged.",
+        "purge_stats": purge_stats
+    }
+
+
+@app.post("/api/deals/{deal_id}/legal-hold")
+def set_deal_legal_hold(
+    deal_id: int,
+    payload: dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Set or release legal hold status for a deal matter."""
+    deal = db.query(DealMatter).filter(
+        DealMatter.id == deal_id,
+        DealMatter.tenant_id == x_tenant_id
+    ).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
+    hold_val = bool(payload.get("legal_hold", True))
+    deal.legal_hold = hold_val
+    actor_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "anonymous"
+    audit = AuditLog(
+        tenant_id=x_tenant_id,
+        action="set_deal_legal_hold",
+        actor_key_hash=actor_hash,
+        deal_id=deal_id,
+        duration_ms=0,
+        grounding_verdict=f"LEGAL_HOLD_{'ACTIVE' if hold_val else 'RELEASED'}"
+    )
+    db.add(audit)
+    db.commit()
+    return {"deal_id": deal_id, "legal_hold": deal.legal_hold, "status": "updated"}
+
+
+@app.post("/api/agreements/{agreement_id}/legal-hold")
+def set_agreement_legal_hold(
+    agreement_id: int,
+    payload: dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Set or release legal hold status for an agreement."""
+    ag = db.query(Agreement).filter(
+        Agreement.id == agreement_id,
+        Agreement.tenant_id == x_tenant_id
+    ).first()
+    if not ag:
+        raise HTTPException(status_code=404, detail=f"Agreement #{agreement_id} not found.")
+    hold_val = bool(payload.get("legal_hold", True))
+    ag.legal_hold = hold_val
+    actor_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "anonymous"
+    audit = AuditLog(
+        tenant_id=x_tenant_id,
+        action="set_agreement_legal_hold",
+        actor_key_hash=actor_hash,
+        duration_ms=0,
+        grounding_verdict=f"LEGAL_HOLD_{'ACTIVE' if hold_val else 'RELEASED'}"
+    )
+    db.add(audit)
+    db.commit()
+    return {"agreement_id": agreement_id, "legal_hold": ag.legal_hold, "status": "updated"}
+
+
+@app.get("/api/deals/{deal_id}/export-hold-bundle")
+def export_deal_hold_bundle(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    api_key: str | None = Depends(verify_api_key),
+    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+):
+    """Export an immutable, cryptographic legal hold archive bundle for a deal matter."""
+    deal = db.query(DealMatter).filter(
+        DealMatter.id == deal_id,
+        DealMatter.tenant_id == x_tenant_id
+    ).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail=f"Deal #{deal_id} not found.")
+
+    evidence_records = db.query(DealEvidence).filter(
+        DealEvidence.deal_id == deal_id,
+        DealEvidence.tenant_id == x_tenant_id
+    ).all()
+
+    report_records = db.query(CommercialGroundingReport).filter(
+        CommercialGroundingReport.deal_id == deal_id,
+        CommercialGroundingReport.tenant_id == x_tenant_id
+    ).all()
+
+    audit_records = db.query(AuditLog).filter(
+        AuditLog.deal_id == deal_id,
+        AuditLog.tenant_id == x_tenant_id
+    ).all()
+
+    bundle_data = {
+        "export_type": "LEGAL_HOLD_BUNDLE",
+        "tenant_id": x_tenant_id,
+        "deal_id": deal_id,
+        "deal_code": deal.deal_code,
+        "title": deal.title,
+        "legal_hold": deal.legal_hold,
+        "company_name": deal.company_name,
+        "counterparty_name": deal.counterparty_name,
+        "context_facts": deal.context_facts,
+        "created_at": deal.created_at.isoformat() if deal.created_at else None,
+        "evidence": [
+            {
+                "id": ev.id,
+                "filename": ev.filename,
+                "content": ev.content,
+                "doc_type": ev.doc_type,
+                "content_hash": hashlib.sha256(ev.content.encode("utf-8")).hexdigest()
+            }
+            for ev in evidence_records
+        ],
+        "grounding_reports": [
+            {
+                "id": rep.id,
+                "assertion_text": rep.assertion_text,
+                "grounding_status": rep.grounding_status,
+                "failure_mode": rep.failure_mode,
+                "confidence_score": rep.confidence_score
+            }
+            for rep in report_records
+        ],
+        "audit_logs": [
+            {
+                "id": al.id,
+                "action": al.action,
+                "actor_key_hash": al.actor_key_hash,
+                "grounding_verdict": al.grounding_verdict,
+                "timestamp": al.timestamp.isoformat() if al.timestamp else None
+            }
+            for al in audit_records
+        ]
+    }
+    canonical_json = json.dumps(bundle_data, sort_keys=True)
+    manifest_sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    bundle_data["manifest_sha256"] = manifest_sha256
+    bundle_data["exported_at"] = datetime.now(timezone.utc).isoformat()
+    return bundle_data
 
 
 @app.get("/api/resolver/diff")

@@ -46,7 +46,22 @@ jobs:
           ALLOW_LAN: 1
           DATABASE_URL: sqlite:///:memory:
         run: |
-          python -m unittest discover tests
+          pytest tests/ -v
+
+      - name: 30-Family Adversarial Evaluation Benchmark
+        env:
+          APP_ENV: development
+          ALLOW_LAN: 1
+          DATABASE_URL: sqlite:///:memory:
+        run: |
+          python scripts/eval_adversarial_corpus.py
+
+      - name: 60-Second Headless Demo Verification
+        env:
+          APP_ENV: development
+          ALLOW_LAN: 1
+        run: |
+          python scripts/demo_60s.py
 
       - name: 3-Gate Evaluation Harness (Frozen BGE-Large Vector Gate & Held-Out Contracts)
         env:

@@ -17,6 +17,7 @@
 | **INV-7** | **Pre-Spool Magic-Byte Gate** | Polyglot files, executable binaries, or HTML disguised as contract PDFs | `tests/test_security_hardening.py::TestSecurityHardening::test_03_magic_byte_rejection`<br>`tests/eval/test_adversarial_corpus.py (family_14_html_disguised_pdf)` | ✅ PASS |
 | **INV-8** | **Canonical Grounding Taxonomy** | Hallucinated slots or uncited numeric claims pass verification silently | `tests/test_adversarial_grounding.py (25/25 tests)`<br>`tests/test_grounding_properties.py (5/5 property tests)`<br>`tests/eval/test_adversarial_corpus.py (30/30 families)` | ✅ PASS |
 | **INV-9** | **Frozen 4-Call Public API** | Leaky operational APIs dilute the core contract precedence product | `tests/test_api.py`<br>`tests/test_mcp.py`<br>`tests/eval/test_golden_eval_gate.py` | ✅ PASS |
+| **INV-10** | **Legal Hold & Strict Data Residency** | Matters under legal hold purged; production processes leak outside loopback | `tests/test_security_hardening.py (test_13, test_14, test_15)` | ✅ PASS |
 
 ---
 

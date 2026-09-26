@@ -218,6 +218,7 @@ class Agreement(Base):
     expiration_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), default="active", nullable=False, index=True)  # active, superseded, terminated, expired
     execution_status = Column(String(50), default="executed", nullable=False, index=True)  # executed, draft, unknown
+    legal_hold = Column(Boolean, default=False, nullable=False, index=True)
     governing_agreement_id = Column(Integer, ForeignKey("agreements.id", ondelete="SET NULL"), nullable=True)
     source_filename = Column(String(255), nullable=True)
     raw_hash = Column(String(64), nullable=True)
@@ -403,6 +404,7 @@ class DealMatter(Base):
     description = Column(Text, nullable=True)
     context_facts = Column(Text, nullable=False)                       # Background narrative and transaction context
     status = Column(String(50), default="active", nullable=False, index=True)
+    legal_hold = Column(Boolean, default=False, nullable=False, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -735,6 +737,9 @@ def purge_deal_matter_transactional(db: Session, tenant_id: str, deal_id: int) -
     if not deal:
         return {"deal_id": deal_id, "deleted": 0, "evidence": 0, "reports": 0}
 
+    if deal.legal_hold:
+        raise PermissionError(f"CANNOT_PURGE_LEGAL_HOLD_ACTIVE: Deal matter #{deal_id} ('{deal.title}') is under active legal hold.")
+
     ev_count = db.query(DealEvidence).filter(
         DealEvidence.deal_id == deal_id,
         DealEvidence.tenant_id == tenant_id
@@ -767,6 +772,9 @@ def purge_agreement_transactional(db: Session, tenant_id: str, agreement_id: int
     ).first()
     if not ag:
         return {"agreement_id": agreement_id, "deleted": 0, "relations": 0, "clauses": 0, "vectors": 0}
+
+    if ag.legal_hold:
+        raise PermissionError(f"CANNOT_PURGE_LEGAL_HOLD_ACTIVE: Agreement #{agreement_id} ('{ag.title}') is under active legal hold.")
 
     # Delete relations where source or target
     rel_count = db.query(AgreementRelation).filter(

@@ -115,6 +115,27 @@ def is_loopback_or_private_host(url_or_host: str) -> bool:
         return False
 
 
+def is_strict_loopback(url_or_host: str) -> bool:
+    """Inspect whether a configured host/URL resides strictly on loopback (127.0.0.1, localhost, ::1)."""
+    import ipaddress
+    import urllib.parse
+    if not url_or_host:
+        return False
+    try:
+        if "://" in url_or_host:
+            hostname = urllib.parse.urlparse(url_or_host).hostname or ""
+        else:
+            hostname = url_or_host
+
+        hostname = hostname.strip().lower()
+        if hostname in ("localhost", "127.0.0.1", "::1") or hostname.startswith("mock-"):
+            return True
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_loopback
+    except Exception:
+        return False
+
+
 def validate_security_invariants(s: Settings) -> None:
     """Enforce API key requirement outside development, loopback binding, and loopback Ollama hosts unless ALLOW_LAN is set."""
     # Invariant: Disallow empty, whitespace, or default placeholder API keys outside development
@@ -127,6 +148,10 @@ def validate_security_invariants(s: Settings) -> None:
         raise RuntimeError(
             f"Security Violation: Refusing to bind to non-loopback host '{s.HOST}' without ALLOW_LAN=1."
         )
+    if not s.is_sqlite and not is_loopback_or_private_host(s.DATABASE_URL) and not s.ALLOW_LAN:
+        raise RuntimeError(
+            f"Security Violation: Refusing connection to non-local database host '{s.DATABASE_URL}' without ALLOW_LAN=1."
+        )
     if not is_loopback_or_private_host(s.OLLAMA_BASE_URL) and not s.ALLOW_LAN:
         raise RuntimeError(
             f"Security Violation: Refusing connection to non-local Ollama LLM host '{s.OLLAMA_BASE_URL}' without ALLOW_LAN=1."
@@ -135,6 +160,25 @@ def validate_security_invariants(s: Settings) -> None:
         raise RuntimeError(
             f"Security Violation: Refusing connection to non-local Ollama embedding host '{s.OLLAMA_EMBED_HOST}' without ALLOW_LAN=1."
         )
+
+    # Invariant: In production without ALLOW_LAN, process never leaves loopback
+    if s.APP_ENV == "production" and not s.ALLOW_LAN:
+        if not is_strict_loopback(s.HOST):
+            raise RuntimeError(
+                f"Security Violation: Production host must be strictly loopback (127.0.0.1) without ALLOW_LAN=1, got '{s.HOST}'."
+            )
+        if not s.is_sqlite and not is_strict_loopback(s.DATABASE_URL):
+            raise RuntimeError(
+                f"Security Violation: Production database must reside strictly on loopback without ALLOW_LAN=1, got '{s.DATABASE_URL}'."
+            )
+        if not is_strict_loopback(s.OLLAMA_BASE_URL):
+            raise RuntimeError(
+                f"Security Violation: Production Ollama LLM host must reside strictly on loopback without ALLOW_LAN=1, got '{s.OLLAMA_BASE_URL}'."
+            )
+        if not is_strict_loopback(s.OLLAMA_EMBED_HOST):
+            raise RuntimeError(
+                f"Security Violation: Production Ollama embedding host must reside strictly on loopback without ALLOW_LAN=1, got '{s.OLLAMA_EMBED_HOST}'."
+            )
 
 
 settings = Settings()

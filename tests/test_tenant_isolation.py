@@ -206,6 +206,7 @@ class TestTenantIsolation(unittest.TestCase):
         cls.alpha_rel_id = cls.alpha_rel.id
         cls.beta_deal_id = cls.beta_deal.id
         cls.beta_rel_id = cls.beta_rel.id
+        cls.beta_ag_1_id = cls.beta_ag_1.id
         db.close()
 
     def test_01_tenant_header_spoofing_rejected(self):
@@ -308,6 +309,10 @@ class TestTenantIsolation(unittest.TestCase):
         del_deal_res = self.client.delete(f"/api/deals/{self.beta_deal_id}/hard-delete", headers=self.alpha_headers)
         self.assertEqual(del_deal_res.status_code, 404)
 
+        # Alpha tries to delete Beta's agreement
+        del_ag_res = self.client.delete(f"/api/agreements/{self.beta_ag_1_id}", headers=self.alpha_headers)
+        self.assertEqual(del_ag_res.status_code, 404)
+
         # Alpha tries to delete Beta's relation
         del_rel_res = self.client.delete(f"/api/relations/{self.beta_rel_id}", headers=self.alpha_headers)
         self.assertEqual(del_rel_res.status_code, 404)
@@ -319,6 +324,26 @@ class TestTenantIsolation(unittest.TestCase):
             headers=self.alpha_headers
         )
         self.assertEqual(patch_rel_res.status_code, 404)
+
+        # Alpha tries to confirm Beta's relation
+        conf_rel_res = self.client.post(f"/api/relations/{self.beta_rel_id}/confirm", headers=self.alpha_headers)
+        self.assertEqual(conf_rel_res.status_code, 404)
+
+        # Alpha tries to toggle legal hold on Beta's deal
+        hold_deal_res = self.client.post(
+            f"/api/deals/{self.beta_deal_id}/legal-hold",
+            json={"legal_hold": True},
+            headers=self.alpha_headers
+        )
+        self.assertEqual(hold_deal_res.status_code, 404)
+
+        # Alpha tries to toggle legal hold on Beta's agreement
+        hold_ag_res = self.client.post(
+            f"/api/agreements/{self.beta_ag_1_id}/legal-hold",
+            json={"legal_hold": True},
+            headers=self.alpha_headers
+        )
+        self.assertEqual(hold_ag_res.status_code, 404)
 
     def test_08_resolution_traces_isolation(self):
         """Verify that immutable precedence audit traces never leak across tenants."""
@@ -337,6 +362,16 @@ class TestTenantIsolation(unittest.TestCase):
         self.assertTrue(len(traces_b) > 0)
         self.assertTrue(all(t["tenant_id"] == self.beta_tenant for t in traces_b))
         self.assertTrue(any(t["counterparty"] == "BetaCounterparty" for t in traces_b))
+
+        beta_trace_id = traces_b[0]["id"]
+        # Beta can fetch their own trace by ID
+        b_trace_res = self.client.get(f"/api/resolution-traces/{beta_trace_id}", headers=self.beta_headers)
+        self.assertEqual(b_trace_res.status_code, 200)
+        self.assertEqual(b_trace_res.json()["id"], beta_trace_id)
+
+        # Alpha tries to fetch Beta's trace by ID -> 404
+        a_trace_res = self.client.get(f"/api/resolution-traces/{beta_trace_id}", headers=self.alpha_headers)
+        self.assertEqual(a_trace_res.status_code, 404)
 
         # 3. Alpha inspects traces -> strictly 0 traces from Beta
         traces_a_res = self.client.get("/api/resolution-traces", headers=self.alpha_headers)

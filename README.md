@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 194 Passing](https://img.shields.io/badge/Tests-194%20Passing-brightgreen.svg)](tests/)
+[![Tests: 197 Passing](https://img.shields.io/badge/Tests-197%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: 4/4 Passing](https://img.shields.io/badge/CI%20Gates-4%2F4%20Passing-brightgreen.svg)](scripts/eval_adversarial_corpus.py)
 
 ---
@@ -58,7 +58,7 @@ All 4 primitives are accessible through the Python core, REST API (`/api/agreeme
 * **Canonical Grounding Failure Codes**: Verification audits generated assertions against the exclusive authority set (controlling clause + amendment trail + incorporated clauses + carve-outs) and categorizes failures into:
   `WRONG_INSTRUMENT`, `SLOT_MISMATCH`, `UNIT_MISMATCH`, `NEGATED_OBLIGATION`, `PARTIAL_SUPPORT`, `SUPERSEDED`, `NO_AUTHORITY`, `UNCITED_NUMERIC_CLAIM`, and `UNGROUNDED_TOPIC`.
 * **Zero-Trust Multi-Tenant Isolation**: Complete database and resolver partitioning by `tenant_id`. Cross-tenant queries return 0 records or HTTP 403.
-* **Append-Only Audit Trail**: Historical deal events and audit logs reject `UPDATE` and `DELETE` at the database engine level via SQLAlchemy event interceptors.
+* **Legal Hold & Append-Only Audit**: Purge operations on matters and agreements under active legal hold fail closed with HTTP 423 Locked. Deal events reject `UPDATE` and `DELETE` at the database engine level via SQLAlchemy event interceptors.
 * **Pre-Spool Magic-Byte Gate**: File uploads inspect initial bytes before spooling to disk, rejecting executable binaries (`MZ`, `\x7fELF`, Mach-O) and HTML-disguised PDFs (`<html`, `<!doctype`).
 
 👉 **Full Invariants Specification & Pass/Fail Test Matrix**: See [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
@@ -114,14 +114,17 @@ pip install -e .
 ### 2. Zero-Dependency Headless Demo (No Ollama or Postgres Required)
 KruschBiz ships with a pre-seeded, self-contained SQLite database (`data/demo.db`) and deterministic vector generation:
 ```bash
-# Run backend directly with pre-seeded demo database
+# Run 60-second CLI demonstration
+python scripts/demo_60s.py
+
+# Or launch backend directly with pre-seeded demo database
 HEADLESS_MODE=1 uvicorn src.backend.main:app --host 127.0.0.1 --port 8086
 ```
 Visit `http://127.0.0.1:8086/docs` to inspect the Swagger UI, resolve controlling clauses, or run grounding checks immediately.
 
 ### 3. Run Test Suite & Adversarial Benchmark
 ```bash
-# Full test suite (194 tests)
+# Full test suite (197 tests)
 pytest tests -v
 
 # 30-family adversarial multi-document benchmark

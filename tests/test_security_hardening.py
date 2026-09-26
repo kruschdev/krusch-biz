@@ -328,7 +328,178 @@ class TestSecurityHardening(unittest.TestCase):
 
         session.close()
 
+    def test_13_legal_hold_blocks_deal_and_agreement_purge(self):
+        """Verify that legal_hold=True prevents purge on deals and agreements with PermissionError."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from src.backend.db import (
+            Base, DealMatter, Agreement,
+            purge_deal_matter_transactional, purge_agreement_transactional
+        )
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+
+        tenant = "tenant_legal_hold"
+        deal = DealMatter(
+            tenant_id=tenant,
+            deal_code="DEAL-HOLD-001",
+            title="Litigated Deal Matter",
+            context_facts="Matter is subject to federal subpoena.",
+            legal_hold=True
+        )
+        ag = Agreement(
+            tenant_id=tenant,
+            title="Preserved Master Services Agreement",
+            counterparty="Litigant LLC",
+            instrument_type="master_agreement",
+            legal_hold=True
+        )
+        session.add_all([deal, ag])
+        session.commit()
+
+        # 1. Attempting to purge deal under legal hold raises PermissionError
+        with self.assertRaises(PermissionError) as ctx:
+            purge_deal_matter_transactional(session, tenant, deal.id)
+        self.assertIn("CANNOT_PURGE_LEGAL_HOLD_ACTIVE", str(ctx.exception))
+
+        # 2. Attempting to purge agreement under legal hold raises PermissionError
+        with self.assertRaises(PermissionError) as ctx2:
+            purge_agreement_transactional(session, tenant, ag.id)
+        self.assertIn("CANNOT_PURGE_LEGAL_HOLD_ACTIVE", str(ctx2.exception))
+
+        # 3. Records remain completely intact
+        self.assertEqual(session.query(DealMatter).filter_by(id=deal.id).count(), 1)
+        self.assertEqual(session.query(Agreement).filter_by(id=ag.id).count(), 1)
+
+        # 4. Releasing legal hold permits purge
+        deal.legal_hold = False
+        ag.legal_hold = False
+        session.commit()
+
+        d_stats = purge_deal_matter_transactional(session, tenant, deal.id)
+        self.assertEqual(d_stats["deleted"], 1)
+        a_stats = purge_agreement_transactional(session, tenant, ag.id)
+        self.assertEqual(a_stats["deleted"], 1)
+
+        session.close()
+
+    def test_14_legal_hold_bundle_export_and_api_lock(self):
+        """Verify that legal-hold API endpoints return 423 on purge and generate valid export bundle."""
+        from fastapi.testclient import TestClient
+        from src.backend.main import app, get_db
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from src.backend.db import Base, DealMatter, DealEvidence, Agreement, init_db
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        TestingSession = sessionmaker(bind=engine)
+        init_db(engine)
+
+        def override_db():
+            db = TestingSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        client = TestClient(app)
+
+        from src.backend.config import settings
+        tenant = "tenant_hold_api"
+        headers = {"X-Tenant-ID": tenant}
+        if settings.API_KEY:
+            headers["X-API-Key"] = f"{tenant}:{settings.API_KEY}"
+
+        session = TestingSession()
+        deal = DealMatter(
+            tenant_id=tenant,
+            deal_code="DEAL-LIT-999",
+            title="Litigation Hold Target",
+            context_facts="Active discovery order.",
+            legal_hold=False
+        )
+        ag = Agreement(
+            tenant_id=tenant,
+            title="Deposition Exhibit A",
+            counterparty="Opposing Counsel",
+            instrument_type="master_agreement",
+            legal_hold=False
+        )
+        session.add_all([deal, ag])
+        session.commit()
+        deal_id = deal.id
+        ag_id = ag.id
+
+        ev = DealEvidence(
+            tenant_id=tenant,
+            deal_id=deal_id,
+            filename="discovery_exhibit_1.pdf",
+            content="Evidence memo for case",
+            doc_type="memo"
+        )
+        session.add(ev)
+        session.commit()
+        session.close()
+
+        # 1. Engage legal hold via API
+        h_res1 = client.post(f"/api/deals/{deal_id}/legal-hold", json={"legal_hold": True}, headers=headers)
+        self.assertEqual(h_res1.status_code, 200)
+        self.assertTrue(h_res1.json()["legal_hold"])
+
+        h_res2 = client.post(f"/api/agreements/{ag_id}/legal-hold", json={"legal_hold": True}, headers=headers)
+        self.assertEqual(h_res2.status_code, 200)
+        self.assertTrue(h_res2.json()["legal_hold"])
+
+        # 2. Attempting hard delete returns HTTP 423 Locked
+        del_deal = client.delete(f"/api/deals/{deal_id}/hard-delete?confirm_deal_code=DEAL-LIT-999", headers=headers)
+        self.assertEqual(del_deal.status_code, 423)
+        self.assertIn("CANNOT_PURGE_LEGAL_HOLD_ACTIVE", del_deal.text)
+
+        del_ag = client.delete(f"/api/agreements/{ag_id}", headers=headers)
+        self.assertEqual(del_ag.status_code, 423)
+        self.assertIn("CANNOT_PURGE_LEGAL_HOLD_ACTIVE", del_ag.text)
+
+        # 3. Export legal hold bundle
+        exp_res = client.get(f"/api/deals/{deal_id}/export-hold-bundle", headers=headers)
+        self.assertEqual(exp_res.status_code, 200)
+        bundle = exp_res.json()
+        self.assertEqual(bundle["export_type"], "LEGAL_HOLD_BUNDLE")
+        self.assertEqual(bundle["deal_id"], deal_id)
+        self.assertTrue(bundle["legal_hold"])
+        self.assertTrue(len(bundle["manifest_sha256"]) == 64)
+        self.assertEqual(len(bundle["evidence"]), 1)
+
+    def test_15_production_remote_database_refused_outside_lan(self):
+        """Verify that server refuses non-loopback database host in production without ALLOW_LAN=1."""
+        # Non-loopback database in production without ALLOW_LAN -> must fail boot
+        s = Settings(
+            APP_ENV="production",
+            API_KEY="prod-secret-key-123",
+            HOST="127.0.0.1",
+            DATABASE_URL="postgresql://user:pass@192.168.1.50:5432/kruschbiz",
+            ALLOW_LAN=False
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            validate_security_invariants(s)
+        self.assertIn("Production database must reside strictly on loopback without ALLOW_LAN=1", str(ctx.exception))
+
+        # With ALLOW_LAN=True -> accepted
+        s_allowed = Settings(
+            APP_ENV="production",
+            API_KEY="prod-secret-key-123",
+            HOST="127.0.0.1",
+            DATABASE_URL="postgresql://user:pass@192.168.1.50:5432/kruschbiz",
+            ALLOW_LAN=True
+        )
+        validate_security_invariants(s_allowed)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
