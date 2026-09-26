@@ -30,9 +30,9 @@ if PROJECT_ROOT not in sys.path:
 NEXUS_DIR = os.getenv("KRUSCH_NEXUS_DIR")
 if not NEXUS_DIR:
     candidates = [
-        "/home/krusch/homelab/projects/krusch-nexus",
-        os.path.join(PROJECT_ROOT, "krusch-nexus"),
         os.path.join(os.path.dirname(PROJECT_ROOT), "krusch-nexus"),
+        os.path.join(PROJECT_ROOT, "krusch-nexus"),
+        os.path.expanduser("~/homelab/projects/krusch-nexus"),
     ]
     for c in candidates:
         if os.path.isdir(c):
