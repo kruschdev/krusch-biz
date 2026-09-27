@@ -90,12 +90,12 @@ def parse_document(file_path: str) -> ParsedDocument:
 
     if _NEXUS_AVAILABLE:
         try:
-            import krusch_nexus.parsers as kn_parsers
-            res = kn_parsers.parse_document(file_path, filename)
+            import krusch_nexus
+            res = krusch_nexus.parse_file(file_path)
             pages = []
             for p in getattr(res, "pages", []):
                 p_num = getattr(p, "page_number", None)
-                if p_num is None:
+                if p_num is None and ext in (".pdf", ".docx", ".doc"):
                     p_num = getattr(p, "index", None)
                 p_text = getattr(p, "text", "")
                 p_tables = getattr(p, "tables", [])
@@ -103,7 +103,7 @@ def parse_document(file_path: str) -> ParsedDocument:
             return ParsedDocument(
                 filename=filename,
                 extension=ext,
-                pages=pages if pages else [ParsedPage(page_number=1, text=getattr(res, "text", ""))],
+                pages=pages if pages else [ParsedPage(page_number=None if ext in (".txt", ".md", ".json", ".csv") else 1, text=getattr(res, "text", ""))],
                 total_pages=len(pages) if pages else 1,
                 metadata=getattr(res, "metadata", {})
             )
@@ -116,7 +116,7 @@ def parse_document(file_path: str) -> ParsedDocument:
     if ext in (".txt", ".md", ".json"):
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
-        pages.append(ParsedPage(page_number=1, text=content))
+        pages.append(ParsedPage(page_number=None, text=content))
 
     elif ext == ".csv":
         rows = []
@@ -124,7 +124,7 @@ def parse_document(file_path: str) -> ParsedDocument:
             reader = csv.reader(f)
             for r in reader:
                 rows.append(", ".join(r))
-        pages.append(ParsedPage(page_number=1, text="\n".join(rows)))
+        pages.append(ParsedPage(page_number=None, text="\n".join(rows)))
 
     elif ext in (".docx", ".doc"):
         try:
@@ -149,7 +149,7 @@ def parse_document(file_path: str) -> ParsedDocument:
 
     else:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            pages.append(ParsedPage(page_number=1, text=f.read()))
+            pages.append(ParsedPage(page_number=None, text=f.read()))
 
     return ParsedDocument(
         filename=filename,
