@@ -25,7 +25,25 @@ try:
     _NEXUS_AVAILABLE = True
     logger.info("krusch_nexus detected. Using native high-throughput document ingestion engine.")
 except ImportError:
-    logger.info("krusch_nexus not detected in environment. Using sovereign standalone parser adapter.")
+    import sys
+    candidate_paths = [
+        os.getenv("KRUSCH_NEXUS_PATH"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "krusch-nexus", "src"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "krusch-nexus", "src"),
+        "/nexus/src",
+        os.path.expanduser("~/homelab/projects/krusch-nexus/src"),
+    ]
+    for p in candidate_paths:
+        if p and os.path.isdir(p) and p not in sys.path:
+            sys.path.insert(0, p)
+            break
+    try:
+        import krusch_nexus.chunking  # noqa: F401
+        import krusch_nexus.parsers  # noqa: F401
+        _NEXUS_AVAILABLE = True
+        logger.info("krusch_nexus detected via monorepo candidate path. Using native high-throughput document ingestion engine.")
+    except ImportError:
+        logger.info("krusch_nexus not detected in environment. Using sovereign standalone parser adapter.")
 
 
 @dataclass
