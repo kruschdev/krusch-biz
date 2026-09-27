@@ -60,7 +60,7 @@ import src.backend.db
 import src.backend.ingest
 import src.backend.main
 import src.backend.rag
-from src.backend.db import CommercialClauseVector, DealEvidence, init_db
+from src.backend.db import Agreement, CommercialClauseVector, DealEvidence, DealMatter, init_db
 from src.backend.ingest import ingest_business_document
 from src.backend.main import app, get_db
 
@@ -262,6 +262,88 @@ class TestNexusIntegration(unittest.TestCase):
         self.assertEqual(ch1.metadata["bbox"], [50.0, 83.38, 212.75, 41.1])
         self.assertEqual(ch1.metadata.get("char_start"), 0)
         self.assertEqual(ch1.metadata.get("char_end"), 66)
+
+    def test_06_deal_evidence_and_clause_coordinate_propagation(self):
+        """Verify that KruschNexus physical citation spine coordinates propagate to DealEvidence and Clause models, and are returned via REST API."""
+        if not FIXTURES_DIR or not os.path.exists(FIXTURES_DIR):
+            self.skipTest("KruschNexus fixtures directory not available")
+        pdf_path = os.path.join(FIXTURES_DIR, "sample_contract.pdf")
+        if not os.path.exists(pdf_path):
+            self.skipTest(f"Fixture {pdf_path} not found")
+
+        src.backend.config.settings.extra_allowed_dirs.append(FIXTURES_DIR)
+        db = self.TestingSessionLocal()
+        try:
+            # Clean up any existing records for clean test isolation
+            db.query(DealEvidence).filter(DealEvidence.deal_id == 306).delete()
+            db.query(CommercialClauseVector).filter(CommercialClauseVector.title == "sample_contract.pdf").delete()
+            db.query(Agreement).filter(Agreement.source_filename == "sample_contract.pdf").delete()
+            db.commit()
+
+            # Seed DealMatter so /api/deals/{id}/evidence can resolve deal
+            dm = db.query(DealMatter).filter(DealMatter.id == 306).first()
+            if not dm:
+                dm = DealMatter(id=306, tenant_id="org_default", title="Acme Deal 306", counterparty_name="Acme Corp", context_facts="Deal narrative")
+                db.add(dm)
+                db.commit()
+
+            report = ingest_business_document(
+                file_path=pdf_path,
+                deal_id=306,
+                doc_type="contract",
+                organization="Acme Corp",
+                db=db
+            )
+            self.assertEqual(report["status"], "completed")
+
+            # Check DB DealEvidence coordinates
+            ev_records = db.query(DealEvidence).filter(DealEvidence.deal_id == 306).all()
+            self.assertGreaterEqual(len(ev_records), 1)
+            ev = ev_records[0]
+            self.assertIsNotNone(ev.page_number)
+            self.assertIsNotNone(ev.bbox)
+            self.assertIsInstance(ev.bbox, list)
+            self.assertEqual(len(ev.bbox), 4)
+            self.assertIsNotNone(ev.char_start)
+            self.assertIsNotNone(ev.char_end)
+
+            # Check DB CommercialClauseVector coordinates
+            clause_records = db.query(CommercialClauseVector).filter(CommercialClauseVector.title == "sample_contract.pdf").all()
+            self.assertGreaterEqual(len(clause_records), 1)
+            cl = clause_records[0]
+            self.assertIsNotNone(cl.page_number)
+            self.assertIsNotNone(cl.bbox)
+            self.assertIsInstance(cl.bbox, list)
+            self.assertEqual(len(cl.bbox), 4)
+            self.assertIsNotNone(cl.char_start)
+            self.assertIsNotNone(cl.char_end)
+
+            # Check Deal Evidence API endpoint response
+            resp = self.client.get("/api/deals/306/evidence")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertGreaterEqual(len(data), 1)
+            item = data[0]
+            self.assertIn("page_number", item)
+            self.assertIn("bbox", item)
+            self.assertIn("char_start", item)
+            self.assertIn("char_end", item)
+            self.assertEqual(item["bbox"], ev.bbox)
+            self.assertEqual(item["char_start"], ev.char_start)
+            self.assertEqual(item["char_end"], ev.char_end)
+
+            # Check Clauses API endpoint response
+            c_resp = self.client.get("/api/clauses?q=sample_contract")
+            self.assertEqual(c_resp.status_code, 200)
+            c_data = c_resp.json()
+            self.assertGreaterEqual(len(c_data), 1)
+            c_item = c_data[0]
+            self.assertIn("page_number", c_item)
+            self.assertIn("bbox", c_item)
+            self.assertIn("char_start", c_item)
+            self.assertIn("char_end", c_item)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":

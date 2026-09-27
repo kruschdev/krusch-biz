@@ -187,5 +187,110 @@ class TestGroundingProperties(unittest.TestCase):
         )
 
 
+    def test_property_6_physical_citation_spine_coordinate_persistence(self):
+        """
+        Property: Physical Citation Spine coordinates (page_number, printed_page, bbox,
+        char_start, char_end, extra_metadata) must be preserved end-to-end through
+        controlling resolution dictionaries and grounding verification.
+        """
+        coord_clause = {
+            "id": 501,
+            "agreement_id": 42,
+            "agreement_title": "Enterprise Cloud Master Agreement",
+            "authority_class": "governing_agreement",
+            "section": "Section 9.2",
+            "title": "Data Security & Encryption",
+            "topic": "DATA_SECURITY",
+            "structured_slots": {
+                "encryption_standard": "AES-256",
+                "certifications": ["SOC-2 Type II", "ISO-27001"]
+            },
+            "content": "Section 9.2 Data Security. Vendor will maintain SOC-2 Type II certification and encrypt data at rest with AES-256.",
+            "page_number": 14,
+            "printed_page": "14-B",
+            "bbox": [54.0, 112.5, 480.0, 75.0],
+            "char_start": 450,
+            "char_end": 560,
+            "extra_metadata": {"extractor": "krusch-nexus", "ocr_confidence": 0.998}
+        }
+        res = {
+            "status": "resolved",
+            "controlling_clause": coord_clause,
+            "amendment_trail": [],
+            "incorporated_clauses": []
+        }
+        claim = "Pursuant to Section 9.2, Vendor will maintain SOC-2 Type II certification and encrypt data at rest with AES-256."
+        is_valid, findings, advisory, stats = verify_commercial_grounding(
+            analysis_text=claim,
+            controlling_result=res
+        )
+        self.assertTrue(is_valid, f"Claim should be verified: {findings}")
+        self.assertEqual(stats["supported_claims"], 1)
+        self.assertEqual(stats["unsupported_claims"], 0)
+
+        # Verify resolver controlling clause coordinate extraction
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from src.backend.db import init_db, Agreement, Clause
+        from src.backend.resolver import resolve_controlling_clause
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Session = sessionmaker(bind=engine)
+        init_db(engine)
+        db = Session()
+        try:
+            ag = Agreement(
+                tenant_id="tenant_test",
+                title="Enterprise Cloud Master Agreement",
+                counterparty="Vendor",
+                instrument_type="master_services_agreement",
+                status="active",
+                effective_date=datetime(2024, 1, 1)
+            )
+            db.add(ag)
+            db.commit()
+
+            cl = Clause(
+                tenant_id="tenant_test",
+                agreement_id=ag.id,
+                section="Section 9.2",
+                title="Data Security & Encryption",
+                topic="DATA_SECURITY",
+                structured_slots={"encryption_standard": "AES-256"},
+                content="Vendor will maintain SOC-2 Type II certification.",
+                authority_class="governing_agreement",
+                page_number=14,
+                printed_page="14-B",
+                bbox=[54.0, 112.5, 480.0, 75.0],
+                char_start=450,
+                char_end=560,
+                extra_metadata={"extractor": "krusch-nexus", "ocr_confidence": 0.998},
+                is_active=True
+            )
+            db.add(cl)
+            db.commit()
+
+            resolved = resolve_controlling_clause(
+                db=db,
+                tenant_id="tenant_test",
+                counterparty="Vendor",
+                topic="DATA_SECURITY",
+                as_of_date="2024-06-01",
+                persist_trace=False
+            )
+            self.assertEqual(resolved["status"], "resolved")
+            ctrl = resolved["controlling_clause"]
+            self.assertEqual(ctrl["page_number"], 14)
+            self.assertEqual(ctrl["printed_page"], "14-B")
+            self.assertEqual(ctrl["bbox"], [54.0, 112.5, 480.0, 75.0])
+            self.assertEqual(ctrl["char_start"], 450)
+            self.assertEqual(ctrl["char_end"], 560)
+            self.assertEqual(ctrl["extra_metadata"]["ocr_confidence"], 0.998)
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
+

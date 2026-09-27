@@ -18,6 +18,7 @@
 | **INV-8** | **Canonical Grounding Taxonomy** | Hallucinated slots or uncited numeric claims pass verification silently | `tests/test_adversarial_grounding.py (25/25 tests)`<br>`tests/test_grounding_properties.py (5/5 property tests)`<br>`tests/eval/test_adversarial_corpus.py (30/30 families)` | ✅ PASS |
 | **INV-9** | **Frozen 4-Call Public API** | Leaky operational APIs dilute the core contract precedence product | `tests/test_api.py`<br>`tests/test_mcp.py`<br>`tests/eval/test_golden_eval_gate.py` | ✅ PASS |
 | **INV-10** | **Legal Hold & Strict Data Residency** | Matters under legal hold purged; production processes leak outside loopback | `tests/test_security_hardening.py (test_13, test_14, test_15)` | ✅ PASS |
+| **INV-11** | **Physical Citation Spine Coordinates** | Ingestion, RAG, or resolver drops bounding boxes, character spans, or page coordinates, degrading downstream visual grounding | `tests/test_grounding_properties.py (test_property_6)`<br>`tests/test_nexus_integration.py (test_06)` | ✅ PASS |
 
 ---
 
@@ -118,16 +119,25 @@
   - REST endpoints (`/api/deals/{id}/hard-delete`, `/api/agreements/{id}`) return HTTP 423 Locked.
   - `/api/deals/{id}/export-hold-bundle` exports complete evidentiary manifests with SHA-256 integrity verification.
   - Production server fails boot if `DATABASE_URL` targets non-loopback host without `ALLOW_LAN=1`.
+### INV-11: Physical Citation Spine Coordinates
+* **Requirement**: Complete architectural parity with KruschNexus and KruschLaw v0.6.0. Document chunks ingested into KruschBiz must capture, preserve, and propagate physical citation coordinates (`page_number`, `printed_page`, `bbox`, `char_start`, `char_end`, `extra_metadata`) across the entire lifecycle:
+  1. **ORM Layer**: Stored in `clauses`, `commercial_clauses_vectors`, and `deal_evidence`.
+  2. **Ingestion Spine**: Extracted from KruschNexus chunk metadata and persisted transactionally.
+  3. **RAG & Search**: Selected and returned in hybrid search candidate records and deal evidence retrieval.
+  4. **Graph Resolver**: Preserved in `controlling_clause` resolution payloads for downstream visual overlays.
+  5. **API & Schemas**: Exposed via Pydantic `ClauseResponse` and `DealEvidenceItem` with backward-compatible nullable defaults.
+* **Behavior**: Zero loss of spatial grounding coordinates from raw PDF/DOCX ingestion to controlling resolution output and REST API consumption.
 * **Verification Command**:
   ```bash
-  pytest tests/test_security_hardening.py -k "test_13 or test_14 or test_15"
+  pytest tests/test_grounding_properties.py -k "test_property_6"
+  pytest tests/test_nexus_integration.py -k "test_06"
   ```
 
 ---
 
 ## 🚀 Running the Full Invariant Suite
 
-To execute the entire 198-test regression battery enforcing all invariants:
+To execute the entire 200-test regression battery enforcing all invariants:
 ```bash
 pytest tests/ -v
 ```

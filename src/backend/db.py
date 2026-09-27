@@ -271,6 +271,12 @@ class Clause(Base):
     structured_slots = Column(JSONType, nullable=True)                # e.g. {"net_days": 30, "late_interest_pct": 1.5}
     tags = Column(Text, nullable=True)                                # JSON array of semantic tags
     summary = Column(Text, nullable=True)                             # 1-sentence commercial micro-digest
+    page_number = Column(Integer, nullable=True)
+    printed_page = Column(String(50), nullable=True)
+    bbox = Column(JSONType, nullable=True)
+    char_start = Column(Integer, nullable=True)
+    char_end = Column(Integer, nullable=True)
+    extra_metadata = Column(JSONType, nullable=True)
     chunk_index = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     effective_from = Column(DateTime(timezone=True), nullable=True)   # Specific clause effective start
@@ -457,6 +463,12 @@ class CommercialClauseVector(Base):
     topic = Column(String(100), default="GENERAL_COMMERCIAL", nullable=False, index=True)
     tags = Column(Text, nullable=True)                                # JSON array of semantic tags
     summary = Column(Text, nullable=True)                             # 1-sentence commercial micro-digest
+    page_number = Column(Integer, nullable=True)
+    printed_page = Column(String(50), nullable=True)
+    bbox = Column(JSONType, nullable=True)
+    char_start = Column(Integer, nullable=True)
+    char_end = Column(Integer, nullable=True)
+    extra_metadata = Column(JSONType, nullable=True)
     structured_slots = Column(JSONType, nullable=True)
     embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=True)
 
@@ -474,6 +486,11 @@ class DealEvidence(Base):
     filename = Column(String(255), nullable=False)
     doc_type = Column(String(50), default="contract", nullable=False)
     page_number = Column(Integer, nullable=True)
+    printed_page = Column(String(50), nullable=True)
+    bbox = Column(JSONType, nullable=True)
+    char_start = Column(Integer, nullable=True)
+    char_end = Column(Integer, nullable=True)
+    extra_metadata = Column(JSONType, nullable=True)
     section_locator = Column(String(100), nullable=True)
     chunk_index = Column(Integer, default=0, nullable=False)
     content = Column(Text, nullable=False)
@@ -688,6 +705,16 @@ def init_db(target_engine=None):
             conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS summary TEXT;"))
             conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS effective_from TIMESTAMP WITH TIME ZONE;"))
             conn.execute(text("ALTER TABLE clauses ADD COLUMN IF NOT EXISTS effective_to TIMESTAMP WITH TIME ZONE;"))
+
+            # Idempotent column additions for physical citation spine coordinates
+            for tbl in ("clauses", "commercial_clauses_vectors"):
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS page_number INTEGER;"))
+            for tbl in ("clauses", "commercial_clauses_vectors", "deal_evidence"):
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS printed_page VARCHAR(50);"))
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS bbox JSONB;"))
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS char_start INTEGER;"))
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS char_end INTEGER;"))
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS extra_metadata JSONB;"))
 
             # Multi-Tenant PostgreSQL Row Level Security (RLS) Policies
             rls_tables = [

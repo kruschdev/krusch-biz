@@ -195,6 +195,12 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
         "terminated": False,
         "superseded_by": None,
         "source_url": "https://contracts.acmecorp.internal/agreements/msa_2025_cloudscale.pdf",
+        "page_number": 4,
+        "printed_page": "4",
+        "bbox": [72.0, 150.0, 468.0, 85.0],
+        "char_start": 0,
+        "char_end": 448,
+        "extra_metadata": {"extractor": "krusch-nexus", "ocr_confidence": 0.995},
         "content": (
             "Section 4.1 Payment Terms: Customer shall pay all undisputed invoice amounts within thirty (30) days "
             "of the invoice date ('Net 30'). All payments shall be made in U.S. Dollars via automated clearing house (ACH) "
@@ -218,6 +224,12 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
         "terminated": False,
         "superseded_by": None,
         "source_url": "https://contracts.acmecorp.internal/agreements/msa_2025_cloudscale.pdf",
+        "page_number": 4,
+        "printed_page": "4",
+        "bbox": [72.0, 245.0, 468.0, 92.0],
+        "char_start": 449,
+        "char_end": 962,
+        "extra_metadata": {"extractor": "krusch-nexus", "ocr_confidence": 0.995},
         "content": (
             "Section 4.2 Late Payment Penalties: Any undisputed amounts not received by Vendor within fifteen (15) days "
             "following the Net 30 due date shall accrue late interest at the rate of one and one-half percent (1.5%) per month, "
@@ -241,6 +253,12 @@ SEED_COMMERCIAL_FIXTURES: list[dict[str, Any]] = [
         "terminated": False,
         "superseded_by": None,
         "source_url": "https://contracts.acmecorp.internal/agreements/msa_2025_cloudscale.pdf",
+        "page_number": 8,
+        "printed_page": "8",
+        "bbox": [72.0, 110.0, 468.0, 115.0],
+        "char_start": 0,
+        "char_end": 508,
+        "extra_metadata": {"extractor": "krusch-nexus", "ocr_confidence": 0.996},
         "content": (
             "Section 10.1 Limitation of Liability: Except for obligations under Section 10.2 (Carve-outs), each party's maximum "
             "aggregate liability arising out of or related to this Agreement shall be limited to the total fees paid or payable by Customer "
@@ -576,6 +594,12 @@ def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, A
                 structured_slots=extracted_slots,
                 tags=tags_json,
                 summary=summary_text,
+                page_number=item.get("page_number"),
+                printed_page=item.get("printed_page"),
+                bbox=item.get("bbox"),
+                char_start=item.get("char_start"),
+                char_end=item.get("char_end"),
+                extra_metadata=item.get("extra_metadata"),
                 chunk_index=0,
                 is_active=not item.get("superseded", False),
                 embedding=vec
@@ -599,6 +623,12 @@ def ingest_mock_data(db: Session, tenant_id: str = "org_default") -> dict[str, A
                 topic=assigned_topic,
                 tags=tags_json,
                 summary=summary_text,
+                page_number=item.get("page_number"),
+                printed_page=item.get("printed_page"),
+                bbox=item.get("bbox"),
+                char_start=item.get("char_start"),
+                char_end=item.get("char_end"),
+                extra_metadata=item.get("extra_metadata"),
                 effective_date=item.get("effective_date"),
                 expiration_date=item.get("expiration_date"),
                 amended_date=item.get("amended_date"),
@@ -784,11 +814,17 @@ def ingest_business_document(
                 summary_text = tag_info.get("summary")
                 assigned_topic = tag_info.get("topic") or topic
 
+                ch_meta = getattr(ch, "metadata", {}) or {}
                 batch_chunks.append({
                     "content": ch.text,
                     "section": sec_locator,
                     "chunk_index": ch.chunk_index,
                     "page_number": ch.page_number,
+                    "printed_page": ch_meta.get("printed_page"),
+                    "bbox": ch_meta.get("bbox"),
+                    "char_start": ch_meta.get("char_start"),
+                    "char_end": ch_meta.get("char_end"),
+                    "extra_metadata": ch_meta.get("extra"),
                     "source_hash": ch_hash,
                     "topic": assigned_topic,
                     "slots": slots,
@@ -845,6 +881,12 @@ def ingest_business_document(
                     structured_slots=c["slots"],
                     tags=c["tags"],
                     summary=c["summary"],
+                    page_number=c.get("page_number"),
+                    printed_page=c.get("printed_page"),
+                    bbox=c.get("bbox"),
+                    char_start=c.get("char_start"),
+                    char_end=c.get("char_end"),
+                    extra_metadata=c.get("extra_metadata"),
                     chunk_index=c["chunk_index"],
                     is_active=True,
                     embedding=vec
@@ -866,6 +908,12 @@ def ingest_business_document(
                     topic=c["topic"],
                     tags=c["tags"],
                     summary=c["summary"],
+                    page_number=c.get("page_number"),
+                    printed_page=c.get("printed_page"),
+                    bbox=c.get("bbox"),
+                    char_start=c.get("char_start"),
+                    char_end=c.get("char_end"),
+                    extra_metadata=c.get("extra_metadata"),
                     content=c["content"],
                     source_header=f"[{filename}] {c['section']}",
                     source_hash=c["source_hash"],
@@ -883,7 +931,12 @@ def ingest_business_document(
                         deal_id=deal_id,
                         filename=filename,
                         doc_type=doc_type,
-                        page_number=c["page_number"],
+                        page_number=c.get("page_number"),
+                        printed_page=c.get("printed_page"),
+                        bbox=c.get("bbox"),
+                        char_start=c.get("char_start"),
+                        char_end=c.get("char_end"),
+                        extra_metadata=c.get("extra_metadata"),
                         section_locator=c["section"],
                         chunk_index=c["chunk_index"],
                         content=c["content"],

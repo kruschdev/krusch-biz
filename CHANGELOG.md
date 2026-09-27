@@ -4,6 +4,19 @@ All notable changes to **KruschBiz** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-27
+
+### 🚀 Added
+- **Physical Citation Spine Coordinates (INV-11)**: Established full architectural parity with KruschLaw v0.6.0 and KruschNexus document ingestion spine.
+- **ORM Coordinate Schema**: Added `page_number`, `printed_page`, `bbox` (bounding box `[x0, top, x1, bottom]`), `char_start`, `char_end`, and `extra_metadata` (`JSONType`) to `Clause`, `CommercialClauseVector`, and `DealEvidence` models with idempotent PostgreSQL migrations.
+- **End-to-End Coordinate Propagation**:
+  - `src/backend/ingest.py`: Extracted physical citation coordinates from KruschNexus chunks during ingestion and persisted to PostgreSQL/SQLite tables.
+  - `src/backend/rag.py`: Updated hybrid RRF search query, candidate population, and evidence formatting to return all 6 coordinate fields.
+  - `src/backend/resolver.py`: Enriched `resolve_controlling_clause` across single terminal, SOW, and MSA winner branches to pass physical citation coordinates in `controlling_clause`.
+  - `src/backend/main.py`: Enriched `ClauseResponse` and `DealEvidenceItem` Pydantic schemas with nullable coordinate attributes.
+- **Regression Test Coverage**: Added `test_property_6_physical_citation_spine_coordinate_persistence` in `tests/test_grounding_properties.py` and `test_06_deal_evidence_and_clause_coordinate_propagation` in `tests/test_nexus_integration.py` (200 passing tests total).
+- **Frozen Demo DB Rebuilt**: Regenerated `data/demo.db` fixture with physical citation spine coordinates for offline development and testing.
+
 ---
 
 ## [0.1.0] - 2026-09-25

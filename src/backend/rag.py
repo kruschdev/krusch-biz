@@ -613,7 +613,9 @@ def retrieve_clauses(
                        c.title, c.section, c.parent_section, c.hierarchy_level,
                        c.definitions_ref, c.exceptions_ref, c.authority_class,
                        c.effective_date, c.superseded, c.terminated, c.superseded_by,
-                       c.source_url, c.content, c.structured_slots, c.topic, c.tags, c.summary, c.embedding
+                       c.source_url, c.content, c.structured_slots, c.topic, c.tags, c.summary,
+                       c.page_number, c.printed_page, c.bbox, c.char_start, c.char_end, c.extra_metadata,
+                       c.embedding
                 FROM commercial_clauses_vectors c
                 WHERE c.id IN (SELECT id FROM vector_ranks UNION SELECT id FROM fts_ranks);
             """
@@ -660,6 +662,12 @@ def retrieve_clauses(
                     "topic": getattr(r, "topic", None),
                     "tags": raw_tags,
                     "summary": getattr(r, "summary", None),
+                    "page_number": getattr(r, "page_number", None),
+                    "printed_page": getattr(r, "printed_page", None),
+                    "bbox": getattr(r, "bbox", None),
+                    "char_start": getattr(r, "char_start", None),
+                    "char_end": getattr(r, "char_end", None),
+                    "extra_metadata": getattr(r, "extra_metadata", None),
                     "embedding": getattr(r, "embedding", None),
                 }
         except Exception as e:
@@ -717,6 +725,12 @@ def retrieve_clauses(
                 "topic": c.topic,
                 "tags": raw_tags,
                 "summary": c.summary,
+                "page_number": getattr(c, "page_number", None),
+                "printed_page": getattr(c, "printed_page", None),
+                "bbox": getattr(c, "bbox", None),
+                "char_start": getattr(c, "char_start", None),
+                "char_end": getattr(c, "char_end", None),
+                "extra_metadata": getattr(c, "extra_metadata", None),
                 "embedding": c.embedding,
             }
 
@@ -895,6 +909,12 @@ def verify_commercial_grounding(
                     "content": getattr(ctrl_cl, "content", ""),
                     "structured_slots": getattr(ctrl_cl, "structured_slots", {}),
                     "topic": getattr(ctrl_cl, "topic", None),
+                    "page_number": getattr(ctrl_cl, "page_number", None),
+                    "printed_page": getattr(ctrl_cl, "printed_page", None),
+                    "bbox": getattr(ctrl_cl, "bbox", None),
+                    "char_start": getattr(ctrl_cl, "char_start", None),
+                    "char_end": getattr(ctrl_cl, "char_end", None),
+                    "extra_metadata": getattr(ctrl_cl, "extra_metadata", None),
                     "agreement_title": getattr(ctrl_cl, "agreement_title", None),
                     "agreement_type": getattr(ctrl_cl, "authority_class", "governing_agreement")
                 }
@@ -1796,6 +1816,11 @@ def retrieve_deal_evidence(
             "filename": r.filename,
             "doc_type": r.doc_type,
             "page_number": r.page_number,
+            "printed_page": getattr(r, "printed_page", None),
+            "bbox": getattr(r, "bbox", None),
+            "char_start": getattr(r, "char_start", None),
+            "char_end": getattr(r, "char_end", None),
+            "extra_metadata": getattr(r, "extra_metadata", None),
             "section_locator": r.section_locator,
             "chunk_index": r.chunk_index,
             "content": r.content,

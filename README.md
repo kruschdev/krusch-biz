@@ -4,12 +4,12 @@
 > *Deterministic contract precedence resolution, typed DAG amendment traversal, and assertion-level slot grounding verification for corporate legal and deal intelligence.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version: 0.1.0-alpha.1](https://img.shields.io/badge/Version-0.1.0--alpha.1-blue.svg)](https://github.com/kruschdev/krusch-biz)
+[![Version: 0.8.0](https://img.shields.io/badge/Version-0.8.0-blue.svg)](https://github.com/kruschdev/krusch-biz)
 [![Python 3.11 | 3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 198 Passing](https://img.shields.io/badge/Tests-198%20Passing-brightgreen.svg)](tests/)
+[![Tests: 200 Passing](https://img.shields.io/badge/Tests-200%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: 4/4 Passing](https://img.shields.io/badge/CI%20Gates-4%2F4%20Passing-brightgreen.svg)](scripts/eval_adversarial_corpus.py)
 
 ---
@@ -60,6 +60,7 @@ All 4 primitives are accessible through the Python core, REST API (`/api/agreeme
 * **Zero-Trust Multi-Tenant Isolation**: Complete database and resolver partitioning by `tenant_id`. Cross-tenant queries return 0 records or HTTP 403.
 * **Legal Hold & Append-Only Audit**: Purge operations on matters and agreements under active legal hold fail closed with HTTP 423 Locked. Deal events reject `UPDATE` and `DELETE` at the database engine level via SQLAlchemy event interceptors.
 * **Pre-Spool Magic-Byte Gate**: File uploads inspect initial bytes before spooling to disk, rejecting executable binaries (`MZ`, `\x7fELF`, Mach-O) and HTML-disguised PDFs (`<html`, `<!doctype`).
+* **Physical Citation Spine Coordinates (INV-11)**: End-to-end parity with KruschNexus and KruschLaw v0.6.0. Preserves physical bounding boxes (`bbox`), character spans (`char_start`, `char_end`), sequential page numbers, printed page locators, and parser metadata across database models, RAG candidate retrieval, controlling clause resolution, and REST responses.
 
 👉 **Full Invariants Specification & Pass/Fail Test Matrix**: See [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
 

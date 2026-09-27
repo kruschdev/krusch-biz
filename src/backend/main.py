@@ -232,6 +232,12 @@ class ClauseResponse(BaseModel):
     tags: list[str] = []
     summary: str | None = None
     structured_slots: dict[str, Any] | None = None
+    page_number: int | None = None
+    printed_page: str | None = None
+    bbox: list[float] | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    extra_metadata: dict[str, Any] | None = None
     explanation: dict[str, Any] | None = None
     score: float | None = None
     vector_score: float | None = None
@@ -264,6 +270,11 @@ class DealEvidenceItem(BaseModel):
     filename: str
     doc_type: str
     page_number: int | None = None
+    printed_page: str | None = None
+    bbox: list[float] | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    extra_metadata: dict[str, Any] | None = None
     section_locator: str | None = None
     chunk_index: int = 0
     content: str
