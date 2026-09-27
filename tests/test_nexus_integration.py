@@ -240,6 +240,29 @@ class TestNexusIntegration(unittest.TestCase):
         self.assertGreaterEqual(len(hits), 1)
         self.assertIn("twenty-four", hits[0]["content"])
 
+    def test_05_nexus_bounding_boxes_and_spans(self):
+        """Verify KruschNexus chunk delegation passes through bounding boxes and character spans."""
+        if not FIXTURES_DIR or not os.path.exists(FIXTURES_DIR):
+            self.skipTest("KruschNexus fixtures directory not available")
+        pdf_path = os.path.join(FIXTURES_DIR, "sample_contract.pdf")
+        if not os.path.exists(pdf_path):
+            self.skipTest(f"Fixture {pdf_path} not found")
+
+        from src.backend.nexus_adapter import parse_document, chunk_document
+        pdoc = parse_document(pdf_path)
+        self.assertEqual(len(pdoc.pages), 2)
+
+        chunks = chunk_document(pdoc)
+        self.assertEqual(len(chunks), 2)
+
+        ch1 = chunks[0]
+        self.assertEqual(ch1.page_number, 1)
+        self.assertIn("Section 8.22", ch1.section_locator)
+        self.assertIsNotNone(ch1.metadata.get("bbox"))
+        self.assertEqual(ch1.metadata["bbox"], [50.0, 83.38, 212.75, 41.1])
+        self.assertEqual(ch1.metadata.get("char_start"), 0)
+        self.assertEqual(ch1.metadata.get("char_end"), 66)
+
 
 if __name__ == "__main__":
     unittest.main()

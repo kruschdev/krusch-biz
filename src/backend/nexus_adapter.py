@@ -100,12 +100,16 @@ def parse_document(file_path: str) -> ParsedDocument:
                 p_text = getattr(p, "text", "")
                 p_tables = getattr(p, "tables", [])
                 pages.append(ParsedPage(page_number=p_num, text=p_text, tables=p_tables))
+            meta = dict(getattr(res, "metadata", {}) or {})
+            meta["nexus_result"] = res
+            meta["file_path"] = file_path
+            meta["file_hash"] = getattr(res, "file_hash", None)
             return ParsedDocument(
                 filename=filename,
                 extension=ext,
                 pages=pages if pages else [ParsedPage(page_number=None if ext in (".txt", ".md", ".json", ".csv") else 1, text=getattr(res, "text", ""))],
                 total_pages=len(pages) if pages else 1,
-                metadata=getattr(res, "metadata", {})
+                metadata=meta
             )
         except Exception as e:
             logger.warning(f"krusch_nexus parsing encountered error ({e}); falling back to standalone parser.")
@@ -166,8 +170,45 @@ def chunk_document(
 ) -> list[DocumentChunk]:
     """
     Chunk document by natural legal boundaries (Sections, Articles, Paragraphs).
-    Preserves hierarchical section locators and page numbers.
+    Preserves hierarchical section locators, bounding boxes, character spans, and page numbers.
+    Delegates to KruschNexus citation spine when available.
     """
+    if _NEXUS_AVAILABLE and parsed_doc.metadata.get("nexus_result"):
+        try:
+            from krusch_nexus.chunking import chunk_document_pages
+            nexus_res = parsed_doc.metadata["nexus_result"]
+            file_hash = parsed_doc.metadata.get("file_hash") or getattr(nexus_res, "file_hash", None)
+            if not file_hash:
+                import hashlib
+                file_hash = hashlib.sha256(parsed_doc.full_text.encode("utf-8")).hexdigest()
+            nexus_chunks = chunk_document_pages(
+                pages=nexus_res.pages,
+                filename=parsed_doc.filename,
+                file_hash=file_hash,
+                max_chars=max_chunk_chars,
+                overlap_chars=overlap_chars,
+                base_metadata={"consumer": "krusch_biz"}
+            )
+            chunks: list[DocumentChunk] = []
+            for ch in nexus_chunks:
+                hdr = ch.header or ch.locator
+                if ch.page_number is not None:
+                    sec_loc = f"p. {ch.page_number} § {hdr}" if hdr else f"p. {ch.page_number}"
+                else:
+                    sec_loc = hdr or "General"
+
+                chunks.append(DocumentChunk(
+                    text=ch.text,
+                    page_number=ch.page_number,
+                    section_locator=sec_loc,
+                    chunk_index=ch.chunk_index,
+                    metadata=ch.to_dict()
+                ))
+            if chunks:
+                return chunks
+        except Exception as e:
+            logger.warning(f"krusch_nexus chunking failed ({e}); falling back to standalone chunker.")
+
     chunks: list[DocumentChunk] = []
     chunk_idx = 0
 
