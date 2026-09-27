@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector%2016-336791.svg?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Tests: 197 Passing](https://img.shields.io/badge/Tests-197%20Passing-brightgreen.svg)](tests/)
+[![Tests: 198 Passing](https://img.shields.io/badge/Tests-198%20Passing-brightgreen.svg)](tests/)
 [![CI Gates: 4/4 Passing](https://img.shields.io/badge/CI%20Gates-4%2F4%20Passing-brightgreen.svg)](scripts/eval_adversarial_corpus.py)
 
 ---
@@ -124,7 +124,7 @@ Visit `http://127.0.0.1:8086/docs` to inspect the Swagger UI, resolve controllin
 
 ### 3. Run Test Suite & Adversarial Benchmark
 ```bash
-# Full test suite (197 tests)
+# Full test suite (198 tests)
 pytest tests -v
 
 # 30-family adversarial multi-document benchmark

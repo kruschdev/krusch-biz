@@ -127,7 +127,7 @@
 
 ## 🚀 Running the Full Invariant Suite
 
-To execute the entire 197-test regression battery enforcing all invariants:
+To execute the entire 198-test regression battery enforcing all invariants:
 ```bash
 pytest tests/ -v
 ```
