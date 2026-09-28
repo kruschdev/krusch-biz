@@ -554,6 +554,18 @@ def retrieve_clauses(
     else:
         expanded_query, spotted_issues = query, []
 
+    # Dual-provider routing: Delegate to KruschNexus / Wondersearch provider when configured
+    if getattr(settings, "RAG_PROVIDER", "local") in ("nexus", "wondersearch"):
+        from .nexus_rag import search_clauses_nexus, is_nexus_available
+        if is_nexus_available():
+            return search_clauses_nexus(
+                query_text=expanded_query,
+                topic=topic,
+                limit=limit,
+                organization=organization,
+                agreement_type=agreement_type
+            )
+
     is_sqlite = db.bind.dialect.name == "sqlite"
 
     query_vector = None
@@ -1785,6 +1797,19 @@ def retrieve_deal_evidence(
     Combines dense embeddings, lexical matching, canonical topic filtering, and commercial semantic tags.
     Guarantees strict tenant and deal boundary isolation.
     """
+    # Dual-provider routing: Delegate to KruschNexus / Wondersearch provider when configured
+    if getattr(settings, "RAG_PROVIDER", "local") in ("nexus", "wondersearch"):
+        from .nexus_rag import search_deal_evidence_nexus, is_nexus_available
+        if is_nexus_available():
+            return search_deal_evidence_nexus(
+                deal_id=deal_id,
+                text_query=text_query,
+                topic=topic,
+                limit=limit,
+                doc_type=doc_type,
+                tenant_id=tenant_id
+            )
+
     query = db.query(DealEvidence).filter(
         DealEvidence.deal_id == deal_id,
         DealEvidence.tenant_id == tenant_id

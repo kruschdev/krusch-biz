@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     )
     KRUSCH_NEXUS_PATH: str | None = os.getenv("KRUSCH_NEXUS_PATH", None)
 
+    # Dual-Provider RAG & Cloud Gateway
+    RAG_PROVIDER: str = os.getenv("RAG_PROVIDER", "local")  # "local" | "nexus" | "wondersearch"
+    ALLOW_CLOUD: bool = os.getenv("ALLOW_CLOUD", "0") in ("1", "true", "True")
+
     extra_allowed_dirs: list[str] = []
 
     @property
