@@ -1,0 +1,87 @@
+pack_id: "biz_enterprise_saas_pack_v1"
+version: "1.0.0"
+domain: "Commercial SaaS & Enterprise Licensing"
+publisher: "KruschBiz Standard Contract Library"
+edition: "Enterprise B2B Standard 2026"
+retrieved_at: "2026-09-27T12:00:00Z"
+description: "Authoritative B2B Enterprise SaaS Master Services Agreement (MSA) standards, Service Level Agreements (SLA), data protection addenda, and limitation of liability frameworks."
+
+coverage:
+  covered_topics:
+    - "SLA_UPTIME"
+    - "SLA_CREDIT"
+    - "LIABILITY_CAP"
+    - "LIABILITY_CARVE_OUT"
+    - "INDEMNITY"
+    - "DATA_PROTECTION"
+    - "BREACH_NOTIFICATION"
+    - "AUDIT_RIGHTS"
+    - "TERMINATION_CONVENIENCE"
+
+clauses:
+  - clause_id: "saas_sla_uptime_01"
+    topic: "SLA_UPTIME"
+    title: "Enterprise Service Availability & 99.9% Uptime Commitment"
+    raw_content: |
+      Provider warrants that the Production Cloud Service shall achieve a System Availability of at least ninety-nine and nine-tenths percent (99.9%) during each calendar month of the Subscription Term, excluding Scheduled Maintenance windows not exceeding four (4) hours per month conducted between 12:00 AM and 4:00 AM Pacific Time with at least forty-eight (48) hours prior written notice.
+    statutory_slots:
+      sla_uptime_percentage: 99.9
+      maintenance_window_hours_per_month: 4
+      maintenance_notice_hours: 48
+
+  - clause_id: "saas_sla_credit_01"
+    topic: "SLA_CREDIT"
+    title: "Graduated Service Level Credits for System Downtime"
+    raw_content: |
+      If Provider fails to meet the 99.9% System Availability commitment in any calendar month, Customer shall be entitled to the following Service Credits applied against the next invoice:
+      (a) 99.0% to < 99.9% Availability: Ten percent (10%) credit of monthly subscription fees.
+      (b) 95.0% to < 99.0% Availability: Twenty-five percent (25%) credit of monthly subscription fees.
+      (c) < 95.0% Availability: Fifty percent (50%) credit of monthly subscription fees.
+      Service credits constitute Customer's sole and exclusive financial remedy for availability defaults not amounting to material breach.
+    statutory_slots:
+      tier_1_min_uptime: 99.0
+      tier_1_credit_pct: 10.0
+      tier_2_min_uptime: 95.0
+      tier_2_credit_pct: 25.0
+      tier_3_below_uptime: 95.0
+      tier_3_credit_pct: 50.0
+      sole_remedy: true
+
+  - clause_id: "saas_liability_cap_01"
+    topic: "LIABILITY_CAP"
+    title: "Aggregate Limitation of Liability & 12-Month Trailing Fees"
+    raw_content: |
+      Except for Express Exclusions set forth in Section 11.2, in no event shall either party's aggregate cumulative liability arising out of or related to this Agreement, whether in contract, tort (including negligence), or under any other theory of liability, exceed the total amounts actually paid or payable by Customer to Provider under the applicable Order Form during the twelve (12) month period immediately preceding the event giving rise to liability.
+    statutory_slots:
+      cap_multiplier_months: 12
+      metric: "fees_paid_or_payable"
+      mutual: true
+
+  - clause_id: "saas_liability_carve_out_01"
+    topic: "LIABILITY_CARVE_OUT"
+    title: "Uncapped Liabilities and Supercap Exceptions"
+    raw_content: |
+      The limitations and exclusions of liability set forth in Section 11.1 shall not apply to:
+      (a) Either party's gross negligence, willful misconduct, or intentional fraud.
+      (b) Either party's indemnification obligations under Section 10.
+      (c) Breach of Section 8 (Confidentiality), excluding Security Incidents.
+      (d) Customer's obligation to pay undisputed fees when due.
+      For any unauthorized disclosure of Customer Personal Data resulting from Provider's material breach of the Data Protection Addendum, Provider's aggregate liability shall be subject to a Supercap of three times (3x) the fees paid in the trailing twelve (12) months.
+    statutory_slots:
+      uncapped_carve_outs:
+        - "gross_negligence"
+        - "willful_misconduct"
+        - "fraud"
+        - "indemnification"
+      supercap_multiplier: 3.0
+      supercap_subject: "data_protection_breach"
+
+  - clause_id: "saas_breach_notification_01"
+    topic: "BREACH_NOTIFICATION"
+    title: "Security Incident Response & 72-Hour Notice Window"
+    raw_content: |
+      Provider shall notify Customer in writing without undue delay and, in any event, within seventy-two (72) hours of becoming aware of any confirmed Security Incident or unauthorized access, acquisition, alteration, or destruction of Customer Data. Provider shall promptly provide Customer with details regarding the nature of the incident, affected data categories, and remediation steps undertaken.
+    statutory_slots:
+      notification_window_hours: 72
+      standard: "without_undue_delay"
+      requires_remediation_summary: true

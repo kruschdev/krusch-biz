@@ -1,0 +1,71 @@
+pack_id: "biz_vendor_procurement_pack_v1"
+version: "1.0.0"
+domain: "Vendor Procurement & Master Services Agreements"
+publisher: "KruschBiz Standard Contract Library"
+edition: "Procurement Master Standard 2026"
+retrieved_at: "2026-09-27T12:00:00Z"
+description: "Authoritative procurement and vendor services agreement standards governing payment milestones, Net-30 payment terms, late payment interest ceilings, work-for-hire intellectual property assignments, and deliverable acceptance windows."
+
+coverage:
+  covered_topics:
+    - "PAYMENT_TERMS"
+    - "LATE_FEE"
+    - "DELIVERABLE_ACCEPTANCE"
+    - "IP_ASSIGNMENT"
+    - "AUDIT_RIGHTS"
+    - "TERMINATION_CONVENIENCE"
+    - "WARRANTIES"
+
+clauses:
+  - clause_id: "vendor_payment_terms_01"
+    topic: "PAYMENT_TERMS"
+    title: "Net 30 Payment Terms & Invoice Dispute Interval"
+    raw_content: |
+      Customer shall pay all undisputed amounts set forth in each properly submitted Vendor invoice within thirty (30) calendar days from Customer's receipt of the invoice (Net 30). If Customer disputes any invoiced item in good faith, Customer shall notify Vendor in writing within fifteen (15) calendar days of invoice receipt, specifying the grounds for dispute, and pay the undisputed portion in accordance with standard terms.
+    statutory_slots:
+      payment_window_days: 30
+      payment_type: "net_calendar_days"
+      dispute_notice_days: 15
+      partial_payment_undisputed_required: true
+
+  - clause_id: "vendor_late_fee_01"
+    topic: "LATE_FEE"
+    title: "Late Payment Interest & Statutory Ceiling Cap"
+    raw_content: |
+      Delinquent undisputed payments shall accrue interest from the date due until paid in full at a rate equal to one and one-half percent (1.5%) per month, or the maximum legal rate permissible under governing California law, whichever is lower. Vendor reserves the right to suspend performance under the applicable Statement of Work if undisputed invoices remain past due for more than thirty (30) calendar days following written notice of default.
+    statutory_slots:
+      late_interest_monthly_pct: 1.5
+      annualized_equivalent_pct: 18.0
+      subject_to_state_usury_ceiling: true
+      performance_suspension_threshold_days: 30
+
+  - clause_id: "vendor_ip_assignment_01"
+    topic: "ASSIGNMENT"
+    title: "Work Made for Hire and Complete Intellectual Property Assignment"
+    raw_content: |
+      All deliverables, documentation, source code, data architectures, and work product developed or delivered by Vendor under any Statement of Work (collectively, 'Work Product') shall be considered a 'work made for hire' to the fullest extent permitted by law. To the extent any Work Product does not qualify as a work made for hire, Vendor hereby irrevocably assigns, transfers, and conveys to Customer all right, title, and interest worldwide, including all copyrights, patent rights, trade secret rights, and other intellectual property rights.
+    statutory_slots:
+      work_made_for_hire: true
+      irrevocable_assignment: true
+      worldwide_scope: true
+      moral_rights_waived: true
+
+  - clause_id: "vendor_deliverable_acceptance_01"
+    topic: "DELIVERABLE_ACCEPTANCE"
+    title: "Inspection, Milestone Verification, and 10-Day Deemed Acceptance"
+    raw_content: |
+      Customer shall have ten (10) business days from receipt of any milestone deliverable ('Review Period') to inspect, test, and verify whether the deliverable conforms to the specifications set forth in the SOW. If Customer identifies material non-conformities, Customer shall deliver written notice detailing the defects. Vendor shall correct the non-conformities within ten (10) business days at no additional charge. If Customer fails to provide written notice of rejection or approval within the Review Period, the deliverable shall be deemed accepted.
+    statutory_slots:
+      review_period_business_days: 10
+      remediation_window_business_days: 10
+      deemed_accepted_on_silence: true
+
+  - clause_id: "vendor_termination_convenience_01"
+    topic: "TERMINATION_CONVENIENCE"
+    title: "Termination for Convenience & Payment for Actual Work Completed"
+    raw_content: |
+      Customer may terminate this Agreement or any Statement of Work in whole or in part, without cause, upon giving Vendor at least thirty (30) calendar days prior written notice. Upon receipt of such notice, Vendor shall immediately cease work and minimize additional commitments. Customer's sole financial obligation upon termination for convenience shall be payment for authorized services satisfactorily performed and non-cancellable expenses incurred prior to the effective date of termination.
+    statutory_slots:
+      convenience_notice_days: 30
+      right_holder: "customer_only"
+      compensation_basis: "work_completed_and_noncancellable_expenses"

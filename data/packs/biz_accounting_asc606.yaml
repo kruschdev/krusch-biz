@@ -1,0 +1,141 @@
+pack_id: "biz_accounting_asc606_pack_v1"
+version: "1.0.0"
+domain: "Financial Accounting & Revenue Recognition"
+publisher: "FASB / US GAAP Standard Codification & KruschBiz Accounting Library"
+edition: "ASC Topic 606 / ASC Topic 842 Codification 2026"
+retrieved_at: "2026-09-27T12:00:00Z"
+description: "Authoritative US GAAP revenue recognition standards under ASC Topic 606 (Revenue from Contracts with Customers), 5-step contract evaluation, distinct performance obligations, Standalone Selling Price (SSP) allocation, and lease classification under ASC Topic 842."
+
+coverage:
+  covered_topics:
+    - "REVENUE_RECOGNITION_5_STEP"
+    - "PERFORMANCE_OBLIGATIONS"
+    - "TRANSACTION_PRICE_ALLOCATION"
+    - "SIGNIFICANT_FINANCING_COMPONENT"
+    - "STANDALONE_SELLING_PRICE"
+    - "CONTRACT_ASSETS_AND_LIABILITIES"
+    - "LEASE_CLASSIFICATION_ASC842"
+    - "ACCOUNTS_RECEIVABLE_AGING"
+
+standards:
+  - standard_id: "asc_606_step_1"
+    topic: "REVENUE_RECOGNITION_5_STEP"
+    title: "ASC 606 Step 1: Identification of the Contract with a Customer (ASC 606-10-25-1)"
+    raw_content: |
+      An entity shall account for a contract with a customer under ASC Topic 606 only when all five criteria are met:
+      (a) The parties have approved the contract (in writing, orally, or in accordance with other customary business practices) and are committed to perform their obligations.
+      (b) The entity can identify each party's enforceable rights regarding the goods or services to be transferred.
+      (c) The entity can identify the payment terms for the goods or services to be transferred.
+      (d) The contract has commercial substance (the risk, timing, or amount of the entity's future cash flows is expected to change).
+      (e) It is probable that the entity will collect the consideration to which it will be entitled in exchange for the goods or services.
+      If a contract does not meet these criteria, consideration received is recognized as a liability (deferred revenue) until criteria are met or the contract is terminated.
+    statutory_slots:
+      step_number: 1
+      collectibility_threshold: "probable_greater_than_50_percent"
+      requires_commercial_substance: true
+      unmet_accounting_treatment: "deferred_revenue_liability"
+
+  - standard_id: "asc_606_step_2"
+    topic: "PERFORMANCE_OBLIGATIONS"
+    title: "ASC 606 Step 2: Identification of Distinct Performance Obligations (ASC 606-10-25-14)"
+    raw_content: |
+      At contract inception, an entity shall assess the goods or services promised in a contract and identify as a performance obligation each promise to transfer to the customer either:
+      (a) A good or service (or bundle of goods/services) that is distinct.
+      (b) A series of distinct goods or services that are substantially the same and have the same pattern of transfer.
+      A good or service is distinct if:
+      (1) Capable of being distinct: The customer can benefit from the good or service either on its own or together with readily available resources.
+      (2) Distinct within the context of the contract: The promise is separately identifiable from other promises in the contract (not heavily customized, integrated, or interdependent).
+    statutory_slots:
+      step_number: 2
+      distinctness_tests:
+        - "capable_of_being_distinct"
+        - "separately_identifiable_in_context"
+      saas_implication: "software_license_and_hosting_separated_if_distinct"
+
+  - standard_id: "asc_606_step_3"
+    topic: "TRANSACTION_PRICE_ALLOCATION"
+    title: "ASC 606 Step 3: Determination of the Transaction Price & Financing Components (ASC 606-10-32-2)"
+    raw_content: |
+      The transaction price is the amount of consideration to which an entity expects to be entitled in exchange for transferring promised goods or services, excluding amounts collected on behalf of third parties (e.g. sales taxes).
+      Variable Consideration: If consideration includes a variable amount (discounts, rebates, refunds, credits, incentives, penalties), the entity shall estimate the amount using either the expected value method or the most likely amount method, subject to the Variable Consideration Constraint (revenue is recognized only to the extent that it is probable a significant reversal will not occur).
+      Significant Financing Component: If the agreed timing of payments provides the customer or entity with a significant benefit of financing (payment and performance gap > 1 year), the transaction price must be adjusted for the time value of money.
+    statutory_slots:
+      step_number: 3
+      financing_component_threshold_months: 12
+      variable_consideration_constraint: "probable_no_significant_reversal"
+      exclude_sales_tax: true
+
+  - standard_id: "asc_606_step_4"
+    topic: "STANDALONE_SELLING_PRICE"
+    title: "ASC 606 Step 4: Allocation of Transaction Price Based on Relative Standalone Selling Price (ASC 606-10-32-28)"
+    raw_content: |
+      An entity shall allocate the transaction price to each performance obligation identified in the contract on a relative standalone selling price (SSP) basis at contract inception.
+      The standalone selling price is the price at which an entity would sell a promised good or service separately to a customer.
+      Observable Price: If observable standalone prices are available, they must be used directly.
+      Estimation Hierarchy: If not observable, the entity must estimate the SSP using an approach such as:
+      (a) Adjusted market assessment approach.
+      (b) Expected cost plus a margin approach.
+      (c) Residual approach (only permissible if selling price is highly variable or uncertain).
+    statutory_slots:
+      step_number: 4
+      allocation_basis: "relative_standalone_selling_price"
+      estimation_methods:
+        - "adjusted_market_assessment"
+        - "expected_cost_plus_margin"
+        - "residual_approach_restricted"
+
+  - standard_id: "asc_606_step_5"
+    topic: "REVENUE_RECOGNITION_5_STEP"
+    title: "ASC 606 Step 5: Recognition of Revenue as Performance Obligations are Satisfied (ASC 606-10-25-23)"
+    raw_content: |
+      An entity shall recognize revenue when (or as) the entity satisfies a performance obligation by transferring control of a promised good or service to a customer.
+      Over Time vs. Point in Time:
+      An obligation is satisfied over time if any of the following criteria are met:
+      (a) The customer simultaneously receives and consumes the benefits provided by the entity's performance as the entity performs (e.g. routine cloud SaaS services).
+      (b) The entity's performance creates or enhances an asset that the customer controls as the asset is created.
+      (c) The entity's performance does not create an asset with an alternative use to the entity, and the entity has an enforceable right to payment for performance completed to date.
+      If none of these criteria are met, revenue is recognized at a point in time (when control transfers).
+    statutory_slots:
+      step_number: 5
+      over_time_criteria_count: 3
+      saas_recognition_pattern: "ratable_daily_or_monthly_over_term"
+      milestone_recognition: "on_formal_acceptance"
+
+  - standard_id: "asc_842_lease_classification"
+    topic: "LEASE_CLASSIFICATION_ASC842"
+    title: "ASC Topic 842: Lease Classification & Right-of-Use (ROU) Asset Recognition"
+    raw_content: |
+      Under ASC Topic 842, lessees must recognize a Right-of-Use (ROU) asset and a corresponding lease liability on the balance sheet for virtually all leases with a term greater than 12 months.
+      A lease is classified as a Finance Lease (by lessee) if any of the following five criteria are met at commencement:
+      (1) The lease transfers ownership of the underlying asset to the lessee by the end of the lease term.
+      (2) The lease grants the lessee an option to purchase the underlying asset that the lessee is reasonably certain to exercise.
+      (3) The lease term is for the major part of the remaining economic life of the underlying asset (typically >= 75%).
+      (4) The present value of the sum of the lease payments equals or exceeds substantially all of the fair value of the underlying asset (typically >= 90%).
+      (5) The underlying asset is of such a specialized nature that it is expected to have no alternative use to the lessor at the end of the lease term.
+      If none of these criteria are met, the lease is classified as an Operating Lease.
+    statutory_slots:
+      short_term_lease_exemption_months: 12
+      finance_lease_economic_life_pct: 75.0
+      finance_lease_present_value_pct: 90.0
+      requires_rou_balance_sheet_entry: true
+
+  - standard_id: "ar_aging_buckets_asc326"
+    topic: "ACCOUNTS_RECEIVABLE_AGING"
+    title: "Current Expected Credit Losses (CECL / ASC 326) & Accounts Receivable Aging Buckets"
+    raw_content: |
+      Under ASC Topic 326 (Financial Instruments - Credit Losses), trade accounts receivable must be evaluated for credit impairment and recorded at the net amount expected to be collected.
+      Standard operational aging classification establishes five discrete aging buckets:
+      (a) Current: Invoices within standard contractual terms (e.g. Net 30).
+      (b) 1 to 30 Days Past Due: First delinquency tier; default loss provision rate applies.
+      (c) 31 to 60 Days Past Due: Intermediate delinquency; requires active collection intervention.
+      (d) 61 to 90 Days Past Due: High risk of default; requires elevated reserve accrual.
+      (e) Over 90 Days Past Due: Severe delinquency; triggers formal demand or bad debt write-off review.
+    statutory_slots:
+      aging_buckets:
+        - "current"
+        - "1_to_30_days"
+        - "31_to_60_days"
+        - "61_to_90_days"
+        - "over_90_days"
+      standard_payment_term_days: 30
+      requires_cecl_loss_reserve: true
