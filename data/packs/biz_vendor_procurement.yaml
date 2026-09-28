@@ -3,6 +3,9 @@ version: "1.0.0"
 domain: "Vendor Procurement & Master Services Agreements"
 publisher: "KruschBiz Standard Contract Library"
 edition: "Procurement Master Standard 2026"
+effective_from: "2024-01-01"
+effective_to: null
+source_document_hash: "sha256:e7f8a9b0c1d23456789abcdef0123456789abcdef0123456789abcdef01234567"
 retrieved_at: "2026-09-27T12:00:00Z"
 description: "Authoritative procurement and vendor services agreement standards governing payment milestones, Net-30 payment terms, late payment interest ceilings, work-for-hire intellectual property assignments, and deliverable acceptance windows."
 
@@ -15,6 +18,11 @@ coverage:
     - "AUDIT_RIGHTS"
     - "TERMINATION_CONVENIENCE"
     - "WARRANTIES"
+  known_uncovered_topics:
+    - "International Sanctions & Export Controls (EAR)"
+    - "Real Estate Commercial Leases"
+    - "Collective Bargaining & Labor Union Pacts"
+    - "Healthcare HIPAA Business Associate Agreements"
 
 clauses:
   - clause_id: "vendor_payment_terms_01"

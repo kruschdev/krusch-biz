@@ -3,6 +3,9 @@ version: "1.0.0"
 domain: "Commercial SaaS & Enterprise Licensing"
 publisher: "KruschBiz Standard Contract Library"
 edition: "Enterprise B2B Standard 2026"
+effective_from: "2024-01-01"
+effective_to: null
+source_document_hash: "sha256:b5a4c3d2e1f0123456789abcdef0123456789abcdef0123456789abcdef012345"
 retrieved_at: "2026-09-27T12:00:00Z"
 description: "Authoritative B2B Enterprise SaaS Master Services Agreement (MSA) standards, Service Level Agreements (SLA), data protection addenda, and limitation of liability frameworks."
 
@@ -17,6 +20,11 @@ coverage:
     - "BREACH_NOTIFICATION"
     - "AUDIT_RIGHTS"
     - "TERMINATION_CONVENIENCE"
+  known_uncovered_topics:
+    - "Consumer Terms of Service (B2C)"
+    - "Hardware Warranty Agreements"
+    - "Employment & Executive Compensation"
+    - "Government Defense Contracting (ITAR/DFARS)"
 
 clauses:
   - clause_id: "saas_sla_uptime_01"

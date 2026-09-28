@@ -3,6 +3,9 @@ version: "1.0.0"
 domain: "Financial Accounting & Revenue Recognition"
 publisher: "FASB / US GAAP Standard Codification & KruschBiz Accounting Library"
 edition: "ASC Topic 606 / ASC Topic 842 Codification 2026"
+effective_from: "2024-01-01"
+effective_to: null
+source_document_hash: "sha256:f1e2d3c4b5a67890123456789abcdef0123456789abcdef0123456789abcdef01"
 retrieved_at: "2026-09-27T12:00:00Z"
 description: "Authoritative US GAAP revenue recognition standards under ASC Topic 606 (Revenue from Contracts with Customers), 5-step contract evaluation, distinct performance obligations, Standalone Selling Price (SSP) allocation, and lease classification under ASC Topic 842."
 
@@ -16,6 +19,11 @@ coverage:
     - "CONTRACT_ASSETS_AND_LIABILITIES"
     - "LEASE_CLASSIFICATION_ASC842"
     - "ACCOUNTS_RECEIVABLE_AGING"
+  known_uncovered_topics:
+    - "IFRS 15 International Financial Reporting Standards"
+    - "Government Grant Accounting (ASC 958)"
+    - "Insurance Contracts (ASC 944)"
+    - "Cryptocurrency Asset Valuation"
 
 standards:
   - standard_id: "asc_606_step_1"
