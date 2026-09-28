@@ -4,7 +4,7 @@
 > *Deterministic contract precedence resolution, typed DAG amendment traversal, and assertion-level slot grounding verification for corporate legal and deal intelligence.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version: 0.8.0](https://img.shields.io/badge/Version-0.8.0-blue.svg)](https://github.com/kruschdev/krusch-biz)
+[![Version: 0.9.0](https://img.shields.io/badge/Version-0.9.0-blue.svg)](https://github.com/kruschdev/krusch-biz)
 [![Python 3.11 | 3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
@@ -61,6 +61,7 @@ All 4 primitives are accessible through the Python core, REST API (`/api/agreeme
 * **Legal Hold & Append-Only Audit**: Purge operations on matters and agreements under active legal hold fail closed with HTTP 423 Locked. Deal events reject `UPDATE` and `DELETE` at the database engine level via SQLAlchemy event interceptors.
 * **Pre-Spool Magic-Byte Gate**: File uploads inspect initial bytes before spooling to disk, rejecting executable binaries (`MZ`, `\x7fELF`, Mach-O) and HTML-disguised PDFs (`<html`, `<!doctype`).
 * **Physical Citation Spine Coordinates (INV-11)**: End-to-end parity with KruschNexus and KruschLaw v0.6.0. Preserves physical bounding boxes (`bbox`), character spans (`char_start`, `char_end`), sequential page numbers, printed page locators, and parser metadata across database models, RAG candidate retrieval, controlling clause resolution, and REST responses.
+* **Dual-Provider RAG Substrate (Local pgvector & Wondersearch Cloud)**: Swappable retrieval substrate via `NexusClient`. Seamlessly routes clause candidate retrieval and deal evidence search to local PostgreSQL (port 5436) or cloud Wondersearch Drives without altering the confirmed-edge DAG resolver. Bit-for-bit physical grounding coordinates (INV-11) are preserved in both modes. Access to cloud backends is strictly gated by the INV-1 air-gap invariant (`ALLOW_CLOUD=1`).
 
 👉 **Full Invariants Specification & Pass/Fail Test Matrix**: See [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
 

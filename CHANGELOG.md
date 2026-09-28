@@ -4,6 +4,16 @@ All notable changes to **KruschBiz** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-28
+
+### 🚀 Added
+- **Dual-Provider RAG Substrate (`src/backend/nexus_rag.py`)**: Wired KruschBiz clause retrieval and deal room evidence search to swappable `NexusClient` provider. Supports local PostgreSQL pgvector (port 5436) and cloud Wondersearch Drives with zero disruption to the confirmed-edge DAG resolver.
+- **Physical Coordinates Preserved (INV-11)**: Propagates bounding boxes (`bbox: [x0, top, x1, bottom]`), page numbers, and character slice offsets bit-for-bit from Wondersearch SearchHit models directly into downstream proposition grounders.
+- **Air-Gap Invariant Gate**: Explicitly enforces `ALLOW_CLOUD=1` before connecting to cloud Wondersearch backends, failing closed with `AirGapViolationError` to prevent inadvertent deal room data exfiltration.
+- **Unit Test Coverage (`tests/test_nexus_rag_provider.py`)**: Added 5 automated unit tests verifying clause search routing, deal room tenant isolation, and air-gap exception gating (200 passing tests total).
+
+---
+
 ## [0.8.0] - 2026-09-27
 
 ### 🚀 Added
