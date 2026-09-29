@@ -26,7 +26,6 @@ import time
 from typing import Any
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-os.environ.setdefault("HEADLESS_MODE", "1")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -612,4 +611,5 @@ def main():
 
 
 if __name__ == "__main__":
+    os.environ.setdefault("HEADLESS_MODE", "1")
     main()
