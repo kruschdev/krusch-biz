@@ -71,6 +71,26 @@ jobs:
         run: |
           python scripts/eval_retrieval_and_grounding.py
 
+      - name: Instant Failure Push Notification
+        if: failure()
+        run: |
+          curl -s -X POST \
+            -H "Title: 🚨 CI Failure: ${{ github.repository }} (Python 3.12)" \
+            -H "Priority: urgent" \
+            -H "Tags: rotating_light,x" \
+            -H "Click: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -d "Run #${{ github.run_number }} failed on ${{ github.ref_name }}. Commit: ${{ github.sha }} by ${{ github.actor }}." \
+            https://ntfy.sh/krusch-ci-alerts || true
+
+      - name: Dispatch Webhook Alert (Optional)
+        if: failure() && env.CI_WEBHOOK != ''
+        env:
+          CI_WEBHOOK: ${{ secrets.CI_FAILURE_WEBHOOK }}
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" \
+            -d "{\"content\": \"🚨 **CI Failure**: [${{ github.repository }}#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) failed on \`${{ github.ref_name }}\` (Commit: \`${{ github.sha }}\`)\"}" \
+            "$CI_WEBHOOK" || true
+
   nightly-pgvector:
     name: Nightly Integration (Postgres + pgvector)
     runs-on: ubuntu-latest
@@ -112,3 +132,15 @@ jobs:
           DATABASE_URL: postgresql://kruschbiz:test_password@localhost:5432/kruschbiz_test_db
         run: |
           python -m unittest discover tests
+
+      - name: Instant Failure Push Notification
+        if: failure()
+        run: |
+          curl -s -X POST \
+            -H "Title: 🚨 CI Failure: ${{ github.repository }} (Nightly pgvector)" \
+            -H "Priority: urgent" \
+            -H "Tags: rotating_light,x" \
+            -H "Click: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -d "Nightly pgvector run #${{ github.run_number }} failed on ${{ github.ref_name }}. Commit: ${{ github.sha }}." \
+            https://ntfy.sh/krusch-ci-alerts || true
+
