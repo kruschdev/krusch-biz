@@ -68,6 +68,7 @@ jobs:
           APP_ENV: development
           ALLOW_LAN: 1
           DATABASE_URL: "sqlite:///:memory:"
+          HEADLESS_MODE: 1
         run: |
           python scripts/eval_retrieval_and_grounding.py
 
