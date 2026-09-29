@@ -19,8 +19,15 @@ NEXUS_SRC = os.path.join(os.path.dirname(PROJECT_ROOT), "krusch-nexus", "src")
 if os.path.isdir(NEXUS_SRC) and NEXUS_SRC not in sys.path:
     sys.path.insert(0, NEXUS_SRC)
 
-from krusch_nexus.models import SearchHit
-from krusch_nexus.exceptions import AirGapViolationError
+try:
+    from krusch_nexus.models import SearchHit
+    from krusch_nexus.exceptions import AirGapViolationError
+    HAS_NEXUS = True
+except ImportError:
+    HAS_NEXUS = False
+    SearchHit = None
+    AirGapViolationError = Exception
+
 from src.backend.config import settings
 from src.backend.nexus_rag import (
     is_nexus_available,
@@ -33,6 +40,11 @@ from src.backend.rag import retrieve_clauses, retrieve_deal_evidence
 
 class TestBizNexusRagProvider(unittest.TestCase):
     """Test suite for KruschBiz RAG delegation to Nexus/Wondersearch."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not HAS_NEXUS:
+            raise unittest.SkipTest("krusch_nexus is not available in the current environment")
 
     def setUp(self):
         self.orig_rag_provider = getattr(settings, "RAG_PROVIDER", "local")

@@ -63,3 +63,8 @@ ignore = ["E501", "E712"]
 "tests/*" = ["E402", "F401", "F841"]
 "scripts/*" = ["E402", "F401"]
 "alembic/*" = ["E402"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
