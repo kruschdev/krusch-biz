@@ -44,7 +44,7 @@ jobs:
         env:
           APP_ENV: development
           ALLOW_LAN: 1
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
         run: |
           pytest tests/ -v
 
@@ -52,7 +52,7 @@ jobs:
         env:
           APP_ENV: development
           ALLOW_LAN: 1
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
         run: |
           python scripts/eval_adversarial_corpus.py
 
@@ -67,7 +67,7 @@ jobs:
         env:
           APP_ENV: development
           ALLOW_LAN: 1
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
         run: |
           python scripts/eval_retrieval_and_grounding.py
 
