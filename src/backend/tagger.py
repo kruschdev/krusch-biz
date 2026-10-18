@@ -258,10 +258,12 @@ def tag_commercial_chunk_with_llm(
                     "system": TAGGER_SYSTEM_PROMPT,
                     "prompt": user_prompt,
                     "stream": False,
+                    "keep_alive": -1,
                     "options": {
                         "temperature": 0.1,
                         "num_predict": 150,
-                        "top_p": 0.9
+                        "top_p": 0.9,
+                        "num_ctx": 4096
                     }
                 }
             )

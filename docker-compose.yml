@@ -27,7 +27,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-kruschbiz}:${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD must be defined in your .env file}@db:5432/${POSTGRES_DB:-kruschbiz_db}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OLLAMA_EMBED_HOST=${OLLAMA_EMBED_HOST:-http://host.docker.internal:11434}
-      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5:14b}
+      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-qwen2.5-coder:7b}
       - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-bge-large}
       - APP_ENV=${APP_ENV:-development}
       - API_KEY=${API_KEY:-}

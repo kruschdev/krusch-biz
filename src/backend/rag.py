@@ -372,7 +372,8 @@ def get_embeddings_batch(queries: list[str]) -> list[list[float]]:
 
     payload = {
         "model": settings.OLLAMA_EMBED_MODEL,
-        "input": miss_texts
+        "input": miss_texts,
+        "keep_alive": -1
     }
     fetched: list[list[float]] = []
     try:
@@ -384,7 +385,7 @@ def get_embeddings_batch(queries: list[str]) -> list[list[float]]:
                 for mt in miss_texts:
                     s_resp = client.post(
                         f"{settings.OLLAMA_EMBED_HOST}/api/embeddings",
-                        json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": mt}
+                        json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": mt, "keep_alive": -1}
                     )
                     s_resp.raise_for_status()
                     fetched.append(s_resp.json().get("embedding", []))
@@ -1700,7 +1701,8 @@ IV. STRATEGIC RECOMMENDATIONS & REDLINE PRIORITIES
                     "prompt": user_prompt,
                     "system": system_prompt,
                     "stream": False,
-                    "options": {"temperature": temperature}
+                    "keep_alive": -1,
+                    "options": {"temperature": temperature, "num_ctx": 4096}
                 }
             )
             if resp.status_code == 200:
