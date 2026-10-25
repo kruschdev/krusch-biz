@@ -12,10 +12,21 @@ import csv
 import logging
 import os
 import re
+import shutil
+import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 logger = logging.getLogger("kruschbiz.nexus_adapter")
+
+DEFAULT_PAGE_BBOX = [0.0, 0.0, 612.0, 792.0]
+_nexus_lock = threading.Lock()
+
+try:
+    import pypdf  # noqa: F401
+    _PYPDF_AVAILABLE = True
+except ImportError:
+    _PYPDF_AVAILABLE = False
 
 # Check if krusch_nexus is installed
 _NEXUS_AVAILABLE = False
@@ -28,6 +39,7 @@ except ImportError:
     import sys
     candidate_paths = [
         os.getenv("KRUSCH_NEXUS_PATH"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "krusch-nexus", "src"),
         os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "krusch-nexus", "src"),
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "krusch-nexus", "src"),
         "/nexus/src",
@@ -48,9 +60,10 @@ except ImportError:
 
 @dataclass
 class ParsedPage:
-    page_number: int | None
-    text: str
+    page_number: int = 1
+    text: str = ""
     tables: list[list[str]] = field(default_factory=list)
+    bbox: list[float] = field(default_factory=lambda: list(DEFAULT_PAGE_BBOX))
 
 
 @dataclass
@@ -75,9 +88,26 @@ class DocumentChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class DocumentParser(Protocol):
+    """Protocol for pluggable document parsers (Nexus, Poppler, PyPDF, Standalone)."""
+    def parse(self, file_path: str) -> ParsedDocument:
+        ...
+
+
+def is_poppler_available() -> bool:
+    """Return True if poppler pdftotext binary is available on PATH."""
+    return shutil.which("pdftotext") is not None
+
+
+def is_pypdf_available() -> bool:
+    """Return True if pypdf is installed in the current Python environment."""
+    return _PYPDF_AVAILABLE
+
+
 def is_nexus_available() -> bool:
     """Return True if external krusch_nexus library is present in environment."""
-    return _NEXUS_AVAILABLE
+    with _nexus_lock:
+        return _NEXUS_AVAILABLE
 
 
 def parse_document(file_path: str) -> ParsedDocument:
@@ -88,18 +118,21 @@ def parse_document(file_path: str) -> ParsedDocument:
     filename = os.path.basename(file_path)
     ext = os.path.splitext(file_path)[1].lower()
 
-    if _NEXUS_AVAILABLE:
+    if is_nexus_available():
         try:
             import krusch_nexus
             res = krusch_nexus.parse_file(file_path)
             pages = []
-            for p in getattr(res, "pages", []):
+            for idx, p in enumerate(getattr(res, "pages", [])):
                 p_num = getattr(p, "page_number", None)
                 if p_num is None and ext in (".pdf", ".docx", ".doc"):
                     p_num = getattr(p, "index", None)
+                if p_num is None:
+                    p_num = idx + 1
                 p_text = getattr(p, "text", "")
                 p_tables = getattr(p, "tables", [])
-                pages.append(ParsedPage(page_number=p_num, text=p_text, tables=p_tables))
+                p_bbox = getattr(p, "bbox", None) or list(DEFAULT_PAGE_BBOX)
+                pages.append(ParsedPage(page_number=int(p_num), text=p_text, tables=p_tables, bbox=list(p_bbox)))
             meta = dict(getattr(res, "metadata", {}) or {})
             meta["nexus_result"] = res
             meta["file_path"] = file_path
@@ -107,7 +140,7 @@ def parse_document(file_path: str) -> ParsedDocument:
             return ParsedDocument(
                 filename=filename,
                 extension=ext,
-                pages=pages if pages else [ParsedPage(page_number=None if ext in (".txt", ".md", ".json", ".csv") else 1, text=getattr(res, "text", ""))],
+                pages=pages if pages else [ParsedPage(page_number=1, text=getattr(res, "text", ""))],
                 total_pages=len(pages) if pages else 1,
                 metadata=meta
             )
@@ -120,7 +153,7 @@ def parse_document(file_path: str) -> ParsedDocument:
     if ext in (".txt", ".md", ".json"):
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
-        pages.append(ParsedPage(page_number=None, text=content))
+        pages.append(ParsedPage(page_number=1, text=content))
 
     elif ext == ".csv":
         rows = []
@@ -128,7 +161,7 @@ def parse_document(file_path: str) -> ParsedDocument:
             reader = csv.reader(f)
             for r in reader:
                 rows.append(", ".join(r))
-        pages.append(ParsedPage(page_number=None, text="\n".join(rows)))
+        pages.append(ParsedPage(page_number=1, text="\n".join(rows)))
 
     elif ext in (".docx", ".doc"):
         try:
@@ -141,19 +174,23 @@ def parse_document(file_path: str) -> ParsedDocument:
             pages.append(ParsedPage(page_number=1, text=f"[Docx parse error: {de}]"))
 
     elif ext == ".pdf":
-        try:
-            import pypdf
-            reader = pypdf.PdfReader(file_path)
-            for idx, page in enumerate(reader.pages):
-                text = page.extract_text() or ""
-                pages.append(ParsedPage(page_number=idx + 1, text=text))
-        except Exception as pe:
-            logger.warning(f"PDF extraction error: {pe}")
-            pages.append(ParsedPage(page_number=1, text=f"[PDF extraction notice: {pe}]"))
+        if not _PYPDF_AVAILABLE:
+            logger.warning("pypdf is not installed; falling back to placeholder page for PDF extraction.")
+            pages.append(ParsedPage(page_number=1, text="[PDF extraction notice: pypdf not installed]"))
+        else:
+            try:
+                import pypdf
+                reader = pypdf.PdfReader(file_path)
+                for idx, page in enumerate(reader.pages):
+                    text = page.extract_text() or ""
+                    pages.append(ParsedPage(page_number=idx + 1, text=text))
+            except Exception as pe:
+                logger.warning(f"PDF extraction error: {pe}")
+                pages.append(ParsedPage(page_number=1, text=f"[PDF extraction notice: {pe}]"))
 
     else:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            pages.append(ParsedPage(page_number=None, text=f.read()))
+            pages.append(ParsedPage(page_number=1, text=f.read()))
 
     return ParsedDocument(
         filename=filename,
@@ -197,12 +234,20 @@ def chunk_document(
                 else:
                     sec_loc = hdr or "General"
 
+                ch_meta = ch.to_dict()
+                if not ch_meta.get("bbox"):
+                    ch_meta["bbox"] = list(DEFAULT_PAGE_BBOX)
+                if ch_meta.get("char_start") is None:
+                    ch_meta["char_start"] = 0
+                if ch_meta.get("char_end") is None:
+                    ch_meta["char_end"] = len(ch.text)
+
                 chunks.append(DocumentChunk(
                     text=ch.text,
-                    page_number=ch.page_number,
+                    page_number=ch.page_number if ch.page_number is not None else 1,
                     section_locator=sec_loc,
                     chunk_index=ch.chunk_index,
-                    metadata=ch.to_dict()
+                    metadata=ch_meta
                 ))
             if chunks:
                 return chunks
@@ -211,9 +256,14 @@ def chunk_document(
 
     chunks: list[DocumentChunk] = []
     chunk_idx = 0
+    default_bbox = list(DEFAULT_PAGE_BBOX)
 
     section_pattern = re.compile(
         r"(?=(?:^|\n)(?:#+\s*)?(?:(?:ARTICLE|SECTION|SCHEDULE|EXHIBIT|CLAUSE)\s+[\dA-Z\.]+|§\s*[\dA-Z\.]+))",
+        re.IGNORECASE
+    )
+    header_prefix_re = re.compile(
+        r"^(?:#+\s*)?((?:ARTICLE|SECTION|SCHEDULE|EXHIBIT|CLAUSE)\s+[\dA-Z\.]+|§\s*[\dA-Z\.]+)",
         re.IGNORECASE
     )
 
@@ -222,9 +272,30 @@ def chunk_document(
         if not text:
             continue
 
-        raw_sections = section_pattern.split(text)
-        p_num = page.page_number
-        current_section_locator = f"p. {p_num}" if p_num is not None else "General"
+        raw_sections = [b.strip() for b in section_pattern.split(text) if b and b.strip()]
+        if (
+            parsed_doc.extension == ".pdf"
+            and len(raw_sections) >= 2
+            and not header_prefix_re.match(raw_sections[0])
+            and len(raw_sections[0]) < 120
+        ):
+            # Merge short document title preamble on PDF page into the first section block (BUG-02)
+            first_hdr = header_prefix_re.match(raw_sections[1])
+            raw_sections[1] = f"{raw_sections[0]}\n{raw_sections[1]}"
+            raw_sections.pop(0)
+            p_num = page.page_number if page.page_number is not None else 1
+            printed_page = str(p_num)
+            if first_hdr:
+                hdr_title = first_hdr.group(1).title()
+                current_section_locator = f"p. {p_num} § {hdr_title}"
+            else:
+                current_section_locator = f"p. {p_num}"
+        else:
+            p_num = page.page_number if page.page_number is not None else 1
+            printed_page = str(p_num)
+            current_section_locator = f"p. {p_num}"
+
+        char_cursor = 0
 
         for block in raw_sections:
             block = block.strip()
@@ -232,21 +303,30 @@ def chunk_document(
                 continue
 
             # Identify if block starts with a section header
-            sec_header_match = re.match(
-                r"^(?:#+\s*)?((?:ARTICLE|SECTION|SCHEDULE|EXHIBIT|CLAUSE)\s+[\dA-Z\.]+|§\s*[\dA-Z\.]+)",
-                block,
-                re.IGNORECASE
-            )
+            sec_header_match = header_prefix_re.match(block)
             if sec_header_match:
-                current_section_locator = sec_header_match.group(1).title()
+                hdr_title = sec_header_match.group(1).title()
+                current_section_locator = (
+                    f"p. {p_num} § {hdr_title}" if parsed_doc.extension == ".pdf" else hdr_title
+                )
 
             # Split block if it exceeds max size
             if len(block) <= max_chunk_chars:
+                c_start = char_cursor
+                c_end = c_start + len(block)
+                char_cursor = c_end + 1
                 chunks.append(DocumentChunk(
                     text=block,
                     page_number=page.page_number,
                     section_locator=current_section_locator,
                     chunk_index=chunk_idx,
+                    metadata={
+                        "printed_page": printed_page,
+                        "bbox": list(default_bbox),
+                        "char_start": c_start,
+                        "char_end": c_end,
+                        "extra": {"parser": "standalone_fallback"},
+                    },
                 ))
                 chunk_idx += 1
             else:
@@ -257,11 +337,21 @@ def chunk_document(
                     if not p:
                         continue
                     if len(buffer) + len(p) + 2 > max_chunk_chars and buffer:
+                        c_start = char_cursor
+                        c_end = c_start + len(buffer)
+                        char_cursor = c_end + 2
                         chunks.append(DocumentChunk(
                             text=buffer,
                             page_number=page.page_number,
                             section_locator=current_section_locator,
                             chunk_index=chunk_idx,
+                            metadata={
+                                "printed_page": printed_page,
+                                "bbox": list(default_bbox),
+                                "char_start": c_start,
+                                "char_end": c_end,
+                                "extra": {"parser": "standalone_fallback"},
+                            },
                         ))
                         chunk_idx += 1
                         buffer = p
@@ -269,11 +359,21 @@ def chunk_document(
                         buffer = f"{buffer}\n\n{p}".strip() if buffer else p
 
                 if buffer:
+                    c_start = char_cursor
+                    c_end = c_start + len(buffer)
+                    char_cursor = c_end + 2
                     chunks.append(DocumentChunk(
                         text=buffer,
                         page_number=page.page_number,
                         section_locator=current_section_locator,
                         chunk_index=chunk_idx,
+                        metadata={
+                            "printed_page": printed_page,
+                            "bbox": list(default_bbox),
+                            "char_start": c_start,
+                            "char_end": c_end,
+                            "extra": {"parser": "standalone_fallback"},
+                        },
                     ))
                     chunk_idx += 1
 

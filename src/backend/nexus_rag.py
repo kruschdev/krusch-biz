@@ -13,66 +13,72 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 from typing import Any
 
 from .config import settings
 
 logger = logging.getLogger("kruschbiz.nexus_rag")
 
+# Thread-safe lock to prevent race conditions across multi-worker FastAPI threads
+_nexus_lock = threading.Lock()
 _NEXUS_AVAILABLE = False
 _NEXUS_CLIENT = None
 
 
 def _resolve_nexus():
     global _NEXUS_AVAILABLE
-    try:
-        import krusch_nexus  # noqa: F401
-        _NEXUS_AVAILABLE = True
-    except ImportError:
-        candidate_paths = [
-            getattr(settings, "KRUSCH_NEXUS_PATH", None),
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "krusch-nexus", "src"),
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "krusch-nexus", "src"),
-            "/nexus/src",
-            os.path.expanduser("~/homelab/projects/krusch-nexus/src"),
-        ]
-        for p in candidate_paths:
-            if p and os.path.isdir(p) and p not in sys.path:
-                sys.path.insert(0, p)
-                break
+    with _nexus_lock:
         try:
             import krusch_nexus  # noqa: F401
             _NEXUS_AVAILABLE = True
         except ImportError:
-            _NEXUS_AVAILABLE = False
+            candidate_paths = [
+                getattr(settings, "KRUSCH_NEXUS_PATH", None),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "krusch-nexus", "src"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "krusch-nexus", "src"),
+                "/nexus/src",
+                os.path.expanduser("~/homelab/projects/krusch-nexus/src"),
+            ]
+            for p in candidate_paths:
+                if p and os.path.isdir(p) and p not in sys.path:
+                    sys.path.insert(0, p)
+                    break
+            try:
+                import krusch_nexus  # noqa: F401
+                _NEXUS_AVAILABLE = True
+            except ImportError:
+                _NEXUS_AVAILABLE = False
 
 
 _resolve_nexus()
 
 
 def is_nexus_available() -> bool:
-    return _NEXUS_AVAILABLE
+    with _nexus_lock:
+        return _NEXUS_AVAILABLE
 
 
 def get_nexus_client() -> Any:
     global _NEXUS_CLIENT
-    if _NEXUS_CLIENT is not None:
+    with _nexus_lock:
+        if _NEXUS_CLIENT is not None:
+            return _NEXUS_CLIENT
+        if not _NEXUS_AVAILABLE:
+            return None
+        from krusch_nexus import NexusClient, NexusConfig
+
+        backend = os.getenv("NEXUS_BACKEND", "local").lower()
+        allow_cloud = getattr(settings, "ALLOW_CLOUD", False) or os.getenv("ALLOW_CLOUD", "0") in ("1", "true", "True")
+        if backend == "wondersearch" and not allow_cloud:
+            from krusch_nexus.exceptions import AirGapViolationError
+            raise AirGapViolationError(
+                "Security Violation: KruschBiz refuses connection to cloud Wondersearch backend without ALLOW_CLOUD=1."
+            )
+
+        cfg = NexusConfig.from_env()
+        _NEXUS_CLIENT = NexusClient(config=cfg)
         return _NEXUS_CLIENT
-    if not is_nexus_available():
-        return None
-    from krusch_nexus import NexusClient, NexusConfig
-
-    backend = os.getenv("NEXUS_BACKEND", "local").lower()
-    allow_cloud = getattr(settings, "ALLOW_CLOUD", False) or os.getenv("ALLOW_CLOUD", "0") in ("1", "true", "True")
-    if backend == "wondersearch" and not allow_cloud:
-        from krusch_nexus.exceptions import AirGapViolationError
-        raise AirGapViolationError(
-            "Security Violation: KruschBiz refuses connection to cloud Wondersearch backend without ALLOW_CLOUD=1."
-        )
-
-    cfg = NexusConfig.from_env()
-    _NEXUS_CLIENT = NexusClient(config=cfg)
-    return _NEXUS_CLIENT
 
 
 def search_clauses_nexus(

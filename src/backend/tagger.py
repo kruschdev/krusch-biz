@@ -221,6 +221,10 @@ def heuristic_tag_commercial_chunk(
     }
 
 
+class TaggerUnavailableError(RuntimeError):
+    """Raised when the Ollama tagger endpoint returns an error or is unreachable."""
+
+
 def tag_commercial_chunk_with_llm(
     content: str,
     filename: str = "",
@@ -232,6 +236,8 @@ def tag_commercial_chunk_with_llm(
     Request structured commercial tags, micro-digest summary, and topic from local Ollama.
     Features cache by sha256 + model + prompt_version, and 1-pass JSON repair.
     """
+    if not getattr(settings, "ENABLE_OLLAMA_TAGGER", True):
+        return None
     to = timeout or float(getattr(settings, "TAGGER_TIMEOUT", 15.0))
     model = getattr(settings, "TAGGER_MODEL", getattr(settings, "OLLAMA_LLM_MODEL", "qwen2.5-coder:7b"))
     host = settings.OLLAMA_BASE_URL.rstrip("/")
@@ -263,7 +269,7 @@ def tag_commercial_chunk_with_llm(
                         "temperature": 0.1,
                         "num_predict": 150,
                         "top_p": 0.9,
-                        "num_ctx": 4096
+                        "num_ctx": 16384
                     }
                 }
             )

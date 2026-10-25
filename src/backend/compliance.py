@@ -184,7 +184,9 @@ def evaluate_contract_vs_statute(
          c. Deterministically evaluate slot alignment against mandatory ceilings/floors.
       4. Synthesize overall portfolio verdict.
     """
-    # 1. Enforce mandatory as_of_date
+    # 1. Enforce mandatory as_of_date & tenant_id
+    if not tenant_id or not str(tenant_id).strip():
+        raise ValueError("Non-negotiable Invariant: 'tenant_id' must be a non-empty string.")
     if not request.as_of_date or not request.as_of_date.strip():
         raise ValueError("Non-negotiable Invariant: 'as_of_date' is mandatory. No silent 'today' is permitted.")
 

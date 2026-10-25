@@ -71,6 +71,8 @@ from .resolver import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
 logger = logging.getLogger("kruschbiz.api")
 
+DEFAULT_TENANT_ID = os.getenv("DEFAULT_TENANT", "org_default")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -138,7 +140,7 @@ upload_rate_limiter = SimpleRateLimiter(requests_per_minute=20)
 
 def verify_api_key(
     x_api_key: str | None = Header(None),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Enforce API key authentication and validate tenant binding to reject header spoofing."""
     if settings.API_KEY:
@@ -403,7 +405,7 @@ def create_deal(
     deal_in: DealCreate,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Create a new corporate deal, vendor procurement review, or corporate transaction matter."""
     logger.info(f"Creating corporate deal: '{deal_in.title}' for tenant '{x_tenant_id}'...")
@@ -421,11 +423,19 @@ def create_deal(
     try:
         deal.embedding = get_embedding(f"{deal_in.title} {deal_in.context_facts}")
     except Exception as e:
+        if os.environ.get("REQUIRE_DEAL_EMBEDDING", "").lower() in ("1", "true", "yes"):
+            logger.error(f"Mandatory deal embedding generation failed: {e}")
+            raise HTTPException(status_code=503, detail="Embedding service unavailable") from e
         logger.warning(f"Could not generate deal embedding ({e}), proceeding without it.")
 
-    db.add(deal)
-    db.commit()
-    db.refresh(deal)
+    try:
+        db.add(deal)
+        db.commit()
+        db.refresh(deal)
+    except Exception as db_err:
+        db.rollback()
+        logger.error(f"Database transaction failed in create_deal: {db_err}")
+        raise HTTPException(status_code=500, detail="Failed to persist corporate deal") from db_err
     return deal
 
 
@@ -436,7 +446,7 @@ def list_deals(
     status_filter: str | None = Query(None, alias="status"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """List corporate deal matters for current tenant."""
     q = db.query(DealMatter).filter(
@@ -453,7 +463,7 @@ def get_deal(
     deal_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Retrieve details of a corporate deal matter."""
     deal = db.query(DealMatter).filter(
@@ -472,7 +482,7 @@ def update_deal(
     deal_update: DealUpdate,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Update context, status, or details of a deal matter."""
     deal = db.query(DealMatter).filter(
@@ -503,7 +513,7 @@ def soft_delete_deal(
     deal_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Soft delete a deal matter from active listings."""
     deal = db.query(DealMatter).filter(
@@ -524,7 +534,7 @@ def hard_delete_deal(
     confirm_deal_code: str | None = Query(None, description="Typed deal_code confirmation required for hard purge"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Hard purge: Permanently delete deal record, all associated evidence,
@@ -580,7 +590,7 @@ def legacy_purge_deal(
     confirm_deal_code: str | None = Query(None),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Deprecated alias for hard_delete_deal."""
     deal = db.query(DealMatter).filter(
@@ -611,7 +621,7 @@ def get_deal_evidence(
     doc_type: str | None = Query(None, description="Optional doc_type filter (e.g. contract, redline, sla)"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Search deal room exhibits, vendor proposals, redlines, and commercial attachments
@@ -649,7 +659,7 @@ def get_deal_evidence_tags(
     deal_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Return distinct commercial semantic tags and topics present in a deal's evidence corpus
@@ -706,7 +716,7 @@ def search_clauses(
     exclude_superseded: bool = Query(True),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Search commercial clauses across the corporate agreement graph.
@@ -758,7 +768,7 @@ def resolve_controlling_post(
     body: ResolverRequest,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     POST resolver endpoint: Walk the agreement relation graph (AMENDS, SUPERSEDES)
@@ -786,7 +796,7 @@ def get_contract_conflicts_post(
     body: ConflictsRequest,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     POST conflicts endpoint: Detect conflicting slot values across concurrently active instruments.
@@ -813,7 +823,7 @@ def check_contract_vs_statute_conflicts(
     body: ContractVsStatuteRequest,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     The Join Endpoint: Evaluates controlling commercial contract terms (KruschBiz DAG)
@@ -839,7 +849,7 @@ def get_controlling_clause(
     as_of_date: str | None = Query(None, description="ISO format date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Walk the agreement relation graph (AMENDS, SUPERSEDES) to resolve which clause
@@ -868,7 +878,7 @@ def get_contract_conflicts(
     as_of_date: str | None = Query(None, description="ISO format date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Detect conflicting slot values (e.g. Net 30 vs Net 45) across concurrently active instruments.
@@ -895,7 +905,7 @@ def get_agreements_conflicts(
     as_of_date: str | None = Query(None, description="ISO format date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Pre-generation conflict report: Scan portfolio for active commercial conflicts."""
     return get_contract_conflicts(counterparty, as_of_date, db, api_key, x_tenant_id)
@@ -906,7 +916,7 @@ def export_what_controls_endpoint(
     body: WhatControlsExportRequest,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Generate an authoritative 1-page 'What Controls as of DATE' General Counsel memorandum
@@ -960,7 +970,7 @@ def list_resolution_traces(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Query immutable audit log of commercial precedence graph walks."""
     query = db.query(ResolutionTraceRecord).filter(ResolutionTraceRecord.tenant_id == x_tenant_id)
@@ -993,7 +1003,7 @@ def get_resolution_trace(
     trace_id: str,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Retrieve an immutable resolution trace by ID with strict tenant isolation."""
     record = db.query(ResolutionTraceRecord).filter(
@@ -1023,7 +1033,7 @@ def delete_agreement(
     agreement_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Atomically purge an agreement and its clauses, relations, and vectors."""
     ag = db.query(Agreement).filter(
@@ -1065,7 +1075,7 @@ def set_deal_legal_hold(
     payload: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Set or release legal hold status for a deal matter."""
     deal = db.query(DealMatter).filter(
@@ -1096,7 +1106,7 @@ def set_agreement_legal_hold(
     payload: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Set or release legal hold status for an agreement."""
     ag = db.query(Agreement).filter(
@@ -1125,7 +1135,7 @@ def export_deal_hold_bundle(
     deal_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Export an immutable, cryptographic legal hold archive bundle for a deal matter."""
     deal = db.query(DealMatter).filter(
@@ -1205,7 +1215,7 @@ def diff_contract_instruments(
     agreement_b_id: int = Query(..., description="Target Agreement ID (e.g. 2025 MSA or Amendment)"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Diff two legal instruments side-by-side:
@@ -1228,7 +1238,7 @@ def list_agreements(
     status_filter: str | None = Query(None, alias="status"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """List legal instruments / agreements for the active tenant."""
     query = db.query(Agreement).filter(Agreement.tenant_id == x_tenant_id)
@@ -1260,7 +1270,7 @@ def list_relations(
     agreement_id: int | None = Query(None),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """List agreement relations (AMENDS, SUPERSEDES, SCHEDULE_OF, INCORPORATES) for the tenant."""
     query = db.query(AgreementRelation).filter(AgreementRelation.tenant_id == x_tenant_id)
@@ -1315,7 +1325,7 @@ def create_relation(
     rel_in: RelationCreate,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Explicitly create an agreement relation edge."""
     rel_status = "confirmed"
@@ -1347,7 +1357,7 @@ def confirm_relation(
     relation_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Human review confirmation of a proposed relation edge."""
     rel = db.query(AgreementRelation).filter(
@@ -1399,7 +1409,7 @@ def api_materialize_slots(
     payload: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Materialize and persist effective commercial slot snapshots across canonical topics for a counterparty / agreement family."""
     counterparty = payload.get("counterparty")
@@ -1429,7 +1439,7 @@ def reject_relation(
     relation_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Human review rejection of a proposed relation edge."""
     rel = db.query(AgreementRelation).filter(
@@ -1460,7 +1470,7 @@ def update_relation(
     rel_update: RelationUpdate,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Edit relation properties (clause_scope, relation_type, target_agreement_id, status)."""
     rel = db.query(AgreementRelation).filter(
@@ -1512,7 +1522,7 @@ def delete_relation(
     relation_id: int,
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Remove or reject a relation edge."""
     rel = db.query(AgreementRelation).filter(
@@ -1570,7 +1580,7 @@ def consult_deal(
     organization: str | None = Query(None),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Synthesize an executive commercial brief grounded in the contract graph.
@@ -1750,7 +1760,7 @@ def upload_business_document(
     organization: str = Form("Acme Corp"),
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """
     Secure file upload endpoint for business contracts, SLAs, DPAs, and exhibits.
@@ -1808,7 +1818,7 @@ def upload_business_document(
 def seed_fixtures(
     db: Session = Depends(get_db),
     api_key: str | None = Depends(verify_api_key),
-    x_tenant_id: str = Header("org_default", alias="X-Tenant-ID")
+    x_tenant_id: str = Header(DEFAULT_TENANT_ID, alias="X-Tenant-ID")
 ):
     """Seed demo contracts, agreements, and relation graph for the tenant."""
     report = ingest_mock_data(db, tenant_id=x_tenant_id)

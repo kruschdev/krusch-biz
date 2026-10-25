@@ -21,19 +21,19 @@ if PROJECT_ROOT not in sys.path:
 from src.backend.ingest import SEED_COMMERCIAL_FIXTURES
 
 OLLAMA_URL = os.getenv("OLLAMA_EMBED_HOST", "http://localhost:11434")
-MODEL_NAME = "bge-large"
+MODEL_NAME = os.getenv("OLLAMA_EMBED_MODEL", "snowflake-arctic-embed2:latest")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", "eval", "embeddings")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 def get_embedding(client: httpx.Client, text: str) -> list[float]:
     resp = client.post(
-        f"{OLLAMA_URL}/api/embeddings",
-        json={"model": MODEL_NAME, "prompt": text},
+        f"{OLLAMA_URL}/api/embed",
+        json={"model": MODEL_NAME, "input": text, "truncate": True, "keep_alive": -1},
         timeout=60.0
     )
     resp.raise_for_status()
-    return resp.json()["embedding"]
+    return resp.json()["embeddings"][0]
 
 
 def main():

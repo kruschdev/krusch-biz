@@ -200,6 +200,18 @@ _QUERY_EXPANSION_LOCK = threading.Lock()
 _QUERY_EXPANSION_MAX = 5000
 
 
+def clear_query_expansion_cache() -> None:
+    """Thread-safely clear the commercial query expansion LRU cache."""
+    with _QUERY_EXPANSION_LOCK:
+        _QUERY_EXPANSION_CACHE.clear()
+
+
+def get_query_expansion_cache_stats() -> dict[str, int]:
+    """Return current size and maximum capacity of the query expansion LRU cache."""
+    with _QUERY_EXPANSION_LOCK:
+        return {"size": len(_QUERY_EXPANSION_CACHE), "max_size": _QUERY_EXPANSION_MAX}
+
+
 def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]]]:
     """
     Spot commercial issues from natural language inquiries, extracting structured slots
@@ -212,7 +224,8 @@ def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]
     with _QUERY_EXPANSION_LOCK:
         if cache_key in _QUERY_EXPANSION_CACHE:
             _QUERY_EXPANSION_CACHE.move_to_end(cache_key)
-            return _QUERY_EXPANSION_CACHE[cache_key]
+            cached_expanded, cached_spotted = _QUERY_EXPANSION_CACHE[cache_key]
+            return cached_expanded, [dict(item) for item in cached_spotted]
 
     spotted: list[dict[str, str]] = []
     collected_terms: list[str] = []
@@ -246,14 +259,13 @@ def expand_commercial_query(text_content: str) -> tuple[str, list[dict[str, str]
     else:
         expanded_query = text_content
 
-    result = (expanded_query, spotted)
     with _QUERY_EXPANSION_LOCK:
-        _QUERY_EXPANSION_CACHE[cache_key] = result
+        _QUERY_EXPANSION_CACHE[cache_key] = (expanded_query, [dict(item) for item in spotted])
         _QUERY_EXPANSION_CACHE.move_to_end(cache_key)
-        if len(_QUERY_EXPANSION_CACHE) > _QUERY_EXPANSION_MAX:
+        while len(_QUERY_EXPANSION_CACHE) > _QUERY_EXPANSION_MAX:
             _QUERY_EXPANSION_CACHE.popitem(last=False)
 
-    return result
+    return expanded_query, spotted
 
 
 class RetrievalError(RuntimeError):
@@ -373,6 +385,7 @@ def get_embeddings_batch(queries: list[str]) -> list[list[float]]:
     payload = {
         "model": settings.OLLAMA_EMBED_MODEL,
         "input": miss_texts,
+        "truncate": True,
         "keep_alive": -1
     }
     fetched: list[list[float]] = []
@@ -1702,7 +1715,7 @@ IV. STRATEGIC RECOMMENDATIONS & REDLINE PRIORITIES
                     "system": system_prompt,
                     "stream": False,
                     "keep_alive": -1,
-                    "options": {"temperature": temperature, "num_ctx": 4096}
+                    "options": {"temperature": temperature, "num_ctx": 16384}
                 }
             )
             if resp.status_code == 200:

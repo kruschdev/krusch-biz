@@ -6,9 +6,14 @@ Centralized configuration and sovereign air-gap security boundaries for KruschBi
 
 from __future__ import annotations
 
+import ipaddress
+import logging
 import os
+import urllib.parse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -23,7 +28,7 @@ class Settings(BaseSettings):
     # Database (Port 5436 to avoid conflict with KruschLaw 5435 and default 5432)
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://kruschbiz:kruschbiz_secret@localhost:5436/kruschbiz_db"
+        "postgresql://kruschbiz@localhost:5436/kruschbiz_db"
     )
 
     # Ollama Endpoints
@@ -31,10 +36,11 @@ class Settings(BaseSettings):
     OLLAMA_EMBED_HOST: str = os.getenv("OLLAMA_EMBED_HOST", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
 
     # Models
-    OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-large")
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", os.getenv("OLLAMA_EMBED_MODEL", "bge-large"))
+    OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "snowflake-arctic-embed2")
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", os.getenv("OLLAMA_EMBED_MODEL", "snowflake-arctic-embed2"))
     OLLAMA_LLM_MODEL: str = os.getenv("OLLAMA_LLM_MODEL", "qwen2.5-coder:7b")
     TAGGER_MODEL: str = os.getenv("TAGGER_MODEL", "qwen2.5-coder:7b")
+    ENABLE_OLLAMA_TAGGER: bool = os.getenv("ENABLE_OLLAMA_TAGGER", "1") in ("1", "true", "True")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     USE_MOCK_EMBEDDINGS: bool = os.getenv("USE_MOCK_EMBEDDINGS", "0") in ("1", "true", "True")
     HEADLESS_MODE: bool = os.getenv("HEADLESS_MODE", "0") in ("1", "true", "True")
@@ -95,8 +101,6 @@ class Settings(BaseSettings):
 
 def is_loopback_or_private_host(url_or_host: str) -> bool:
     """Inspect whether a configured host/URL resides strictly on loopback or private networks."""
-    import ipaddress
-    import urllib.parse
     if not url_or_host:
         return False
     try:
@@ -115,14 +119,13 @@ def is_loopback_or_private_host(url_or_host: str) -> bool:
             return True
         ip = ipaddress.ip_address(hostname)
         return ip.is_loopback or ip.is_private
-    except Exception:
+    except (ValueError, TypeError, ipaddress.AddressValueError) as exc:
+        logger.debug("Host validation failed: %s", exc)
         return False
 
 
 def is_strict_loopback(url_or_host: str) -> bool:
     """Inspect whether a configured host/URL resides strictly on loopback (127.0.0.1, localhost, ::1)."""
-    import ipaddress
-    import urllib.parse
     if not url_or_host:
         return False
     try:
@@ -136,7 +139,8 @@ def is_strict_loopback(url_or_host: str) -> bool:
             return True
         ip = ipaddress.ip_address(hostname)
         return ip.is_loopback
-    except Exception:
+    except (ValueError, TypeError, ipaddress.AddressValueError) as exc:
+        logger.debug("Strict loopback validation failed: %s", exc)
         return False
 
 

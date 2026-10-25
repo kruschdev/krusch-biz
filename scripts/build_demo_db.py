@@ -20,8 +20,8 @@ if PROJECT_ROOT not in sys.path:
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-os.environ["USE_MOCK_EMBEDDINGS"] = "1"
-os.environ["HEADLESS_MODE"] = "1"
+os.environ.setdefault("USE_MOCK_EMBEDDINGS", "1")
+os.environ.setdefault("HEADLESS_MODE", "1")
 
 import src.backend.db as db_mod
 from src.backend.db import AgreementRelation, Base

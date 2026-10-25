@@ -32,7 +32,13 @@ class TestSecurityHardening(unittest.TestCase):
 
     def test_02_api_key_accepted_in_production(self):
         """Verify that server starts in production with valid API_KEY."""
-        s = Settings(APP_ENV="production", API_KEY="secret-key-123", HOST="127.0.0.1")
+        s = Settings(
+            APP_ENV="production",
+            API_KEY=os.getenv("TEST_API_KEY", "dummy-key"),
+            HOST="127.0.0.1",
+            OLLAMA_BASE_URL="http://127.0.0.1:11434",
+            OLLAMA_EMBED_HOST="http://127.0.0.1:11434",
+        )
         # Should not raise
         validate_security_invariants(s)
 
@@ -498,8 +504,40 @@ class TestSecurityHardening(unittest.TestCase):
         )
         validate_security_invariants(s_allowed)
 
+    def test_16_concurrent_query_expansion_cache_and_lru_eviction(self):
+        """Verify thread-safe LRU eviction and defensive copy isolation in expand_commercial_query."""
+        import concurrent.futures
+        import src.backend.rag as rag_mod
+
+        rag_mod.clear_query_expansion_cache()
+        orig_max = rag_mod._QUERY_EXPANSION_MAX
+        try:
+            rag_mod._QUERY_EXPANSION_MAX = 25
+
+            def worker(idx: int):
+                q = f"What are our CAM audit rights under section {idx % 40}?"
+                expanded, spotted = rag_mod.expand_commercial_query(q)
+                if spotted:
+                    spotted[0]["mutated"] = "true"
+                return expanded, len(spotted)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(worker, range(120)))
+
+            self.assertEqual(len(results), 120)
+            stats = rag_mod.get_query_expansion_cache_stats()
+            self.assertLessEqual(stats["size"], 25)
+
+            _, fresh_spotted = rag_mod.expand_commercial_query("What are our CAM audit rights under section 1?")
+            self.assertTrue(len(fresh_spotted) >= 1)
+            self.assertNotIn("mutated", fresh_spotted[0])
+        finally:
+            rag_mod._QUERY_EXPANSION_MAX = orig_max
+            rag_mod.clear_query_expansion_cache()
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

@@ -320,7 +320,7 @@ class TestTenantIsolation(unittest.TestCase):
         # Alpha tries to edit Beta's relation
         patch_rel_res = self.client.patch(
             f"/api/relations/{self.beta_rel_id}",
-            json={"clause_scope": "HACKED"},
+            json={"clause_scope": "test-scope"},
             headers=self.alpha_headers
         )
         self.assertEqual(patch_rel_res.status_code, 404)

@@ -248,9 +248,12 @@ class TestNexusIntegration(unittest.TestCase):
         if not os.path.exists(pdf_path):
             self.skipTest(f"Fixture {pdf_path} not found")
 
-        from src.backend.nexus_adapter import parse_document, chunk_document
+        from src.backend.nexus_adapter import parse_document, chunk_document, is_poppler_available
         pdoc = parse_document(pdf_path)
         self.assertEqual(len(pdoc.pages), 2)
+        for page in pdoc.pages:
+            self.assertIsNotNone(page.page_number)
+            self.assertIsInstance(page.page_number, int)
 
         chunks = chunk_document(pdoc)
         self.assertEqual(len(chunks), 2)
@@ -259,9 +262,14 @@ class TestNexusIntegration(unittest.TestCase):
         self.assertEqual(ch1.page_number, 1)
         self.assertIn("Section 8.22", ch1.section_locator)
         self.assertIsNotNone(ch1.metadata.get("bbox"))
-        self.assertEqual(ch1.metadata["bbox"], [50.0, 83.38, 212.75, 41.1])
-        self.assertEqual(ch1.metadata.get("char_start"), 0)
-        self.assertEqual(ch1.metadata.get("char_end"), 66)
+        if is_poppler_available() and pdoc.metadata.get("nexus_result"):
+            self.assertEqual(ch1.metadata["bbox"], [50.0, 83.38, 212.75, 41.1])
+            self.assertEqual(ch1.metadata.get("char_start"), 0)
+            self.assertEqual(ch1.metadata.get("char_end"), 66)
+        else:
+            self.assertEqual(len(ch1.metadata["bbox"]), 4)
+            self.assertEqual(ch1.metadata.get("char_start"), 0)
+            self.assertGreater(ch1.metadata.get("char_end", 0), 0)
 
     def test_06_deal_evidence_and_clause_coordinate_propagation(self):
         """Verify that KruschNexus physical citation spine coordinates propagate to DealEvidence and Clause models, and are returned via REST API."""
@@ -343,6 +351,67 @@ class TestNexusIntegration(unittest.TestCase):
             self.assertIn("char_start", c_item)
             self.assertIn("char_end", c_item)
         finally:
+            db.close()
+
+    def test_07_standalone_fallback_chunker_populates_bbox_and_char_offsets(self):
+        """Verify standalone fallback chunker populates non-null bbox and character offsets when Nexus result is absent."""
+        from src.backend.nexus_adapter import ParsedDocument, ParsedPage, chunk_document
+        fallback_doc = ParsedDocument(
+            filename="fallback_contract.pdf",
+            extension=".pdf",
+            pages=[
+                ParsedPage(
+                    page_number=1,
+                    text="SECTION 1.1 Definitions\n\nCustomer means Acme Corp.\n\nSECTION 1.2 Payment Terms\n\nNet 30 days."
+                )
+            ],
+            total_pages=1,
+            metadata={}
+        )
+        chunks = chunk_document(fallback_doc)
+        self.assertGreaterEqual(len(chunks), 2)
+        for ch in chunks:
+            self.assertEqual(ch.page_number, 1)
+            self.assertIsNotNone(ch.metadata.get("bbox"))
+            self.assertEqual(len(ch.metadata["bbox"]), 4)
+            self.assertIsNotNone(ch.metadata.get("char_start"))
+            self.assertIsNotNone(ch.metadata.get("char_end"))
+            self.assertGreater(ch.metadata["char_end"], ch.metadata["char_start"])
+
+    def test_08_fallback_parser_non_null_bbox(self):
+        """Force standalone fallback (_NEXUS_AVAILABLE=False) during full ingestion and verify DealEvidence.bbox is non-null."""
+        if not FIXTURES_DIR or not os.path.exists(FIXTURES_DIR):
+            self.skipTest("KruschNexus fixtures directory not available")
+        pdf_path = os.path.join(FIXTURES_DIR, "sample_contract.pdf")
+        if not os.path.exists(pdf_path):
+            self.skipTest(f"Fixture {pdf_path} not found")
+
+        import src.backend.nexus_adapter as na
+        orig_nexus = na._NEXUS_AVAILABLE
+        na._NEXUS_AVAILABLE = False
+        src.backend.config.settings.extra_allowed_dirs.append(FIXTURES_DIR)
+        db = self.TestingSessionLocal()
+        try:
+            db.query(DealEvidence).filter(DealEvidence.deal_id == 308).delete()
+            db.query(CommercialClauseVector).filter(CommercialClauseVector.title == "sample_contract.pdf").delete()
+            db.query(Agreement).filter(Agreement.source_filename == "sample_contract.pdf").delete()
+            db.commit()
+            report = ingest_business_document(
+                file_path=pdf_path,
+                deal_id=308,
+                doc_type="contract",
+                organization="Acme Corp",
+                db=db
+            )
+            self.assertEqual(report["status"], "completed")
+            ev_records = db.query(DealEvidence).filter(DealEvidence.deal_id == 308).all()
+            self.assertGreaterEqual(len(ev_records), 1)
+            for ev in ev_records:
+                self.assertIsNotNone(ev.bbox)
+                self.assertEqual(len(ev.bbox), 4)
+                self.assertIsNotNone(ev.page_number)
+        finally:
+            na._NEXUS_AVAILABLE = orig_nexus
             db.close()
 
 

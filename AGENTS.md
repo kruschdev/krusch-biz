@@ -36,7 +36,7 @@ KruschBiz is an on-premise, air-gapped corporate intelligence engine and version
 
 8. **MCP Catalog & Sovereign Gateway Standards**:
    - **Core Domain MCP Tools**: `src/mcp/server.py` exposes strictly 4 core domain tools: `contract_intelligence`, `manage_deal`, `ingest_contract`, and `verify_grounding`.
-   - **Sovereign 5-Verb Gateway MCP Router (`src/mcp/gateway.py`)**: Consolidated cross-domain router strictly constrained to <450 prompt tokens (~428 tokens) for local 7B/14B inference (`ask_biz`, `ask_law`, `check_compliance`, `ingest`, `purge`).
+   - **Sovereign 5-Verb Gateway MCP Router (`src/mcp/gateway.py`)**: Consolidated cross-domain router strictly constrained to <450 prompt tokens (~428 tokens) for local fleet inference (`qwen2.5-coder:7b`, `gemma4:e4b`, `hermes3:latest`: `ask_biz`, `ask_law`, `check_compliance`, `ingest`, `purge`).
    - **Orchestrator Invariants (`docs/ORCHESTRATOR_SPEC.md`)**:
      - Canonical `matter_ref` ↔ `deal_ref` cross-domain mapping.
      - Never union law and contract vector tables (clean schema separation).

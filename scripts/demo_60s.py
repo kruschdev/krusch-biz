@@ -16,8 +16,8 @@ import time
 from datetime import date
 
 # Set headless flags before importing backend
-os.environ["HEADLESS_MODE"] = "1"
-os.environ["USE_MOCK_EMBEDDINGS"] = "1"
+os.environ.setdefault("HEADLESS_MODE", "1")
+os.environ.setdefault("USE_MOCK_EMBEDDINGS", "1")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:

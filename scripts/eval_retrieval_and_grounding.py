@@ -25,7 +25,8 @@ import sys
 import time
 from typing import Any
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+if not os.environ.get("DATABASE_URL", "").strip():
+    os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:

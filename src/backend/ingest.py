@@ -26,7 +26,6 @@ from typing import Any
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from .config import settings
 from .db import (
     Agreement,
     AgreementRelation,
@@ -46,6 +45,14 @@ from .tagger import tag_commercial_chunk
 from .taxonomy import extract_structured_slots
 
 logger = logging.getLogger("kruschbiz.ingest")
+
+
+def _resolve_settings(cfg: Any = None) -> Any:
+    """Resolve explicit settings object or lazily import default singleton settings."""
+    if cfg is not None:
+        return cfg
+    from .config import settings as _default_settings
+    return _default_settings
 
 
 def ensure_party_and_alias(
@@ -721,17 +728,19 @@ def ingest_business_document(
     doc_type: str = "contract",
     organization: str = "Acme Corp",
     tenant_id: str = "org_default",
-    db: Session | None = None
+    db: Session | None = None,
+    settings: Any = None
 ) -> dict[str, Any]:
     """
     Ingest a corporate contract or deal document with transactional safety,
     MIME magic byte validation, slot extraction, and DOS protection.
     """
+    active_settings = _resolve_settings(settings)
     abs_path = os.path.abspath(file_path)
-    allowed_dirs = settings.allowed_ingest_dirs_list
+    allowed_dirs = active_settings.allowed_ingest_dirs_list
     if not any(abs_path == d or abs_path.startswith(d + os.sep) for d in allowed_dirs):
         raise ValueError(
-            f"Security Exception: Ingestion path '{file_path}' is outside permitted directory boundaries ({settings.ALLOWED_INGEST_DIRS})."
+            f"Security Exception: Ingestion path '{file_path}' is outside permitted directory boundaries ({active_settings.ALLOWED_INGEST_DIRS})."
         )
 
     if not os.path.exists(abs_path):
@@ -819,11 +828,11 @@ def ingest_business_document(
                     "content": ch.text,
                     "section": sec_locator,
                     "chunk_index": ch.chunk_index,
-                    "page_number": ch.page_number,
+                    "page_number": ch.page_number if ch.page_number is not None else 1,
                     "printed_page": ch_meta.get("printed_page"),
-                    "bbox": ch_meta.get("bbox"),
-                    "char_start": ch_meta.get("char_start"),
-                    "char_end": ch_meta.get("char_end"),
+                    "bbox": ch_meta.get("bbox") or [0.0, 0.0, 612.0, 792.0],
+                    "char_start": ch_meta.get("char_start") if ch_meta.get("char_start") is not None else 0,
+                    "char_end": ch_meta.get("char_end") if ch_meta.get("char_end") is not None else len(ch.text),
                     "extra_metadata": ch_meta.get("extra"),
                     "source_hash": ch_hash,
                     "topic": assigned_topic,
@@ -996,10 +1005,12 @@ def ingest_uploaded_business_file(
     doc_type: str = "contract",
     organization: str = "Acme Corp",
     tenant_id: str = "org_default",
-    db: Session | None = None
+    db: Session | None = None,
+    settings: Any = None
 ) -> dict[str, Any]:
     """Handle multipart file upload for business document ingestion."""
     import tempfile
+    active_settings = _resolve_settings(settings)
     filename = getattr(file, "filename", "uploaded_doc")
     ext = os.path.splitext(filename)[1].lower()
 
@@ -1018,8 +1029,8 @@ def ingest_uploaded_business_file(
         tmp.write(content)
 
     tmp_dir = os.path.dirname(tmp_path)
-    if tmp_dir not in settings.extra_allowed_dirs:
-        settings.extra_allowed_dirs.append(tmp_dir)
+    if tmp_dir not in active_settings.extra_allowed_dirs:
+        active_settings.extra_allowed_dirs.append(tmp_dir)
 
     try:
         report = ingest_business_document(
@@ -1028,10 +1039,14 @@ def ingest_uploaded_business_file(
             doc_type=doc_type,
             organization=organization,
             tenant_id=tenant_id,
-            db=db
+            db=db,
+            settings=active_settings
         )
         report["filename"] = filename
         return report
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+ingest_uploaded_file = ingest_uploaded_business_file
